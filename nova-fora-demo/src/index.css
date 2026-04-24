@@ -1,0 +1,154 @@
+@import "tailwindcss";
+
+@theme {
+  --color-navy-50: #f0f4f8;
+  --color-navy-100: #d9e2ec;
+  --color-navy-200: #bcccdc;
+  --color-navy-300: #9fb3c8;
+  --color-navy-400: #829ab1;
+  --color-navy-500: #627d98;
+  --color-navy-600: #486581;
+  --color-navy-700: #334e68;
+  --color-navy-800: #243b53;
+  --color-navy-900: #102a43;
+  --color-navy-950: #0a1929;
+  --color-accent-orange: #ff9900;
+  --color-accent-green: #22c55e;
+  --color-accent-red: #ef4444;
+  --color-accent-blue: #3b82f6;
+  --color-accent-purple: #8b5cf6;
+  --color-accent-gold: #f59e0b;
+}
+
+/* Light theme: remap navy palette to light tones so existing utility classes
+   automatically invert without having to rewrite every component. */
+html.light {
+  --color-navy-50: #0f172a;
+  --color-navy-100: #1e293b;
+  --color-navy-200: #334155;
+  --color-navy-300: #475569;
+  --color-navy-400: #64748b;
+  --color-navy-500: #94a3b8;
+  --color-navy-600: #cbd5e1;
+  --color-navy-700: #d8dfe8;
+  --color-navy-800: #e9eef5;
+  --color-navy-900: #eef2f7;
+  --color-navy-950: #ffffff;
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/inter/v18/UcCo3FwrK3iLTcviYwY.woff2) format('woff2');
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--color-navy-950);
+  color: #e2e8f0;
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+html.light body {
+  color: #0f172a;
+}
+
+/* In light mode, "text-white" headings and foreground elements should become dark
+   so they remain readable on the now-light surfaces. */
+html.light .text-white {
+  color: #0f172a !important;
+}
+
+/* Make black modal backdrops a bit lighter in light mode */
+html.light .bg-black\/60 {
+  background-color: rgba(15, 23, 42, 0.35) !important;
+}
+
+/* ============================================================
+   Calm mode — grayscale by default, color only under the cursor
+   ============================================================
+   Applies a nearly grayscale version of every accent color so the initial
+   impression is completely neutral. Any hover on an interactive element
+   (including any element Tailwind marks with cursor-pointer) restores
+   the full-saturation values via CSS custom-property cascade. Charts
+   (recharts SVG) and raw images use a grayscale filter that lifts on
+   hover — so everything goes monochrome together. */
+html.calm {
+  --color-accent-orange: #9a948c;
+  --color-accent-green:  #909a92;
+  --color-accent-red:    #9a8f8c;
+  --color-accent-blue:   #8e929c;
+  --color-accent-purple: #95909c;
+  --color-accent-gold:   #9a968a;
+}
+
+html.calm * {
+  transition: background-color 0.25s ease, border-color 0.25s ease,
+              color 0.25s ease, fill 0.25s ease, filter 0.3s ease;
+}
+
+/* Charts (recharts), images and SVGs with hardcoded fills become grayscale;
+   they return to full color whenever any ancestor/child is being hovered. */
+html.calm .recharts-wrapper,
+html.calm img,
+html.calm svg {
+  filter: grayscale(0.95) contrast(0.95);
+}
+
+html.calm .recharts-wrapper:hover,
+html.calm :hover > .recharts-wrapper,
+html.calm :hover .recharts-wrapper,
+html.calm img:hover,
+html.calm :hover > img,
+html.calm :hover img,
+html.calm svg:hover,
+html.calm :is(button, a, label, [role="button"], [class*="cursor-pointer"]):hover svg,
+html.calm :is(button, a, label, [role="button"], [class*="cursor-pointer"]):hover img {
+  filter: grayscale(0) contrast(1);
+}
+
+/* Hover any interactive element — including any Tailwind element with
+   cursor-pointer — to restore vivid accent CSS variables for that subtree. */
+html.calm :is(button, a, label, [role="button"], [class*="cursor-pointer"], .hover-vivid):hover,
+html.calm :is(button, a, label, [role="button"], [class*="cursor-pointer"], .hover-vivid):focus-visible {
+  --color-accent-orange: #ff9900;
+  --color-accent-green:  #22c55e;
+  --color-accent-red:    #ef4444;
+  --color-accent-blue:   #3b82f6;
+  --color-accent-purple: #8b5cf6;
+  --color-accent-gold:   #f59e0b;
+}
+
+#root {
+  min-height: 100vh;
+  min-height: 100dvh; /* iOS Safari — use dynamic viewport */
+}
+
+/* Prevent iOS auto-zoom on input focus (inputs need to be ≥16px font on iOS) */
+@media (max-width: 640px) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Safer area padding for notched devices */
+@supports (padding: env(safe-area-inset-bottom)) {
+  body {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Better touch behavior — disable text selection on buttons */
+button {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--color-navy-900); }
+::-webkit-scrollbar-thumb { background: var(--color-navy-600); border-radius: 3px; }
