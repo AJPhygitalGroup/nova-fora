@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     app_url: str = "http://localhost:5173"
     api_url: str = "http://localhost:8000"
 
+    # Comma-separated list of allowed CORS origins. If empty, falls back to
+    # [app_url, http://localhost:5173, http://localhost:5174] in main.py.
+    # Example: "https://nova-fora-web.vamj8y.easypanel.host,http://localhost:5173"
+    cors_origins: str = ""
+
     # ── Database ──────────────────────────────────────
     database_url: str = "postgresql+asyncpg://nova:dev_pass@localhost:5432/nova"
 

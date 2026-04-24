@@ -30,14 +30,25 @@ app = FastAPI(
 )
 
 # ── CORS ──────────────────────────────────────────────
-# In dev, allow the Vite frontend. In prod, set APP_URL to your real frontend origin.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+# Origins come from env var CORS_ORIGINS (comma-separated). If empty,
+# fall back to [app_url, localhost:5173, localhost:5174] — useful for dev.
+def _cors_origins() -> list[str]:
+    raw = settings.cors_origins.strip()
+    if raw:
+        return [o.strip() for o in raw.split(",") if o.strip()]
+    return [
         settings.app_url,
         "http://localhost:5173",  # Vite default
         "http://localhost:5174",  # Vite fallback
-    ],
+    ]
+
+
+_allowed_origins = _cors_origins()
+print(f"[nova-api] CORS allowed origins: {_allowed_origins}")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
