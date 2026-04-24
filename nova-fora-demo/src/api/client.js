@@ -167,4 +167,67 @@ export const auth = {
   },
 };
 
+// ─────────────────────────────────────────────────────
+// Vehicles module
+// ─────────────────────────────────────────────────────
+export const vehicles = {
+  /**
+   * GET /vehicles — paginated list.
+   * params: { dspId?, search?, grounded?, isActive?, page?, perPage? }
+   * Returns { items, total, page, perPage } (already camelCase).
+   */
+  list(params = {}) {
+    const q = new URLSearchParams();
+    // Frontend uses camelCase, backend expects snake_case
+    const paramMap = {
+      dspId: 'dsp_id',
+      isActive: 'is_active',
+      perPage: 'per_page',
+    };
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined || v === null || v === '') continue;
+      const key = paramMap[k] || k;
+      q.set(key, String(v));
+    }
+    const qs = q.toString();
+    return apiFetch(`/vehicles${qs ? '?' + qs : ''}`);
+  },
+
+  /** GET /vehicles/{id}. Accepts int or 'VAN-XXXX'. */
+  get(id) {
+    return apiFetch(`/vehicles/${encodeURIComponent(id)}`);
+  },
+
+  /** POST /vehicles — create. Body in camelCase; converted to snake_case below. */
+  create(body) {
+    return apiFetch('/vehicles', {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /** PATCH /vehicles/{id}. */
+  update(id, body) {
+    return apiFetch(`/vehicles/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+};
+
+// ─────────────────────────────────────────────────────
+// camelCase → snake_case (for request bodies)
+// ─────────────────────────────────────────────────────
+const camelToSnakeStr = (s) => s.replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
+
+function camelToSnake(obj) {
+  if (Array.isArray(obj)) return obj.map(camelToSnake);
+  if (obj !== null && typeof obj === 'object' && obj.constructor === Object) {
+    return Object.fromEntries(
+      Object.entries(obj).map(([k, v]) => [camelToSnakeStr(k), camelToSnake(v)])
+    );
+  }
+  return obj;
+}
+
 export { APIError };

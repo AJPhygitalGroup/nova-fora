@@ -1,13 +1,14 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Truck, Plus, Upload, Search, Filter, Edit3, Trash2, MoreVertical,
   X, ArrowRight, ArrowLeft, Check, CheckCircle2, AlertTriangle, FileSpreadsheet,
-  ChevronDown, ChevronUp, Eye, Minus, Info, Download, Lock, Copy, Users, Building2
+  ChevronDown, ChevronUp, Eye, Minus, Info, Download, Lock, Copy, Users, Building2,
+  RefreshCw,
 } from 'lucide-react';
-import { fleetSnapshotVans } from '../data/mockData';
 import Badge from './ui/Badge';
 import VehicleDetailPage from './VehicleDetailPage';
+import { vehicles as vehiclesApi, APIError } from '../api/client';
 
 // ============================================================
 // Helpers
@@ -54,6 +55,50 @@ function enrichVehicle(v) {
     fmc: v.id.startsWith('VAN-1') ? 'Wheels' : v.id.startsWith('VAN-2') ? 'Element' : v.id.startsWith('VAN-3') ? 'Wheels' : v.id.startsWith('VAN-4') ? 'Rented/Owned' : 'Element',
     isFmcManaged: !v.id.startsWith('VAN-4'),
     location: LOCATION_SEEDS[v.id] || 'parking_lot',
+  };
+}
+
+// Transform a VehicleResponse from the real API into the shape the existing
+// components expect. Fields like `vehicleClass`, `fmc`, `location`, `color`
+// aren't in the backend yet — we synthesize defaults here. They'll become
+// real fields when the DSP admin panel adds them (post-Jun 15).
+function fromApiVehicle(v) {
+  // API returns (camelCase via snakeToCamel): id (VAN-XXXX), dspId, dsp,
+  // fleetId, vin, plate, year, make, model, mileage, grounded, groundedReason,
+  // defectCount, severity, lastInspected, photos, isActive.
+  const CLASS_DEFAULTS = ['Branded Cargo', 'Rental', 'Owned'];
+  const FMC_DEFAULTS = ['Wheels', 'Element', 'Rented/Owned'];
+  const seed = parseInt(String(v.id).replace(/\D/g, ''), 10) || 0;
+
+  return {
+    // Identity
+    id: v.id,
+    fleetId: v.fleetId,
+    dspId: v.dspId,
+    dsp: v.dsp,
+    // Vehicle identity (real)
+    vin: v.vin,
+    plate: v.plate,
+    year: v.year,
+    make: v.make,
+    model: v.model,
+    // State
+    mileage: v.mileage,
+    grounded: v.grounded,
+    groundedReason: v.groundedReason,
+    isActive: v.isActive ?? true,
+    // Derived (stubbed until inspections are live)
+    defectCount: v.defectCount ?? 0,
+    severity: v.severity || 'clean',
+    lastInspected: v.lastInspected || 'Never',
+    photos: v.photos ?? 0,
+    inspector: v.inspector || '—',
+    // Frontend-only metadata (not stored server-side yet)
+    color: ['White', 'Blue', 'Silver', 'Black', 'Gray'][seed % 5],
+    vehicleClass: CLASS_DEFAULTS[seed % CLASS_DEFAULTS.length],
+    fmc: FMC_DEFAULTS[seed % FMC_DEFAULTS.length],
+    isFmcManaged: true,
+    location: 'parking_lot',
   };
 }
 
@@ -787,13 +832,31 @@ export default function MyVehicles({ user }) {
   const [dspFilterOpen, setDspFilterOpen] = useState(false);
   const [copiedId, setCopiedId] = useState(null);
 
-  // Filter by user's DSP (DSPs see only their own fleet; vendors/admins see all)
-  const [fleet, setFleet] = useState(() => {
-    const base = mode === 'owner'
-      ? fleetSnapshotVans.filter((v) => v.dspId === user?.orgId)
-      : fleetSnapshotVans;
-    return base.map(enrichVehicle);
-  });
+  // Fleet data comes from the real /vehicles endpoint. Role scoping is
+  // enforced server-side (dsp_owner auto-scoped to their org; vendor+admin
+  // see all DSPs). No need to filter client-side by dspId.
+  const [fleet, setFleet] = useState([]);
+  const [loadingFleet, setLoadingFleet] = useState(true);
+  const [fleetError, setFleetError] = useState(null);
+
+  const reloadFleet = useCallback(async () => {
+    setLoadingFleet(true);
+    setFleetError(null);
+    try {
+      // per_page: 100 is enough for a single DSP (~50 vans typical). For
+      // vendor/admin seeing hundreds of vans across DSPs, add pagination UI later.
+      const res = await vehiclesApi.list({ perPage: 100 });
+      setFleet(res.items.map(fromApiVehicle));
+    } catch (err) {
+      setFleetError(err instanceof APIError ? (err.detail || 'Load failed') : 'Network error');
+    } finally {
+      setLoadingFleet(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    reloadFleet();
+  }, [reloadFleet]);
 
   // Unique DSPs in this fleet (for vendor DSP filter)
   const uniqueDsps = useMemo(() => {
@@ -860,29 +923,49 @@ export default function MyVehicles({ user }) {
     URL.revokeObjectURL(url);
   };
 
-  const handleSaveVehicle = (form) => {
-    if (editVehicle) {
-      setFleet(fleet.map((v) => (v.fleetId === form.fleetId ? { ...v, ...form } : v)));
-    } else {
-      const newVan = {
-        ...form,
-        id: form.fleetId,
-        dspId: user?.orgId || 'DSP-4201',
-        dsp: user?.org || 'Unknown',
-        defectCount: 0,
-        severity: 'clean',
-        lastInspected: 'Never',
-        inspector: '—',
-        grounded: false,
-        mileage: 0,
-        isFmcManaged: form.fmc !== 'Rented/Owned',
-      };
-      setFleet([newVan, ...fleet]);
+  const handleSaveVehicle = async (form) => {
+    try {
+      // Is this an edit? Match by VIN (unique) if the form has one that
+      // corresponds to an existing fleet entry.
+      const existing = form.vin && fleet.find((v) => v.vin === form.vin);
+      if (existing) {
+        await vehiclesApi.update(existing.id, {
+          fleetId: form.fleetId,
+          plate: form.plate,
+          year: parseInt(form.year, 10),
+          make: form.make,
+          model: form.model,
+          mileage: parseInt(form.mileage ?? existing.mileage, 10),
+        });
+      } else {
+        await vehiclesApi.create({
+          fleetId: form.fleetId,
+          vin: form.vin,
+          plate: form.plate,
+          year: parseInt(form.year, 10),
+          make: form.make,
+          model: form.model,
+          mileage: parseInt(form.mileage ?? 0, 10),
+        });
+      }
+      await reloadFleet();
+    } catch (err) {
+      const msg = err?.detail || err?.message || 'Save failed';
+      // Basic surfacing — TODO: replace with toast in Semana 6
+      alert(`Save failed: ${msg}`);
     }
   };
 
-  const handleDeleteVehicle = (v) => {
-    setFleet(fleet.filter((x) => x.fleetId !== v.fleetId));
+  // Soft-delete via PATCH isActive=false (no hard DELETE endpoint yet —
+  // we never hard-delete vehicles because of historical WO/inspection refs).
+  const handleDeleteVehicle = async (v) => {
+    try {
+      await vehiclesApi.update(v.id, { isActive: false });
+      await reloadFleet();
+    } catch (err) {
+      const msg = err?.detail || err?.message || 'Delete failed';
+      alert(`Delete failed: ${msg}`);
+    }
   };
 
   const handleApplyBulk = (delta) => {
@@ -918,6 +1001,37 @@ export default function MyVehicles({ user }) {
   const groundedCount = fleet.filter((v) => v.grounded).length;
   const cleanCount = fleet.filter((v) => v.defectCount === 0).length;
   const defectiveCount = fleet.filter((v) => v.defectCount > 0).length;
+
+  // Loading state — first load only (reload happens in-place without this splash)
+  if (loadingFleet && fleet.length === 0) {
+    return (
+      <div className="min-h-[60vh] flex flex-col items-center justify-center gap-3 text-navy-400">
+        <motion.div
+          animate={{ rotate: 360 }}
+          transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+          className="w-8 h-8 border-2 border-accent-blue/40 border-t-accent-blue rounded-full"
+        />
+        <div className="text-sm">Loading fleet from {user?.org || 'your organization'}…</div>
+      </div>
+    );
+  }
+
+  // Error state — retriable
+  if (fleetError && fleet.length === 0) {
+    return (
+      <div className="min-h-[60vh] flex flex-col items-center justify-center gap-3 px-4 text-center">
+        <AlertTriangle size={32} className="text-accent-red" />
+        <div className="text-white font-semibold">Could not load vehicles</div>
+        <div className="text-sm text-navy-400 max-w-md">{fleetError}</div>
+        <button
+          onClick={reloadFleet}
+          className="mt-2 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-accent-blue/20 border border-accent-blue/40 text-accent-blue hover:bg-accent-blue/30 text-sm cursor-pointer"
+        >
+          <RefreshCw size={14} /> Retry
+        </button>
+      </div>
+    );
+  }
 
   // When a vehicle is selected, render the full-page detail view instead of the grid
   if (detailVehicle) {
