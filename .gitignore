@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.uv/
+dist/
+*.egg
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+nova-fora-demo/dist/
+nova-fora-demo/.vercel/
+nova-fora-demo/node_modules/
+
+# Environment — NEVER commit these
+.env
+.env.local
+.env.production
+*.env
+
+# Docker volumes
+postgres_data/
+minio_data/
+redis_data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Backups
+/backups/
