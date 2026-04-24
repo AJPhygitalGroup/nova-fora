@@ -6,12 +6,24 @@
 
 | Servicio | URL | Status |
 |---|---|---|
+| **Frontend (web)** | https://nova-fora-web.vamj8y.easypanel.host | ✅ live |
 | **API** | https://nova-fora-api.vamj8y.easypanel.host | ✅ live |
 | **Docs (Swagger)** | https://nova-fora-api.vamj8y.easypanel.host/docs | ✅ live |
 | **Health** | https://nova-fora-api.vamj8y.easypanel.host/health | ✅ 200 |
 | **Ready (DB+Redis)** | https://nova-fora-api.vamj8y.easypanel.host/health/ready | ✅ 200 |
-| **Frontend** | _(pendiente — Semana 2-3)_ | ⏳ |
 | **EasyPanel** | http://187.127.251.190:3000 | 🔐 admin only |
+
+## Login demo (producción)
+
+Abrir https://nova-fora-web.vamj8y.easypanel.host, elegir cualquier card,
+click Sign In. Password: `nova2026!` (compartido entre los 4 usuarios).
+
+| Role | Email | Dashboard visible |
+|---|---|---|
+| DSP Fleet Owner | tamika@ribrell21.com | Real DVIC + defects + rewards |
+| Vendor Admin | olger@dullesmidas.com | Work orders + fleet snapshot + scorecard |
+| Technician | david@dullesmidas.com | Work orders (assigned to me) |
+| Site Admin | maria@novafora.com | Todo + Ghost mode |
 
 ## Infraestructura
 
@@ -27,6 +39,7 @@
 | `nova-fora_postgres` | `postgres:17` | DB principal — user `nova`, db `nova` |
 | `nova-fora_redis` | `redis:7` | Cache + pub/sub (auth required) |
 | `nova-fora_api` | `easypanel/nova-fora/api` (build from GitHub `apps/api/Dockerfile`) | FastAPI backend |
+| `nova-fora_web` | `easypanel/nova-fora/web` (build from GitHub `nova-fora-demo/Dockerfile`) | React 19 + Vite + nginx:alpine |
 
 ## Source
 
