@@ -35,11 +35,20 @@ class Settings(BaseSettings):
     jwt_refresh_token_expire_days: int = 30
 
     # ── Storage (S3 compatible) ───────────────────────
+    # Internal endpoint — used by the API for bucket mgmt + health checks.
+    # In prod (EasyPanel Docker Swarm): http://nova-fora_storage:9000
     s3_endpoint: str = "http://localhost:9000"
-    s3_bucket: str = "nova-dev"
+
+    # Public endpoint — presigned URLs sign with THIS host so the browser can
+    # upload directly. Must resolve from the public internet (HTTPS in prod).
+    # In prod: https://nova-fora-storage.vamj8y.easypanel.host
+    s3_public_endpoint: str = "http://localhost:9000"
+
+    s3_bucket: str = "nova-fora-photos"
     s3_access_key: str = "minioadmin"
     s3_secret_key: str = "minioadmin"
-    s3_public_url: str = "http://localhost:9000/nova-dev"
+    s3_region: str = "us-east-1"  # MinIO ignores, but boto3 requires a value
+    s3_presign_ttl_seconds: int = 900  # 15 min upload window
 
     # ── SMTP ──────────────────────────────────────────
     smtp_host: str = ""

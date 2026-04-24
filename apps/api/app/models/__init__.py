@@ -13,6 +13,7 @@ from app.models.inspection import (
     ReportedDefect,
 )
 from app.models.organization import OrgType, Organization
+from app.models.photo import Photo, PhotoCategory
 from app.models.user import User, UserRole, UserStatus
 from app.models.vehicle import Vehicle
 
@@ -24,6 +25,8 @@ __all__ = [
     "OdometerSource",
     "OrgType",
     "Organization",
+    "Photo",
+    "PhotoCategory",
     "ReportedDefect",
     "User",
     "UserRole",

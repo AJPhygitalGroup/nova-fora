@@ -4,8 +4,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routes import auth, defects, health, inspections, vehicles
+from app.routes import auth, defects, health, inspections, uploads, vehicles
 from app.settings import get_settings
+from app.storage import ensure_bucket
 
 settings = get_settings()
 
@@ -15,6 +16,15 @@ async def lifespan(app: FastAPI):
     """Run once at startup / shutdown."""
     print(f"[nova-api] starting (env={settings.env})")
     print(f"[nova-api] frontend allowed origin: {settings.app_url}")
+
+    # Ensure the S3/MinIO bucket exists + has CORS applied. Non-fatal: if
+    # MinIO isn't reachable yet (first deploy), we log but keep booting so
+    # /health stays up. Photo endpoints will error on demand instead.
+    try:
+        ensure_bucket()
+    except Exception as e:  # noqa: BLE001
+        print(f"[nova-api] WARN: ensure_bucket() failed: {e}")
+
     yield
     print("[nova-api] shutting down")
 
@@ -60,6 +70,7 @@ app.include_router(auth.router)
 app.include_router(vehicles.router)
 app.include_router(inspections.router)
 app.include_router(defects.router)
+app.include_router(uploads.router)
 
 
 @app.get("/", tags=["root"])
