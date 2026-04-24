@@ -69,45 +69,30 @@ _CORS_ALLOWED_ORIGINS: list[str] = [
 
 
 def ensure_bucket() -> None:
-    """Create the bucket if missing and apply CORS policy.
+    """Create the bucket if missing.
+
+    NOTE on CORS: modern MinIO (RELEASE.2024+ and all S3 providers) do NOT
+    support the S3 PutBucketCors API. CORS is configured at server boot via
+    the MINIO_API_CORS_ALLOW_ORIGIN environment variable (see MinIO service
+    env in EasyPanel). For AWS S3, use the AWS console or terraform.
 
     Called at app startup. Safe to run multiple times — all ops are idempotent.
     """
     cli = _internal_client()
     bucket = settings.s3_bucket
 
-    # 1. Create bucket if needed
     try:
         cli.head_bucket(Bucket=bucket)
         log.info("[storage] bucket %s already exists", bucket)
+        return
     except ClientError as e:
         code = e.response.get("Error", {}).get("Code", "")
-        if code in ("404", "NoSuchBucket", "NotFound"):
-            cli.create_bucket(Bucket=bucket)
-            log.info("[storage] created bucket %s", bucket)
-        else:
+        if code not in ("404", "NoSuchBucket", "NotFound"):
             log.warning("[storage] head_bucket unexpected error: %s", e)
             raise
 
-    # 2. Apply CORS so the browser can PUT directly
-    cors_rules = {
-        "CORSRules": [
-            {
-                "AllowedOrigins": _CORS_ALLOWED_ORIGINS,
-                "AllowedMethods": ["PUT", "GET", "HEAD"],
-                "AllowedHeaders": ["*"],
-                "ExposeHeaders": ["ETag", "Content-Length"],
-                "MaxAgeSeconds": 3000,
-            }
-        ]
-    }
-    try:
-        cli.put_bucket_cors(Bucket=bucket, CORSConfiguration=cors_rules)
-        log.info(
-            "[storage] CORS applied to %s (origins=%s)", bucket, _CORS_ALLOWED_ORIGINS
-        )
-    except ClientError as e:
-        log.warning("[storage] could not apply CORS: %s", e)
+    cli.create_bucket(Bucket=bucket)
+    log.info("[storage] created bucket %s", bucket)
 
 
 # ─────────────────────────────────────────────────────
