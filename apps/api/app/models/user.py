@@ -13,6 +13,8 @@ in a later migration.
 from datetime import datetime
 from enum import Enum
 
+import sqlalchemy as sa
+from sqlalchemy import Column
 from sqlmodel import Field
 
 from app.models.base import TimestampMixin
@@ -44,14 +46,31 @@ class User(TimestampMixin, table=True):
 
     # Org membership
     organization_id: int = Field(foreign_key="organizations.id", index=True, nullable=False)
-    role: UserRole = Field(index=True, nullable=False)
+    # Stored as VARCHAR — see note in organization.py about enum storage.
+    role: UserRole = Field(
+        sa_column=Column(
+            "role",
+            sa.Enum(UserRole, native_enum=False, length=30, values_callable=lambda e: [m.value for m in e]),
+            nullable=False,
+            index=True,
+        )
+    )
 
     # UI niceties (populated from the demo shapes)
     avatar: str | None = Field(default=None, max_length=10)  # 2-char initials like "TG"
     language: str = Field(default="en", max_length=5)
 
-    # Status / lifecycle
-    status: UserStatus = Field(default=UserStatus.ACTIVE, index=True)
+    # Status / lifecycle — also VARCHAR for flexibility
+    status: UserStatus = Field(
+        default=UserStatus.ACTIVE,
+        sa_column=Column(
+            "status",
+            sa.Enum(UserStatus, native_enum=False, length=20, values_callable=lambda e: [m.value for m in e]),
+            nullable=False,
+            index=True,
+            server_default="active",
+        ),
+    )
     station: str | None = Field(default=None, max_length=20)  # DSP station: DSE4, DWA6...
     two_fa_enabled: bool = Field(default=False)
     last_login_at: datetime | None = Field(default=None)

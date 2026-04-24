@@ -3,9 +3,15 @@
 Design note: organizations have an internal integer `id` but the frontend demo
 expects string IDs with prefixes (DSP-4201, V-001, NF-000). The API serializes
 with `id_str` — see app/schemas/organization.py.
+
+Enum storage: we deliberately store enums as VARCHAR (not PG native enum types)
+so adding/renaming values doesn't require schema migrations. The `sa_column`
+override prevents SQLModel's default behavior of casting to `::orgtype`.
 """
 from enum import Enum
 
+import sqlalchemy as sa
+from sqlalchemy import Column
 from sqlmodel import Field
 
 from app.models.base import TimestampMixin
@@ -24,7 +30,16 @@ class Organization(TimestampMixin, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(index=True, max_length=200, nullable=False)
-    org_type: OrgType = Field(index=True, nullable=False)
+    # Stored as VARCHAR(20) via sa.Enum(..., native_enum=False). Uses .value on
+    # write and reconstructs Enum on read — matches the VARCHAR migration.
+    org_type: OrgType = Field(
+        sa_column=Column(
+            "org_type",
+            sa.Enum(OrgType, native_enum=False, length=20, values_callable=lambda e: [m.value for m in e]),
+            nullable=False,
+            index=True,
+        )
+    )
 
     # Contact
     phone: str | None = Field(default=None, max_length=30)
