@@ -1,8 +1,9 @@
 """Internal CLI commands. Run with: python -m app.cli <command>
 
 Available commands:
-  seed             Seed 4 demo users + 3 orgs (idempotent — safe to re-run).
-  seed-vehicles    Seed 8 Ribrell 21 vehicles (from the 2026-04-15 scrape).
+  seed              Seed 4 demo users + 3 orgs (idempotent — safe to re-run).
+  seed-vehicles     Seed 8 Ribrell 21 vehicles (from the 2026-04-15 scrape).
+  seed-inspections  Seed 8 inspections for those vehicles (2026-04-15 morning).
   reset-password <email> <new_password>   Admin override for lost passwords.
 """
 import asyncio
@@ -12,6 +13,14 @@ from sqlmodel import select
 
 from app.auth.hashing import hash_password
 from app.db import AsyncSessionLocal
+from app.models.base import utc_now
+from app.models.inspection import (
+    DefectSeverity,
+    Inspection,
+    InspectionResult,
+    OdometerSource,
+    ReportedDefect,
+)
 from app.models.organization import OrgType, Organization
 from app.models.user import User, UserRole, UserStatus
 from app.models.vehicle import Vehicle
@@ -200,6 +209,155 @@ async def cmd_seed_vehicles() -> None:
         print(f"\n✅ Vehicles seed complete. {created} created, {skipped} already existed.")
 
 
+# ─────────────────────────────────────────────────────
+# Inspection seed — 2026-04-15 Ribrell 21 scrape
+# Synthetic defects modeled after what a typical DVIC morning looks like.
+# ─────────────────────────────────────────────────────
+
+from datetime import datetime, timezone
+
+INSPECTION_SEED_RIBRELL = [
+    # (fleet_id, mileage, utc_submitted_at, defects[])
+    # Each defect: (section, part, desc, severity, category)
+    (
+        "PR013", 86209, "2026-04-15T07:15:23Z",
+        [
+            ("2. Driver Side", "Rear bumper", "Minor scrape on rear bumper", DefectSeverity.LOW, "Body"),
+        ],
+    ),
+    (
+        "PR021", 91248, "2026-04-15T07:16:42Z",
+        [],  # clean
+    ),
+    (
+        "PR016", 95073, "2026-04-15T07:17:10Z",
+        [
+            ("1. Front Side", "Windshield", "Chip near driver vision area — spreading", DefectSeverity.HIGH, "Glass"),
+            ("3. Passenger Side", "Side mirror", "Mirror glass cracked", DefectSeverity.MEDIUM, "Body"),
+        ],
+    ),
+    (
+        "PR005", 83646, "2026-04-15T07:23:20Z",
+        [
+            ("4. Rear", "Brake lights", "Left brake light intermittent", DefectSeverity.MEDIUM, "Lighting"),
+        ],
+    ),
+    (
+        "PR025", 84267, "2026-04-15T07:31:01Z",
+        [],  # clean
+    ),
+    (
+        "PR026", 0, "2026-04-15T07:31:17Z",
+        [
+            ("6. Brakes", "Rear brake pads", "Grinding sound on hard stops", DefectSeverity.CRITICAL, "Brakes"),
+        ],
+    ),
+    (
+        "PR004", 90708, "2026-04-15T07:32:18Z",
+        [],  # clean
+    ),
+    (
+        "PR006", 99597, "2026-04-15T07:41:35Z",
+        [
+            ("7. Tires", "Front left tire", "Tread at 3/32 — due for replacement", DefectSeverity.HIGH, "Tires"),
+            ("5. In-Cab", "Seatbelt", "Retractor sticks", DefectSeverity.LOW, "Safety"),
+        ],
+    ),
+]
+
+
+async def cmd_seed_inspections() -> None:
+    """Create one inspection per van from the 2026-04-15 scrape. Idempotent."""
+    async with AsyncSessionLocal() as session:
+        ribrell = (
+            await session.execute(
+                select(Organization).where(Organization.name == "Ribrell 21")
+            )
+        ).scalar_one_or_none()
+        if ribrell is None:
+            print("ERROR: Organization 'Ribrell 21' not found. Run 'seed' first.")
+            sys.exit(1)
+
+        # Inspector: use Tamika (dsp_owner of Ribrell) as the acting user
+        tamika = (
+            await session.execute(
+                select(User).where(User.email == "tamika@ribrell21.com")
+            )
+        ).scalar_one_or_none()
+
+        created = 0
+        skipped = 0
+        for (fleet_id, mileage, submitted_iso, defects) in INSPECTION_SEED_RIBRELL:
+            vehicle = (
+                await session.execute(
+                    select(Vehicle).where(
+                        Vehicle.dsp_id == ribrell.id, Vehicle.fleet_id == fleet_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if vehicle is None:
+                print(f"[seed-inspections] skip: {fleet_id} (vehicle not found)")
+                continue
+
+            # Skip if this vehicle already has an inspection on the same date
+            target_dt = datetime.fromisoformat(submitted_iso.replace("Z", "+00:00"))
+            existing = (
+                await session.execute(
+                    select(Inspection)
+                    .where(Inspection.vehicle_id == vehicle.id)
+                    .where(Inspection.submitted_at == target_dt)
+                )
+            ).scalar_one_or_none()
+            if existing:
+                print(f"[seed-inspections] exists: {fleet_id} @ {submitted_iso}")
+                skipped += 1
+                continue
+
+            # Derive result
+            if not defects:
+                result = InspectionResult.PASSED
+            else:
+                has_critical = any(d[3] == DefectSeverity.CRITICAL for d in defects)
+                has_high = any(d[3] == DefectSeverity.HIGH for d in defects)
+                result = InspectionResult.FLAGGED if (has_critical or has_high) else InspectionResult.CONDITIONAL
+
+            insp = Inspection(
+                vehicle_id=vehicle.id,
+                dsp_id=ribrell.id,
+                inspector_id=tamika.id if tamika else None,
+                result=result,
+                odometer_miles=mileage if mileage > 0 else None,
+                odometer_source=OdometerSource.MANUAL,
+                started_at=target_dt,
+                submitted_at=target_dt,
+            )
+            session.add(insp)
+            await session.flush()
+
+            for (section, part, desc, severity, category) in defects:
+                rd = ReportedDefect(
+                    inspection_id=insp.id,
+                    section=section,
+                    part=part,
+                    description=desc,
+                    severity=severity,
+                    category=category,
+                )
+                session.add(rd)
+
+            # Update vehicle mileage from inspection (if higher)
+            if mileage > vehicle.mileage:
+                vehicle.mileage = mileage
+                vehicle.updated_at = utc_now()
+                session.add(vehicle)
+
+            print(f"[seed-inspections] created: {fleet_id} {result.value} ({len(defects)} defects)")
+            created += 1
+
+        await session.commit()
+        print(f"\n✅ Inspections seed complete. {created} created, {skipped} already existed.")
+
+
 async def cmd_reset_password(email: str, new_password: str) -> None:
     async with AsyncSessionLocal() as session:
         user = (
@@ -223,6 +381,8 @@ def main() -> None:
         asyncio.run(cmd_seed())
     elif cmd == "seed-vehicles":
         asyncio.run(cmd_seed_vehicles())
+    elif cmd == "seed-inspections":
+        asyncio.run(cmd_seed_inspections())
     elif cmd == "reset-password":
         if len(sys.argv) != 4:
             print("Usage: python -m app.cli reset-password <email> <new_password>")

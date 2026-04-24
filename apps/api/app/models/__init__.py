@@ -4,13 +4,27 @@ Import all models here so Alembic's autogenerate sees them.
 Adding a new table = add an import line below + run `alembic revision --autogenerate`.
 """
 from app.models.base import timestamp_column, utc_now
+from app.models.inspection import (
+    DefectSeverity,
+    DefectStatus,
+    Inspection,
+    InspectionResult,
+    OdometerSource,
+    ReportedDefect,
+)
 from app.models.organization import OrgType, Organization
 from app.models.user import User, UserRole, UserStatus
 from app.models.vehicle import Vehicle
 
 __all__ = [
+    "DefectSeverity",
+    "DefectStatus",
+    "Inspection",
+    "InspectionResult",
+    "OdometerSource",
     "OrgType",
     "Organization",
+    "ReportedDefect",
     "User",
     "UserRole",
     "UserStatus",
