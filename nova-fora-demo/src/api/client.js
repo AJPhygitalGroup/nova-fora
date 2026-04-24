@@ -298,6 +298,64 @@ export const defects = {
       body: JSON.stringify({ status }),
     });
   },
+
+  /** GET /defects/{id}/photos */
+  listPhotos(id) {
+    return apiFetch(`/defects/${encodeURIComponent(id)}/photos`);
+  },
+
+  /** POST /defects/{id}/photos — commit after presigned PUT succeeds */
+  commitPhoto(id, body) {
+    return apiFetch(`/defects/${encodeURIComponent(id)}/photos`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /** DELETE /defects/{id}/photos/{photoId} — soft delete */
+  deletePhoto(defectId, photoId) {
+    return apiFetch(
+      `/defects/${encodeURIComponent(defectId)}/photos/${encodeURIComponent(photoId)}`,
+      { method: 'DELETE' }
+    );
+  },
+};
+
+// ─────────────────────────────────────────────────────
+// Uploads module — presigned URL flow
+// ─────────────────────────────────────────────────────
+export const uploads = {
+  /**
+   * POST /uploads/presigned — mint a PUT URL for a new photo.
+   * { kind: 'defect'|'inspection'|'work_order', parentId, filename, contentType }
+   */
+  presigned({ kind, parentId, filename, contentType }) {
+    return apiFetch('/uploads/presigned', {
+      method: 'POST',
+      body: JSON.stringify({
+        kind,
+        parent_id: parentId,
+        filename,
+        content_type: contentType,
+      }),
+    });
+  },
+
+  /**
+   * Upload a file to a presigned URL. Raw PUT, no auth header (the URL's
+   * signature IS the auth). Returns when the upload completes.
+   */
+  async putToPresigned(uploadUrl, blob, contentType) {
+    const res = await fetch(uploadUrl, {
+      method: 'PUT',
+      body: blob,
+      headers: { 'Content-Type': contentType },
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Upload failed (${res.status}): ${text.slice(0, 200)}`);
+    }
+  },
 };
 
 // ─────────────────────────────────────────────────────

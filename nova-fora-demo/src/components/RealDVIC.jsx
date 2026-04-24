@@ -2101,7 +2101,7 @@ function deriveActionFromStatus(d) {
   return null;
 }
 
-export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onOpenCreateDefect, scheduledCount, rushOrderCount, title = "Today's Defects" }) {
+export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onViewPhotos, onOpenCreateDefect, scheduledCount, rushOrderCount, title = "Today's Defects" }) {
   const [activeVendor, setActiveVendor] = useState('all');
   // rowActions: ephemeral per-click state (rare — only if the parent DIDN'T
   // yet reload after the API call). The effective action is derived from
@@ -2199,7 +2199,22 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onOp
                   <td className="px-4 py-2.5 text-white">
                     <div className="flex items-center gap-1.5">
                       {d.desc}
-                      {d.photo && <Camera size={11} className="text-navy-400" />}
+                      {onViewPhotos ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onViewPhotos(d); }}
+                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold transition-colors cursor-pointer ${
+                            d.photoCount > 0
+                              ? 'bg-accent-blue/15 border border-accent-blue/40 text-accent-blue hover:bg-accent-blue/25'
+                              : 'bg-navy-800 border border-navy-700 text-navy-400 hover:text-white hover:border-navy-600'
+                          }`}
+                          title={d.photoCount > 0 ? `View ${d.photoCount} photo${d.photoCount === 1 ? '' : 's'}` : 'Add photo'}
+                        >
+                          <Camera size={10} />
+                          {d.photoCount > 0 ? d.photoCount : '+'}
+                        </button>
+                      ) : (
+                        d.photo && <Camera size={11} className="text-navy-400" />
+                      )}
                     </div>
                   </td>
                   <td className="px-4 py-2.5"><Badge variant="gray">{d.category}</Badge></td>

@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { AlertTriangle, RefreshCw, X, Camera } from 'lucide-react';
 import { TodaysDefectsTable } from './RealDVIC';
 import { CreateWorkOrderModal } from './FleetSnapshot';
+import PhotoUploader from './ui/PhotoUploader';
 import { defects as defectsApi, vehicles as vehiclesApi, APIError } from '../api/client';
 
 // ─────────────────────────────────────────────────────
@@ -39,6 +40,7 @@ function fromApiDefect(d) {
     status: STATUS_TO_LABEL[d.status] || d.status,
     da: d.reportedBy || '—',
     photo: (d.photoCount || 0) > 0,
+    photoCount: d.photoCount || 0,
     // Raw fields for any debug / advanced UI
     _rawStatus: d.status,
     _rawSeverity: d.severity,
@@ -72,6 +74,8 @@ export default function Defects({ user }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [createWOContext, setCreateWOContext] = useState(null);
+  // Photos modal state: { defect, initialPhotos }
+  const [photosModal, setPhotosModal] = useState(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -147,6 +151,16 @@ export default function Defects({ user }) {
     }
   };
 
+  const handleViewPhotos = async (d) => {
+    // Open modal + fetch existing photos on demand
+    try {
+      const res = await defectsApi.listPhotos(d.id);
+      setPhotosModal({ defect: d, initialPhotos: res.items });
+    } catch (err) {
+      alert(`Load photos failed: ${err?.detail || err?.message || 'unknown'}`);
+    }
+  };
+
   // ── Loading ────────────────────────────────────────
   if (loading && rawDefects.length === 0) {
     return (
@@ -195,6 +209,7 @@ export default function Defects({ user }) {
         rushOrderCount={rushOrderCount}
         onReject={handleReject}
         onCreateWO={handleCreateWO}
+        onViewPhotos={handleViewPhotos}
         onOpenCreateDefect={() => { /* hook when Create Defect flow is wired */ }}
       />
 
@@ -209,6 +224,87 @@ export default function Defects({ user }) {
           />
         )}
       </AnimatePresence>
+
+      <AnimatePresence>
+        {photosModal && (
+          <PhotosDialog
+            defect={photosModal.defect}
+            initialPhotos={photosModal.initialPhotos}
+            onClose={() => {
+              setPhotosModal(null);
+              reload();  // refresh photo_count in the table
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// Photos dialog — centered modal (not full-screen like CreateWO)
+// so the user can still see the underlying defects table faded behind.
+// ─────────────────────────────────────────────────────
+function PhotosDialog({ defect, initialPhotos, onClose }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-navy-950/70 backdrop-blur-sm z-[55] flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 10, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.98 }}
+        transition={{ duration: 0.15 }}
+        className="w-full max-w-3xl bg-navy-900 border border-navy-700/60 rounded-2xl shadow-2xl overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="px-5 py-4 border-b border-navy-800 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 mb-0.5">
+              <Camera size={14} className="text-accent-blue" />
+              <h3 className="text-base font-semibold text-white">Photos</h3>
+              <span className="text-xs text-navy-400 font-mono">
+                {defect.id} · {defect.van}
+              </span>
+            </div>
+            <p className="text-xs text-navy-400 truncate">{defect.desc}</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-navy-400 hover:text-white p-1 -mr-1 rounded-md hover:bg-navy-800 shrink-0"
+            title="Close"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-5 max-h-[70vh] overflow-y-auto">
+          <PhotoUploader
+            parentKind="defect"
+            parentId={defect.id}
+            initialPhotos={initialPhotos}
+          />
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-3 border-t border-navy-800 bg-navy-950/40 flex items-center justify-between text-[11px] text-navy-400">
+          <span>
+            Photos upload directly to encrypted storage &mdash; bypass our API for speed.
+          </span>
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 rounded-md bg-accent-blue text-white text-xs font-semibold hover:opacity-90 cursor-pointer"
+          >
+            Done
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
