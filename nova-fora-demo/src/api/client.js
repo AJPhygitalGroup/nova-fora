@@ -53,11 +53,23 @@ export function keysToCamel(obj) {
 // Core fetch
 // ─────────────────────────────────────────────────────
 class APIError extends Error {
-  constructor(message, status, detail) {
+  constructor(detail, status, payload) {
+    // FastAPI 422 returns detail as an array: [{loc, msg, type}, ...]
+    // Normalize to a human-readable string so .message / .detail are always
+    // safe to render as a React child.
+    const message =
+      typeof detail === 'string'
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((e) => `${e.loc?.join('.') || 'field'}: ${e.msg || 'invalid'}`).join('; ')
+          : detail
+            ? JSON.stringify(detail)
+            : `HTTP ${status}`;
     super(message);
     this.name = 'APIError';
     this.status = status;
-    this.detail = detail;
+    this.detail = message;  // always a string
+    this.rawPayload = payload;  // original JSON for debugging
   }
 }
 

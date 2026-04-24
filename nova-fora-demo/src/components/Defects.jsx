@@ -78,14 +78,21 @@ export default function Defects({ user }) {
     setError(null);
     try {
       // Fetch both in parallel — the modal needs the full vehicle list.
+      // Keep per_page <= 100 (API cap for /vehicles; /defects allows 200
+      // but we use the same value for consistency).
       const [defectsRes, vehiclesRes] = await Promise.all([
-        defectsApi.list({ perPage: 200 }),
-        vehiclesApi.list({ perPage: 200 }),
+        defectsApi.list({ perPage: 100 }),
+        vehiclesApi.list({ perPage: 100 }),
       ]);
       setRawDefects(defectsRes.items);
       setModalVans(vehiclesRes.items.map(fromApiVehicleForModal));
     } catch (err) {
-      setError(err instanceof APIError ? (err.detail || 'Load failed') : 'Network error');
+      // err.detail may be a string (our 401/403/404 responses) OR an array
+      // (FastAPI validation errors: [{loc, msg, type}, ...]). Normalize to string.
+      const msg = err instanceof APIError
+        ? (typeof err.detail === 'string' ? err.detail : (err.message || 'Load failed'))
+        : 'Network error';
+      setError(msg);
     } finally {
       setLoading(false);
     }
