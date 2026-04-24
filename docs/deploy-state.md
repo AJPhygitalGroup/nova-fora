@@ -107,6 +107,29 @@ docker service inspect nova-fora_api \
   | grep -vE 'PASSWORD|SECRET'
 ```
 
+## Semana 3 PR 2 — HECHO (Abr 24)
+
+- [x] Modelos Inspection + ReportedDefect (SQLModel)
+- [x] Migración `20260424_2000` aplicada
+- [x] Endpoints:
+  - `POST /inspections` (technician + vendor + admin + dsp_owner scoped)
+  - `GET /inspections` con filtros (dsp_id, vehicle_id, date, result) + pagination
+  - `GET /inspections/{id}` con defects embedded
+  - `GET /defects` flat con JOIN de vehicle + org
+  - `PATCH /defects/{id}` (workflow status)
+- [x] Permission model correcto: técnicos + vendor_admins crean, dsp_owner + vendor + tech + admin revisan
+- [x] Seed 8 inspecciones históricas del 2026-04-15 (inspector: David Torres)
+- [x] E2E real probado: David crea → Tamika revisa → ACK → Olger ve
+
+### Datos en inspections + reported_defects (Apr 24)
+
+- **10 inspecciones** en la DB (8 seed + 1 e2e + 1 Tamika self-test)
+- **9 defects** con breakdown:
+  - 1 CRITICAL (PR026 brake grind)
+  - 2 HIGH (PR016 windshield, PR006 tread)
+  - 3 MEDIUM (PR016 mirror, PR005 brake light, PR013-fresh dash camera)
+  - 3 LOW (PR013 bumper, PR006 seatbelt, PR013-fresh cargo door)
+
 ## Semana 3 PR 1 + PR 3 — HECHO (Abr 24)
 
 - [x] Modelo Vehicle (SQLModel) + migración `20260424_1930` aplicada
