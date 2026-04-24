@@ -141,6 +141,13 @@ async def list_inspections(
     date_from: date | None = Query(default=None, description="ISO date (inclusive)"),
     date_to: date | None = Query(default=None, description="ISO date (inclusive)"),
     result: InspectionResult | None = Query(default=None),
+    status_: InspectionStatus | None = Query(
+        default=InspectionStatus.SUBMITTED,
+        alias="status",
+        description="Default 'submitted' hides in-progress DRAFTs from review views. "
+                    "Pass 'draft' to see a tech's in-progress inspections, or 'all' "
+                    "(literal string) to include both.",
+    ),
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=20, ge=1, le=100),
     current: User = Depends(get_current_user),
@@ -148,6 +155,11 @@ async def list_inspections(
 ) -> InspectionListResponse:
     stmt = select(Inspection)
     count_stmt = select(func.count()).select_from(Inspection)
+
+    # Status filter (default: SUBMITTED only, hiding active drafts)
+    if status_ is not None:
+        stmt = stmt.where(Inspection.status == status_.value)
+        count_stmt = count_stmt.where(Inspection.status == status_.value)
 
     # Role scoping
     if current.role == UserRole.DSP_OWNER:
@@ -233,6 +245,7 @@ async def list_inspections(
                 dsp_id=o.id_str if o else "",
                 dsp=o.name if o else "",
                 inspector=ins.full_name if ins else None,
+                status=i.status,
                 result=i.result,
                 odometer_miles=i.odometer_miles,
                 submitted_at=i.submitted_at,

@@ -159,6 +159,7 @@ class InspectionListItem(BaseModel):
     dsp_id: str
     dsp: str
     inspector: str | None = None
+    status: InspectionStatus
     result: InspectionResult
     odometer_miles: int | None
     submitted_at: datetime | None
