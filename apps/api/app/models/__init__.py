@@ -6,6 +6,7 @@ Adding a new table = add an import line below + run `alembic revision --autogene
 from app.models.base import timestamp_column, utc_now
 from app.models.organization import OrgType, Organization
 from app.models.user import User, UserRole, UserStatus
+from app.models.vehicle import Vehicle
 
 __all__ = [
     "OrgType",
@@ -13,6 +14,7 @@ __all__ = [
     "User",
     "UserRole",
     "UserStatus",
+    "Vehicle",
     "timestamp_column",
     "utc_now",
 ]
