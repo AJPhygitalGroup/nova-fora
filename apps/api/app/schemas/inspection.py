@@ -8,6 +8,7 @@ from app.models.inspection import (
     DefectStatus,
     Inspection,
     InspectionResult,
+    InspectionStatus,
     OdometerSource,
     ReportedDefect,
 )
@@ -84,8 +85,15 @@ class DefectStatusUpdate(BaseModel):
 class InspectionCreate(BaseModel):
     """POST /inspections body.
 
-    MVP: one-shot create (draft → submit in a single call). Defects come
-    as an embedded array; we create everything atomically.
+    Dual mode:
+      - If `defects` is non-empty → creates SUBMITTED inspection atomically
+        (the original atomic pattern — still supported for bulk imports /
+        programmatic QA flows).
+      - If `defects` is empty → creates DRAFT inspection, which the client
+        then fills via POST /inspections/{id}/defects one at a time, taking
+        photos per defect, and finally calling POST /inspections/{id}/submit.
+
+    The DRAFT mode is what the mobile QC DVIC wizard uses.
     """
 
     vehicle_id: str = Field(..., description="Integer or 'VAN-XXXX'")
@@ -101,6 +109,23 @@ class InspectionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class InspectionSubmit(BaseModel):
+    """POST /inspections/{id}/submit body.
+
+    Optional overrides when finalizing a DRAFT. Result is auto-computed
+    from the inspection's defects at submit time unless `result_override`
+    is provided.
+    """
+
+    odometer_miles: int | None = Field(default=None, ge=0)
+    odometer_source: OdometerSource | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+    incomplete_reason: str | None = Field(default=None, max_length=500)
+    result_override: InspectionResult | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class InspectionResponse(BaseModel):
     """GET /inspections/{id} response — includes defects inline."""
 
@@ -111,6 +136,7 @@ class InspectionResponse(BaseModel):
     dsp: str               # "Ribrell 21"
     inspector: str | None = None  # full_name of inspector, if any
     inspector_id: str | None = None
+    status: InspectionStatus = InspectionStatus.SUBMITTED
     result: InspectionResult
     odometer_miles: int | None
     odometer_source: OdometerSource | None = None

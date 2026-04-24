@@ -26,6 +26,13 @@ from app.models.base import timestamp_column, utc_now
 # ─────────────────────────────────────────────────────
 # Enums
 # ─────────────────────────────────────────────────────
+class InspectionStatus(str, Enum):
+    """Lifecycle state. DRAFTs can be edited; SUBMITTED is final."""
+
+    DRAFT = "draft"          # tech started, still adding defects/photos
+    SUBMITTED = "submitted"  # finalized — immutable (except status of child defects)
+
+
 class InspectionResult(str, Enum):
     PASSED = "passed"            # no defects, ready to drive
     FLAGGED = "flagged"          # ≥1 defect, needs follow-up
@@ -72,7 +79,26 @@ class Inspection(SQLModel, table=True):
         default=None, foreign_key="users.id", index=True
     )
 
-    # Outcome
+    # Lifecycle — DRAFT while tech is still adding defects/photos; SUBMITTED once
+    # /submit is called. Existing rows backfill to 'submitted' via migration.
+    status: InspectionStatus = Field(
+        default=InspectionStatus.DRAFT,
+        sa_column=Column(
+            "status",
+            sa.Enum(
+                InspectionStatus,
+                native_enum=False,
+                length=20,
+                values_callable=lambda e: [m.value for m in e],
+            ),
+            nullable=False,
+            index=True,
+            server_default="draft",
+        ),
+    )
+
+    # Outcome — only meaningful once status='submitted'; DRAFT rows may hold
+    # a 'flagged' default that's re-computed at submit time.
     result: InspectionResult = Field(
         sa_column=Column(
             "result",

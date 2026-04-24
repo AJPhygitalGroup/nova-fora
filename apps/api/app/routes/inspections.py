@@ -12,18 +12,28 @@ from app.models.inspection import (
     DefectSeverity,
     Inspection,
     InspectionResult,
+    InspectionStatus,
     ReportedDefect,
 )
 from app.models.organization import Organization
+from app.models.photo import Photo, PhotoCategory
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
 from app.schemas.inspection import (
+    DefectCreate,
     DefectResponse,
     InspectionCreate,
     InspectionListItem,
     InspectionListResponse,
     InspectionResponse,
+    InspectionSubmit,
 )
+from app.schemas.photo import (
+    PhotoCommitRequest,
+    PhotoListResponse,
+    PhotoResponse,
+)
+from app.storage.s3 import delete_object, generate_download_url
 from app.routes.vehicles import _parse_vehicle_id  # reuse the VAN-XXXX parser
 
 router = APIRouter(prefix="/inspections", tags=["inspections"])
@@ -108,6 +118,7 @@ async def _build_inspection_response(
         dsp=org.name if org else "",
         inspector=inspector.full_name if inspector else None,
         inspector_id=str(inspector.id) if inspector else None,
+        status=insp.status,
         result=insp.result,
         odometer_miles=insp.odometer_miles,
         odometer_source=insp.odometer_source,
@@ -292,16 +303,42 @@ async def create_inspection(
     # for any DSP's vehicles. In real ops the vendor-DSP contract bounds who
     # services whom; we enforce that post-Jun 15.
 
-    # Compute result from defects (unless explicit override)
+    # Dual mode:
+    # - Empty defects[] → DRAFT (tech is about to fill it incrementally with
+    #   inline photos per defect via /inspections/{id}/defects).
+    # - Non-empty defects[] → SUBMITTED atomically (bulk import, seed, etc.)
+    now = utc_now()
+    is_draft = not body.defects and body.result_override is None
+
+    if is_draft:
+        insp = Inspection(
+            vehicle_id=vehicle.id,
+            dsp_id=vehicle.dsp_id,
+            inspector_id=current.id,
+            status=InspectionStatus.DRAFT,
+            result=InspectionResult.PASSED,  # placeholder, re-computed on submit
+            odometer_miles=body.odometer_miles,
+            odometer_source=body.odometer_source,
+            notes=body.notes,
+            incomplete_reason=body.incomplete_reason,
+            started_at=now,
+            submitted_at=None,  # not yet
+        )
+        session.add(insp)
+        await session.commit()
+        await session.refresh(insp)
+        return await _build_inspection_response(session, insp)
+
+    # SUBMITTED mode (atomic)
     computed = body.result_override or _compute_result(body.defects)
     if body.incomplete_reason:
         computed = InspectionResult.INCOMPLETE
 
-    now = utc_now()
     insp = Inspection(
         vehicle_id=vehicle.id,
         dsp_id=vehicle.dsp_id,
         inspector_id=current.id,
+        status=InspectionStatus.SUBMITTED,
         result=computed,
         odometer_miles=body.odometer_miles,
         odometer_source=body.odometer_source,
@@ -313,7 +350,6 @@ async def create_inspection(
     session.add(insp)
     await session.flush()
 
-    # Insert defects
     for d in body.defects:
         rd = ReportedDefect(
             inspection_id=insp.id,
@@ -334,3 +370,278 @@ async def create_inspection(
     await session.commit()
     await session.refresh(insp)
     return await _build_inspection_response(session, insp)
+
+
+# ─────────────────────────────────────────────────────
+# Draft lifecycle — add/remove defects incrementally, then submit
+# ─────────────────────────────────────────────────────
+async def _load_draft_for_current(
+    inspection_id: str, current: User, session: AsyncSession
+) -> Inspection:
+    iid = _parse_inspection_id(inspection_id)
+    insp = (
+        await session.execute(select(Inspection).where(Inspection.id == iid))
+    ).scalar_one_or_none()
+    if insp is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "inspection not found")
+    if insp.status != InspectionStatus.DRAFT:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"inspection is {insp.status.value}; only DRAFT can be edited",
+        )
+    # Scope: inspector (creator) + dsp_owner of same DSP + site_admin.
+    if current.role == UserRole.DSP_OWNER and insp.dsp_id != current.organization_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not your DSP")
+    if (
+        insp.inspector_id is not None
+        and insp.inspector_id != current.id
+        and current.role not in (UserRole.DSP_OWNER, UserRole.SITE_ADMIN)
+    ):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "only the inspector or org admin can edit this draft",
+        )
+    return insp
+
+
+@router.post(
+    "/{inspection_id}/defects",
+    response_model=DefectResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add a defect to a DRAFT inspection (returns defect id for photo attach)",
+)
+async def add_defect_to_draft(
+    body: DefectCreate,
+    inspection_id: str = Path(...),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> DefectResponse:
+    insp = await _load_draft_for_current(inspection_id, current, session)
+
+    defect = ReportedDefect(
+        inspection_id=insp.id,
+        section=body.section,
+        part=body.part,
+        description=body.description,
+        category=body.category,
+        severity=body.severity,
+    )
+    session.add(defect)
+    insp.updated_at = utc_now()
+    session.add(insp)
+    await session.commit()
+    await session.refresh(defect)
+    return DefectResponse.from_defect(defect, insp.id_str)
+
+
+@router.delete(
+    "/{inspection_id}/defects/{defect_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Remove a defect from a DRAFT inspection",
+)
+async def remove_defect_from_draft(
+    inspection_id: str = Path(...),
+    defect_id: str = Path(...),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    insp = await _load_draft_for_current(inspection_id, current, session)
+
+    # Parse defect id
+    raw = defect_id.strip().upper()
+    if raw.startswith("FD-"):
+        raw = raw[3:]
+    try:
+        did = int(raw)
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid defect id") from None
+
+    defect = (
+        await session.execute(
+            select(ReportedDefect)
+            .where(ReportedDefect.id == did)
+            .where(ReportedDefect.inspection_id == insp.id)
+        )
+    ).scalar_one_or_none()
+    if defect is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "defect not found on this inspection")
+
+    # Also delete attached photos (cascade via app logic — bucket objects too)
+    photo_rows = (
+        await session.execute(select(Photo).where(Photo.defect_id == defect.id))
+    ).scalars().all()
+    for p in photo_rows:
+        if not p.is_deleted:
+            delete_object(p.storage_key)
+        await session.delete(p)
+
+    await session.delete(defect)
+    insp.updated_at = utc_now()
+    session.add(insp)
+    await session.commit()
+    return None
+
+
+@router.post(
+    "/{inspection_id}/submit",
+    response_model=InspectionResponse,
+    summary="Finalize a DRAFT inspection (computes result, sets submitted_at)",
+)
+async def submit_inspection(
+    body: InspectionSubmit,
+    inspection_id: str = Path(...),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> InspectionResponse:
+    insp = await _load_draft_for_current(inspection_id, current, session)
+
+    # Apply any late edits from the submit body
+    if body.odometer_miles is not None:
+        insp.odometer_miles = body.odometer_miles
+    if body.odometer_source is not None:
+        insp.odometer_source = body.odometer_source
+    if body.notes is not None:
+        insp.notes = body.notes
+    if body.incomplete_reason is not None:
+        insp.incomplete_reason = body.incomplete_reason
+
+    # Re-compute result from current defects
+    defects = (
+        await session.execute(
+            select(ReportedDefect).where(ReportedDefect.inspection_id == insp.id)
+        )
+    ).scalars().all()
+    computed = body.result_override or _compute_result(defects)
+    if insp.incomplete_reason:
+        computed = InspectionResult.INCOMPLETE
+
+    insp.result = computed
+    insp.status = InspectionStatus.SUBMITTED
+    now = utc_now()
+    insp.submitted_at = now
+    insp.updated_at = now
+    session.add(insp)
+
+    # Bump vehicle mileage if higher
+    if insp.odometer_miles is not None:
+        vehicle = (
+            await session.execute(select(Vehicle).where(Vehicle.id == insp.vehicle_id))
+        ).scalar_one_or_none()
+        if vehicle and insp.odometer_miles > vehicle.mileage:
+            vehicle.mileage = insp.odometer_miles
+            vehicle.updated_at = now
+            session.add(vehicle)
+
+    await session.commit()
+    await session.refresh(insp)
+    return await _build_inspection_response(session, insp)
+
+
+# ─────────────────────────────────────────────────────
+# Photos directly on the inspection (odometer, overview)
+# ─────────────────────────────────────────────────────
+@router.post(
+    "/{inspection_id}/photos",
+    response_model=PhotoResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Commit a photo attached to the inspection itself (odometer, overview, etc.)",
+)
+async def add_inspection_photo(
+    body: PhotoCommitRequest,
+    inspection_id: str = Path(...),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> PhotoResponse:
+    iid = _parse_inspection_id(inspection_id)
+    insp = (
+        await session.execute(select(Inspection).where(Inspection.id == iid))
+    ).scalar_one_or_none()
+    if insp is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "inspection not found")
+
+    # Photos can be added to DRAFT AND SUBMITTED inspections (e.g. vendor
+    # uploads QC after-repair photos against a submitted inspection).
+    if current.role == UserRole.DSP_OWNER and insp.dsp_id != current.organization_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not your DSP")
+
+    expected_prefix = f"photos/inspections/{insp.id}/"
+    if not body.storage_key.startswith(expected_prefix):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"storage_key must start with {expected_prefix!r}",
+        )
+
+    photo = Photo(
+        inspection_id=insp.id,
+        category=body.category,
+        storage_key=body.storage_key,
+        content_type=body.content_type,
+        size_bytes=body.size_bytes,
+        width=body.width,
+        height=body.height,
+        uploaded_by_id=current.id,
+    )
+    session.add(photo)
+    insp.updated_at = utc_now()
+    session.add(insp)
+    await session.commit()
+    await session.refresh(photo)
+
+    return PhotoResponse(
+        id=photo.id_str,
+        category=photo.category,
+        url=generate_download_url(photo.storage_key),
+        content_type=photo.content_type,
+        size_bytes=photo.size_bytes,
+        width=photo.width,
+        height=photo.height,
+        uploaded_by=current.full_name,
+        uploaded_at=photo.uploaded_at,
+        inspection_id=insp.id_str,
+    )
+
+
+@router.get(
+    "/{inspection_id}/photos",
+    response_model=PhotoListResponse,
+    summary="List photos directly attached to the inspection (odometer, overview)",
+)
+async def list_inspection_photos(
+    inspection_id: str = Path(...),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> PhotoListResponse:
+    iid = _parse_inspection_id(inspection_id)
+    insp = (
+        await session.execute(select(Inspection).where(Inspection.id == iid))
+    ).scalar_one_or_none()
+    if insp is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "inspection not found")
+    if current.role == UserRole.DSP_OWNER and insp.dsp_id != current.organization_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not your DSP")
+
+    stmt = (
+        select(Photo, User.full_name)
+        .outerjoin(User, Photo.uploaded_by_id == User.id)
+        .where(Photo.inspection_id == insp.id)
+        .where(Photo.is_deleted == False)  # noqa: E712
+        .order_by(Photo.uploaded_at.asc())
+    )
+    rows = (await session.execute(stmt)).all()
+    items = []
+    for photo, name in rows:
+        items.append(
+            PhotoResponse(
+                id=photo.id_str,
+                category=photo.category,
+                url=generate_download_url(photo.storage_key),
+                content_type=photo.content_type,
+                size_bytes=photo.size_bytes,
+                width=photo.width,
+                height=photo.height,
+                uploaded_by=name,
+                uploaded_at=photo.uploaded_at,
+                inspection_id=insp.id_str,
+            )
+        )
+    return PhotoListResponse(items=items, total=len(items))

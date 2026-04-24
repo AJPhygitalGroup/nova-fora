@@ -9,6 +9,7 @@ from app.models.inspection import (
     DefectStatus,
     Inspection,
     InspectionResult,
+    InspectionStatus,
     OdometerSource,
     ReportedDefect,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "DefectStatus",
     "Inspection",
     "InspectionResult",
+    "InspectionStatus",
     "OdometerSource",
     "OrgType",
     "Organization",
