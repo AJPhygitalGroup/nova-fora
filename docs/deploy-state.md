@@ -107,6 +107,30 @@ docker service inspect nova-fora_api \
   | grep -vE 'PASSWORD|SECRET'
 ```
 
+## Semana 3 PR 1 + PR 3 — HECHO (Abr 24)
+
+- [x] Modelo Vehicle (SQLModel) + migración `20260424_1930` aplicada
+- [x] Endpoints `/vehicles` (GET list, GET by id, POST, PATCH) con role scoping
+- [x] Accepts `VAN-XXXX` o int como path id
+- [x] Soft-delete via `isActive: false`
+- [x] Seed de 8 vans reales de Ribrell 21 (del scrape del 2026-04-15)
+- [x] Frontend `MyVehicles.jsx` wired contra API real
+- [x] Transform snake_case ↔ camelCase en cliente (bidireccional)
+- [x] Loading splash + error state con retry en la UI
+
+### Tabla vehicles en prod
+
+| # | id_str | fleet_id | VIN | year | make | model | mileage | grounded |
+|---|---|---|---|---|---|---|---|---|
+| 1 | VAN-0001 | PR013 | 1FMCU9GD5MUA00013 | 2021 | Mercedes | Sprinter 2500 | 86209 | no |
+| 2 | VAN-0002 | PR021 | ...00021 | 2021 | Mercedes | Sprinter 2500 | 91248 | no |
+| 3 | VAN-0003 | PR016 | ...00016 | 2021 | Mercedes | Sprinter 2500 | 95073 | no |
+| 4 | VAN-0004 | PR005 | ...00005 | 2020 | Ford | Transit 250 | 83646 | no |
+| 5 | VAN-0005 | PR025 | ...00025 | 2022 | Ram | ProMaster 2500 | 84267 | no |
+| 6 | VAN-0006 | PR026 | ...00026 | 2022 | Ram | ProMaster 2500 | 5200 | **yes** (brake) |
+| 7 | VAN-0007 | PR004 | ...00004 | 2020 | Ford | Transit 250 | 90708 | no |
+| 8 | VAN-0008 | PR006 | ...00006 | 2020 | Ford | Transit 250 | 99597 | no |
+
 ## Semana 2 — HECHO (Abr 24)
 
 - [x] Modelos SQLModel: Organization + User (con enums VARCHAR + TIMESTAMPTZ)
