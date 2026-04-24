@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Shield, Mail, Lock, ArrowRight, Star, UserCheck, Building2, Wrench as WrenchIcon, Briefcase, Info, Moon, Sun } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { Shield, Mail, Lock, ArrowRight, Star, UserCheck, Building2, Wrench as WrenchIcon, Briefcase, Info, Moon, Sun, AlertCircle } from 'lucide-react';
 import { demoAccounts } from '../data/mockData';
+import { auth, APIError } from '../api/client';
 
 const roleIcon = {
   dsp_owner: Building2,
@@ -20,20 +21,39 @@ const roleTint = {
 export default function Login({ onLogin, theme, onToggleTheme }) {
   const [selectedAccount, setSelectedAccount] = useState(demoAccounts[0]);
   const [email, setEmail] = useState(demoAccounts[0].email);
-  const [password, setPassword] = useState('••••••••');
+  const [password, setPassword] = useState(demoAccounts[0].password);
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
 
   const handleSelectAccount = (acc) => {
     setSelectedAccount(acc);
     setEmail(acc.email);
+    setPassword(acc.password);
+    setError(null);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    setError(null);
     setSubmitting(true);
-    setTimeout(() => {
-      onLogin(selectedAccount);
-    }, 900);
+    try {
+      const user = await auth.login(email, password);
+      onLogin(user);
+    } catch (err) {
+      if (err instanceof APIError) {
+        if (err.status === 401) {
+          setError('Invalid email or password.');
+        } else if (err.status === 403) {
+          setError(`Account ${err.detail}`);
+        } else {
+          setError(err.detail || 'Login failed. Try again.');
+        }
+      } else {
+        setError('Network error — is the API reachable?');
+      }
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -107,6 +127,17 @@ export default function Login({ onLogin, theme, onToggleTheme }) {
                 </div>
               </div>
 
+              {error && (
+                <motion.div
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="flex items-start gap-2 p-2.5 rounded-lg bg-accent-red/15 border border-accent-red/40 text-accent-red text-xs"
+                >
+                  <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                  <span>{error}</span>
+                </motion.div>
+              )}
+
               <button
                 type="submit"
                 disabled={submitting}
@@ -128,7 +159,7 @@ export default function Login({ onLogin, theme, onToggleTheme }) {
 
             <div className="mt-6 pt-6 border-t border-navy-800 flex items-center justify-center gap-2 text-[11px] text-navy-400">
               <Shield size={11} className="text-accent-green" />
-              <span>Secured with 2FA &mdash; SOC 2 Type II</span>
+              <span>JWT auth &mdash; Let's Encrypt SSL</span>
             </div>
           </motion.div>
 
@@ -196,7 +227,7 @@ export default function Login({ onLogin, theme, onToggleTheme }) {
 
             <div className="mt-4 text-[11px] text-navy-500 text-center">
               Click a card to auto-fill credentials, then click <span className="text-white font-medium">Sign In</span>.
-              Tip: you can also switch roles after login via the role badge in the top header.
+              Tip: all demo accounts share password <span className="text-white font-mono">nova2026!</span>.
             </div>
           </motion.div>
         </div>

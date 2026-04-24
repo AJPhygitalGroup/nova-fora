@@ -3,11 +3,14 @@
 // ============================================================
 
 // Demo user accounts — one per role for the role-switcher flow
+// `password` is only for auto-filling the Login form in demo mode; the real
+// password is validated server-side against the hash stored in PostgreSQL.
 export const demoAccounts = [
   {
     id: 'usr-001',
     name: 'Tamika Gambrell',
     email: 'tamika@ribrell21.com',
+    password: 'nova2026!',
     org: 'Ribrell 21',
     orgId: 'DSP-4201',
     orgType: 'dsp',
@@ -22,6 +25,7 @@ export const demoAccounts = [
     id: 'usr-002',
     name: 'Olger Joya',
     email: 'olger@dullesmidas.com',
+    password: 'nova2026!',
     org: 'Dulles Midas',
     orgId: 'V-101',
     orgType: 'vendor',
@@ -36,6 +40,7 @@ export const demoAccounts = [
     id: 'usr-003',
     name: 'David Torres',
     email: 'david@dullesmidas.com',
+    password: 'nova2026!',
     org: 'Dulles Midas',
     orgId: 'V-101',
     orgType: 'vendor',
@@ -50,6 +55,7 @@ export const demoAccounts = [
     id: 'usr-004',
     name: 'Maria Chen',
     email: 'maria@novafora.com',
+    password: 'nova2026!',
     org: 'Nova Fora',
     orgId: 'NF-000',
     orgType: 'platform',

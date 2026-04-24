@@ -1,0 +1,16 @@
+node_modules
+dist
+.vercel
+.vite
+.git
+.gitignore
+.env
+.env.local
+.env.production
+npm-debug.log*
+yarn-debug.log*
+.DS_Store
+Thumbs.db
+*.md
+Dockerfile
+.dockerignore
