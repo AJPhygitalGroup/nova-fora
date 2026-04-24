@@ -276,16 +276,21 @@ async def create_inspection(
     if vehicle is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "vehicle not found")
 
-    # Scoping: DSP owners can only inspect their own; site_admin can inspect any
+    # Who actually performs inspections, by role:
+    #   - technician (mechanic/driver doing DVIC or post-repair QC)  ← primary actor
+    #   - vendor_admin (supervising technicians)
+    #   - dsp_owner (rare, only on their own org)
+    #   - site_admin (anything, for test/override)
+    # DSP owners primarily *review* inspections — they can still create for
+    # their own vehicles but not for other DSPs.
     if current.role == UserRole.DSP_OWNER:
         if vehicle.dsp_id != current.organization_id:
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN, "vehicle belongs to another DSP"
             )
-    elif current.role not in (UserRole.SITE_ADMIN,):
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN, "only dsp_owner or site_admin can create inspections"
-        )
+    # All other authenticated roles (technician, vendor_admin, site_admin) allowed
+    # for any DSP's vehicles. In real ops the vendor-DSP contract bounds who
+    # services whom; we enforce that post-Jun 15.
 
     # Compute result from defects (unless explicit override)
     computed = body.result_override or _compute_result(body.defects)

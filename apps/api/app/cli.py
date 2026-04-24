@@ -278,10 +278,12 @@ async def cmd_seed_inspections() -> None:
             print("ERROR: Organization 'Ribrell 21' not found. Run 'seed' first.")
             sys.exit(1)
 
-        # Inspector: use Tamika (dsp_owner of Ribrell) as the acting user
-        tamika = (
+        # Inspector: David Torres (technician at Dulles Midas vendor).
+        # In real ops, technicians (drivers for DVIC, vendor techs for QC DVIC)
+        # are who fill out inspection forms. dsp_owners review, not create.
+        david = (
             await session.execute(
-                select(User).where(User.email == "tamika@ribrell21.com")
+                select(User).where(User.email == "david@dullesmidas.com")
             )
         ).scalar_one_or_none()
 
@@ -324,7 +326,7 @@ async def cmd_seed_inspections() -> None:
             insp = Inspection(
                 vehicle_id=vehicle.id,
                 dsp_id=ribrell.id,
-                inspector_id=tamika.id if tamika else None,
+                inspector_id=david.id if david else None,
                 result=result,
                 odometer_miles=mileage if mileage > 0 else None,
                 odometer_source=OdometerSource.MANUAL,
