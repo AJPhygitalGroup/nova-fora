@@ -8,13 +8,14 @@ Enum storage: we deliberately store enums as VARCHAR (not PG native enum types)
 so adding/renaming values doesn't require schema migrations. The `sa_column`
 override prevents SQLModel's default behavior of casting to `::orgtype`.
 """
+from datetime import datetime
 from enum import Enum
 
 import sqlalchemy as sa
 from sqlalchemy import Column
-from sqlmodel import Field
+from sqlmodel import Field, SQLModel
 
-from app.models.base import TimestampMixin
+from app.models.base import timestamp_column, utc_now
 
 
 class OrgType(str, Enum):
@@ -25,7 +26,7 @@ class OrgType(str, Enum):
     PLATFORM = "platform"  # Nova Fora itself (site admin's home org)
 
 
-class Organization(TimestampMixin, table=True):
+class Organization(SQLModel, table=True):
     __tablename__ = "organizations"
 
     id: int | None = Field(default=None, primary_key=True)
@@ -47,6 +48,10 @@ class Organization(TimestampMixin, table=True):
 
     # Soft-delete flag (never hard-delete orgs with historical data)
     is_active: bool = Field(default=True, index=True)
+
+    # Timestamps inline (TIMESTAMPTZ) — see app/models/base.py for why.
+    created_at: datetime = Field(default_factory=utc_now, sa_column=timestamp_column("created_at"))
+    updated_at: datetime = Field(default_factory=utc_now, sa_column=timestamp_column("updated_at"))
 
     @property
     def id_str(self) -> str:

@@ -15,9 +15,9 @@ from enum import Enum
 
 import sqlalchemy as sa
 from sqlalchemy import Column
-from sqlmodel import Field
+from sqlmodel import Field, SQLModel
 
-from app.models.base import TimestampMixin
+from app.models.base import timestamp_column, utc_now
 
 
 class UserRole(str, Enum):
@@ -34,7 +34,7 @@ class UserStatus(str, Enum):
     DISABLED = "disabled"  # soft-disabled by admin
 
 
-class User(TimestampMixin, table=True):
+class User(SQLModel, table=True):
     __tablename__ = "users"
 
     id: int | None = Field(default=None, primary_key=True)
@@ -81,3 +81,7 @@ class User(TimestampMixin, table=True):
 
     # Who invited this user (nullable = created by system / seed / signup)
     invited_by_id: int | None = Field(default=None, foreign_key="users.id")
+
+    # Timestamps (TIMESTAMPTZ) — see app/models/base.py for why inline.
+    created_at: datetime = Field(default_factory=utc_now, sa_column=timestamp_column("created_at"))
+    updated_at: datetime = Field(default_factory=utc_now, sa_column=timestamp_column("updated_at"))

@@ -1,8 +1,13 @@
-"""Base model utilities — shared across all SQLModel tables."""
+"""Base model utilities — shared across all SQLModel tables.
+
+We don't use a TimestampMixin with sa_column because SQLModel has a known
+limitation: Column objects can't be shared across multiple Table instances,
+and mixin inheritance doesn't clone them. Each table defines its own
+created_at / updated_at explicitly via `make_timestamp_cols()`.
+"""
 from datetime import UTC, datetime
 
 from sqlalchemy import Column, DateTime, text
-from sqlmodel import Field, SQLModel
 
 
 def utc_now() -> datetime:
@@ -10,32 +15,15 @@ def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-class TimestampMixin(SQLModel):
-    """Adds created_at / updated_at to any table.
+def timestamp_column(name: str) -> Column:
+    """Factory: returns a new Column instance for created_at/updated_at.
 
-    Note: updated_at is NOT auto-updated by the DB — each service method must
-    set it on mutation. SQLAlchemy's `onupdate` hook only fires on ORM-level
-    updates and we want explicit control.
-
-    Columns are TIMESTAMPTZ (timezone-aware) to match the migration. Python
-    datetimes must be tz-aware (see `utc_now()`).
+    Each call creates a fresh Column, so it's safe to use in multiple tables.
+    Columns are TIMESTAMPTZ (timezone=True) to match the migration.
     """
-
-    created_at: datetime = Field(
-        default_factory=utc_now,
-        sa_column=Column(
-            "created_at",
-            DateTime(timezone=True),
-            nullable=False,
-            server_default=text("now()"),
-        ),
-    )
-    updated_at: datetime = Field(
-        default_factory=utc_now,
-        sa_column=Column(
-            "updated_at",
-            DateTime(timezone=True),
-            nullable=False,
-            server_default=text("now()"),
-        ),
+    return Column(
+        name,
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
     )
