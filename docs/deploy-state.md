@@ -1,6 +1,6 @@
 # Estado del deploy — Nova Fora
 
-> Última actualización: 2026-04-24 · Semana 1 del sprint completada.
+> Última actualización: 2026-04-24 · **Semanas 1 + 2 completadas en día 1.**
 
 ## URLs en producción
 
@@ -94,10 +94,28 @@ docker service inspect nova-fora_api \
   | grep -vE 'PASSWORD|SECRET'
 ```
 
-## Qué falta (Semana 2 del sprint)
+## Semana 2 — HECHO (Abr 24)
 
-- [ ] Modelos SQLModel: Organization, User, Vehicle, Inspection, WorkOrder
-- [ ] Alembic configurado + primera migración
-- [ ] Endpoints de auth: `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/me`
-- [ ] Seed users (Tamika, Olger, David, Maria — las 4 cuentas demo)
-- [ ] Wiring del `Login.jsx` del frontend demo contra `/auth/login`
+- [x] Modelos SQLModel: Organization + User (con enums VARCHAR + TIMESTAMPTZ)
+- [x] Alembic configurado, migración `20260424_1600` aplicada en prod
+- [x] JWT auth: `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/me`
+- [x] bcrypt directo (sin passlib — incompatibilidad con bcrypt 4+)
+- [x] Seed: 3 orgs + 4 usuarios demo, todos login verificado end-to-end
+
+### Usuarios demo (password: `nova2026!`)
+
+| Email | Org | org_id | Role |
+|---|---|---|---|
+| tamika@ribrell21.com | Ribrell 21 | DSP-0004 | dsp_owner |
+| olger@dullesmidas.com | Dulles Midas | V-005 | vendor_admin |
+| david@dullesmidas.com | Dulles Midas | V-005 | technician |
+| maria@novafora.com | Nova Fora | NF-006 | site_admin |
+
+## Qué falta (Semana 3 — Vehicles + Inspections)
+
+- [ ] Modelo Vehicle (+ migration)
+- [ ] Modelo Inspection + ReportedDefect + Photo (+ migration)
+- [ ] Endpoints `/vehicles` (CRUD + list + filter)
+- [ ] Endpoints `/inspections` (POST, GET, PATCH, submit)
+- [ ] Endpoint `/inspections/{id}/photos` con presigned S3/MinIO URL
+- [ ] Wiring del `Login.jsx` del frontend demo contra `/auth/login` (cierra el loop visual)
