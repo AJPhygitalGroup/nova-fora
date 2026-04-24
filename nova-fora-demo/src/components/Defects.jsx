@@ -3,8 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { TodaysDefectsTable } from './RealDVIC';
 import { CreateWorkOrderModal } from './FleetSnapshot';
-import { fleetSnapshotVans } from '../data/mockData';
-import { defects as defectsApi, APIError } from '../api/client';
+import { defects as defectsApi, vehicles as vehiclesApi, APIError } from '../api/client';
 
 // ─────────────────────────────────────────────────────
 // Transform API defect -> shape expected by TodaysDefectsTable
@@ -17,7 +16,6 @@ const SEVERITY_TO_LABEL = {
 };
 
 // Map API workflow status to the display label the existing component renders.
-// The frontend's defectStatusColors keys are 'Rush Order' | 'Scheduled' | 'Repair Ordered' | 'Logged'.
 const STATUS_TO_LABEL = {
   pending: 'Logged',
   acknowledged: 'Repair Ordered',
@@ -29,26 +27,48 @@ const STATUS_TO_LABEL = {
 
 function fromApiDefect(d) {
   return {
-    id: d.id,                           // FD-008
-    van: d.van || d.fleetId || '',      // "VAN-0001" (UI shows as monospaced code)
+    id: d.id,                              // FD-008 (defect's own id)
+    // Display: show the fleet_id (e.g. "PR013") — what the driver sees on
+    // the van. The internal "VAN-0001" is kept separately for lookups.
+    van: d.fleetId || d.van || '—',
+    vanInternalId: d.van,                  // "VAN-0001" — for vehicle lookup
+    plate: d.plate || null,
     desc: d.description,
     category: d.category || d.section || '—',
     severity: SEVERITY_TO_LABEL[d.severity] || d.severity,
     status: STATUS_TO_LABEL[d.status] || d.status,
-    // Inspector reference — we stash the name as both id and name so the
-    // existing `daList.find(x => x.id === d.da)` lookup works without changes.
     da: d.reportedBy || '—',
     photo: (d.photoCount || 0) > 0,
-    // Keep raw for actions
+    // Raw fields for any debug / advanced UI
     _rawStatus: d.status,
     _rawSeverity: d.severity,
     _fleetId: d.fleetId,
   };
 }
 
+// Transform API vehicle -> shape CreateWorkOrderModal expects
+function fromApiVehicleForModal(v) {
+  return {
+    id: v.id,                  // VAN-0001
+    fleetId: v.fleetId,        // PR013 (useful in display)
+    dspId: v.dspId,
+    dsp: v.dsp,
+    model: `${v.year} ${v.make} ${v.model}`,
+    plate: v.plate,
+    vin: v.vin,
+    year: v.year,
+    make: v.make,
+    mileage: v.mileage || 0,
+    defectCount: v.defectCount ?? 0,
+    severity: v.severity || 'clean',
+    grounded: !!v.grounded,
+  };
+}
+
 // ─────────────────────────────────────────────────────
 export default function Defects({ user }) {
   const [rawDefects, setRawDefects] = useState([]);
+  const [modalVans, setModalVans] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [createWOContext, setCreateWOContext] = useState(null);
@@ -57,9 +77,13 @@ export default function Defects({ user }) {
     setLoading(true);
     setError(null);
     try {
-      // Server-side role scoping: dsp_owner auto-scoped, vendor/admin see all.
-      const res = await defectsApi.list({ perPage: 200 });
-      setRawDefects(res.items);
+      // Fetch both in parallel — the modal needs the full vehicle list.
+      const [defectsRes, vehiclesRes] = await Promise.all([
+        defectsApi.list({ perPage: 200 }),
+        vehiclesApi.list({ perPage: 200 }),
+      ]);
+      setRawDefects(defectsRes.items);
+      setModalVans(vehiclesRes.items.map(fromApiVehicleForModal));
     } catch (err) {
       setError(err instanceof APIError ? (err.detail || 'Load failed') : 'Network error');
     } finally {
@@ -78,8 +102,7 @@ export default function Defects({ user }) {
   const scheduledCount = displayDefects.filter((d) => d.status === 'Scheduled').length;
   const rushOrderCount = displayDefects.filter((d) => d.status === 'Rush Order').length;
 
-  // Synthetic DA list: the existing table looks up `daList.find(x => x.id === d.da)`.
-  // We use the inspector name as its own id so the lookup succeeds with no code changes.
+  // Synthetic DA list so the existing `daList.find(x => x.id === d.da)` works.
   const daList = useMemo(() => {
     const names = new Set(displayDefects.map((d) => d.da).filter(Boolean));
     return Array.from(names).map((name) => ({ id: name, name }));
@@ -95,27 +118,26 @@ export default function Defects({ user }) {
   };
 
   const handleCreateWO = async (d) => {
-    // Real Work Order API comes in Semana 4. For now we open the existing
-    // modal (local state only) AND mark the defect as acknowledged in the API
-    // so the workflow reflects that action has been taken.
-    try {
-      await defectsApi.updateStatus(d.id, 'acknowledged');
-    } catch (err) {
-      // Non-fatal — still show the modal so user sees progress.
-      console.warn('ACK failed, continuing to modal:', err);
-    }
-    const fleetVan = fleetSnapshotVans.find((fv) => fv.id === d.van);
+    // Pre-fill the modal with the vehicle the defect belongs to — no search needed.
+    const matchingVan = modalVans.find((v) => v.id === d.vanInternalId);
     setCreateWOContext({
-      van: fleetVan || null,
+      van: matchingVan || null,
       defect: {
         section: d.category || '',
         part: d.category || '',
         description: d.desc,
         severity: d.severity,
       },
+      defectId: d.id,
     });
-    // Reload in background so the status shows as 'Repair Ordered' after modal closes
-    reload();
+    // ACK the defect in the backend so the persistent status shows 'Repair Ordered'
+    try {
+      await defectsApi.updateStatus(d.id, 'acknowledged');
+      // Reload so the row shows the new status when the modal closes
+      reload();
+    } catch (err) {
+      console.warn('ACK failed, modal still open:', err);
+    }
   };
 
   // ── Loading ────────────────────────────────────────
@@ -153,7 +175,9 @@ export default function Defects({ user }) {
     <div>
       <div className="mb-4 sm:mb-6">
         <h2 className="text-2xl font-bold text-white mb-1">Defects</h2>
-        <p className="text-navy-400 text-sm">All reported defects &mdash; filter by vendor, reject or convert to work orders</p>
+        <p className="text-navy-400 text-sm">
+          All reported defects &mdash; filter by vendor, reject or convert to work orders
+        </p>
       </div>
 
       <TodaysDefectsTable
@@ -164,7 +188,7 @@ export default function Defects({ user }) {
         rushOrderCount={rushOrderCount}
         onReject={handleReject}
         onCreateWO={handleCreateWO}
-        onOpenCreateDefect={() => { /* hook to existing Create Defect flow if desired */ }}
+        onOpenCreateDefect={() => { /* hook when Create Defect flow is wired */ }}
       />
 
       <AnimatePresence>
@@ -172,7 +196,7 @@ export default function Defects({ user }) {
           <CreateWorkOrderModal
             initialVan={createWOContext.van}
             initialDefect={createWOContext.defect}
-            vans={fleetSnapshotVans}
+            vans={modalVans}
             user={user}
             onClose={() => setCreateWOContext(null)}
           />

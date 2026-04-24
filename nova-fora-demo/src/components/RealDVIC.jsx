@@ -2090,9 +2090,23 @@ export const VENDOR_TYPES = [
   { id: 'detailing', label: 'Detailing', categories: ['Cleanliness', 'Interior', 'Detailing'] },
 ];
 
+// Map a defect's (display) status to the row action state so the UI reflects
+// persisted backend state — not just ephemeral button clicks.
+const WO_CREATED_STATUSES = new Set(['Repair Ordered', 'Scheduled', 'Rush Order']);
+const REJECTED_STATUSES = new Set(['Rejected']);
+
+function deriveActionFromStatus(d) {
+  if (REJECTED_STATUSES.has(d.status)) return 'rejected';
+  if (WO_CREATED_STATUSES.has(d.status)) return 'wo_created';
+  return null;
+}
+
 export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onOpenCreateDefect, scheduledCount, rushOrderCount, title = "Today's Defects" }) {
   const [activeVendor, setActiveVendor] = useState('all');
-  const [rowActions, setRowActions] = useState({}); // id → 'rejected' | 'wo_created'
+  // rowActions: ephemeral per-click state (rare — only if the parent DIDN'T
+  // yet reload after the API call). The effective action is derived from
+  // defect.status so refreshes / backend reloads persist correctly.
+  const [rowActions, setRowActions] = useState({});
 
   const filtered = defects.filter((d) => {
     if (activeVendor === 'all') return true;
@@ -2173,7 +2187,8 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onOp
           <tbody>
             {filtered.map((d) => {
               const da = daList.find((x) => x.id === d.da);
-              const action = rowActions[d.id];
+              // Prefer ephemeral click state, fall back to derived-from-status
+              const action = rowActions[d.id] || deriveActionFromStatus(d);
               return (
                 <tr key={d.id} className={`border-b border-navy-800/50 last:border-b-0 transition-colors ${
                   action === 'rejected' ? 'bg-accent-red/5 opacity-60'
