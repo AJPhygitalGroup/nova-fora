@@ -216,6 +216,79 @@ export const vehicles = {
 };
 
 // ─────────────────────────────────────────────────────
+// Inspections module
+// ─────────────────────────────────────────────────────
+export const inspections = {
+  /**
+   * GET /inspections
+   * params: { dspId?, vehicleId?, dateFrom?, dateTo?, result?, page?, perPage? }
+   */
+  list(params = {}) {
+    const q = new URLSearchParams();
+    const paramMap = {
+      dspId: 'dsp_id',
+      vehicleId: 'vehicle_id',
+      dateFrom: 'date_from',
+      dateTo: 'date_to',
+      perPage: 'per_page',
+    };
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined || v === null || v === '') continue;
+      q.set(paramMap[k] || k, String(v));
+    }
+    const qs = q.toString();
+    return apiFetch(`/inspections${qs ? '?' + qs : ''}`);
+  },
+
+  /** GET /inspections/{id} — full detail with defects embedded */
+  get(id) {
+    return apiFetch(`/inspections/${encodeURIComponent(id)}`);
+  },
+
+  /** POST /inspections — one-shot create + submit */
+  create(body) {
+    return apiFetch('/inspections', {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+};
+
+// ─────────────────────────────────────────────────────
+// Defects module
+// ─────────────────────────────────────────────────────
+export const defects = {
+  /**
+   * GET /defects — flat list across all inspections (role-scoped server-side).
+   * params: { dspId?, status?, severity?, vehicleId?, dateFrom?, dateTo?, page?, perPage? }
+   */
+  list(params = {}) {
+    const q = new URLSearchParams();
+    const paramMap = {
+      dspId: 'dsp_id',
+      vehicleId: 'vehicle_id',
+      dateFrom: 'date_from',
+      dateTo: 'date_to',
+      perPage: 'per_page',
+    };
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined || v === null || v === '') continue;
+      q.set(paramMap[k] || k, String(v));
+    }
+    const qs = q.toString();
+    return apiFetch(`/defects${qs ? '?' + qs : ''}`);
+  },
+
+  /** PATCH /defects/{id} — update workflow status */
+  updateStatus(id, status) {
+    return apiFetch(`/defects/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    });
+  },
+};
+
+// ─────────────────────────────────────────────────────
 // camelCase → snake_case (for request bodies)
 // ─────────────────────────────────────────────────────
 const camelToSnakeStr = (s) => s.replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());

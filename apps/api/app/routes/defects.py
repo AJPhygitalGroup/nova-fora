@@ -12,6 +12,8 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import func, select
 
+from sqlalchemy.orm import aliased
+
 from app.auth.dependencies import get_current_user
 from app.db import get_session
 from app.models.base import utc_now
@@ -46,12 +48,14 @@ async def list_defects(
     current: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> DefectListResponse:
-    # JOIN: defects → inspections → vehicles → organizations
+    # JOIN: defects → inspections → vehicles → organizations, + LEFT JOIN inspector
+    InspectorUser = aliased(User)
     base_query = (
-        select(ReportedDefect, Inspection, Vehicle, Organization)
+        select(ReportedDefect, Inspection, Vehicle, Organization, InspectorUser)
         .join(Inspection, ReportedDefect.inspection_id == Inspection.id)
         .join(Vehicle, Inspection.vehicle_id == Vehicle.id)
         .join(Organization, Inspection.dsp_id == Organization.id)
+        .outerjoin(InspectorUser, Inspection.inspector_id == InspectorUser.id)
     )
     count_query = (
         select(func.count())
@@ -99,13 +103,15 @@ async def list_defects(
     rows = (await session.execute(base_query)).all()
 
     items = []
-    for defect, inspection, vehicle, org in rows:
+    for defect, inspection, vehicle, org, inspector in rows:
         item = DefectResponse.from_defect(defect, inspection.id_str)
         item.van = vehicle.id_str
         item.fleet_id = vehicle.fleet_id
         item.plate = vehicle.plate
         item.dsp = org.name
         item.dsp_id = org.id_str
+        item.reported_by = inspector.full_name if inspector else None
+        item.inspection_submitted_at = inspection.submitted_at
         items.append(item)
 
     return DefectListResponse(items=items, total=total, page=page, per_page=per_page)

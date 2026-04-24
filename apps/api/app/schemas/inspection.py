@@ -44,11 +44,13 @@ class DefectResponse(BaseModel):
 
     # Denormalized for flat /defects view (fills in when returned from /defects
     # endpoint — optional in embedded view inside an inspection).
-    van: str | None = None      # "VAN-0004"
-    fleet_id: str | None = None # "PR005"
-    plate: str | None = None    # license plate
-    dsp: str | None = None      # "Ribrell 21"
-    dsp_id: str | None = None   # "DSP-0004"
+    van: str | None = None        # "VAN-0004"
+    fleet_id: str | None = None   # "PR005"
+    plate: str | None = None      # license plate
+    dsp: str | None = None        # "Ribrell 21"
+    dsp_id: str | None = None     # "DSP-0004"
+    reported_by: str | None = None  # inspector.full_name, e.g. "David Torres"
+    inspection_submitted_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
