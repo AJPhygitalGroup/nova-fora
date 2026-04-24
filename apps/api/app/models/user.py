@@ -73,7 +73,11 @@ class User(TimestampMixin, table=True):
     )
     station: str | None = Field(default=None, max_length=20)  # DSP station: DSE4, DWA6...
     two_fa_enabled: bool = Field(default=False)
-    last_login_at: datetime | None = Field(default=None)
+    # TIMESTAMPTZ to match the migration — tz-aware datetimes only.
+    last_login_at: datetime | None = Field(
+        default=None,
+        sa_column=Column("last_login_at", sa.DateTime(timezone=True), nullable=True),
+    )
 
     # Who invited this user (nullable = created by system / seed / signup)
     invited_by_id: int | None = Field(default=None, foreign_key="users.id")
