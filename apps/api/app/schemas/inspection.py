@@ -18,15 +18,39 @@ from app.models.inspection import (
 # Defect schemas
 # ─────────────────────────────────────────────────────
 class DefectCreate(BaseModel):
-    """One defect entry in POST /inspections body."""
+    """One defect entry. Supports BOTH legacy (free-text) and v2 (catalog)
+    schemas during the transition. New clients should use v2 fields.
 
-    section: str = Field(min_length=1, max_length=100)
-    part: str = Field(min_length=1, max_length=100)
-    description: str = Field(min_length=1, max_length=2000)
-    severity: DefectSeverity
+    Validation order at the route layer:
+      - If `part_v2` is set → treat as v2: validate against catalog,
+        derive severity from catalog (overridable via severity_override).
+      - Else if legacy fields are set → store as legacy free-text rows.
+    """
+
+    # ── v2 fields (preferred) ──
+    part_v2: str | None = Field(
+        default=None, max_length=40,
+        description="DefectPart enum value, e.g. 'tire'."
+    )
+    position: str | None = Field(default=None, max_length=30)
+    defect_type_v2: str | None = Field(default=None, max_length=40)
+    details: dict = Field(default_factory=dict)
+    severity_override: str | None = Field(
+        default=None, pattern=r"^(low|medium|high|critical)$"
+    )
+    notes: str | None = Field(default=None, max_length=2000)
+
+    # ── legacy fields (transition only) ──
+    section: str | None = Field(default=None, max_length=100)
+    part: str | None = Field(default=None, max_length=100)
+    description: str | None = Field(default=None, max_length=2000)
+    severity: DefectSeverity | None = None
     category: str | None = Field(default=None, max_length=100)
 
     model_config = ConfigDict(extra="forbid")
+
+    def is_v2(self) -> bool:
+        return bool(self.part_v2 and self.defect_type_v2)
 
 
 class DefectResponse(BaseModel):

@@ -4,7 +4,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routes import auth, defects, health, inspections, uploads, vehicles
+from app.routes import (
+    auth,
+    defect_catalog,
+    defects,
+    health,
+    inspections,
+    uploads,
+    vehicles,
+)
 from app.settings import get_settings
 from app.storage import ensure_bucket
 
@@ -70,6 +78,7 @@ app.include_router(auth.router)
 app.include_router(vehicles.router)
 app.include_router(inspections.router)
 app.include_router(defects.router)
+app.include_router(defect_catalog.router)
 app.include_router(uploads.router)
 
 

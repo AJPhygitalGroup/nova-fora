@@ -8,6 +8,7 @@ from sqlmodel import func, select
 from app.auth.dependencies import get_current_user
 from app.db import get_session
 from app.models.base import utc_now
+from app.models.defect_catalog import DefectPart, DefectPosition, DefectType
 from app.models.inspection import (
     DefectSeverity,
     Inspection,
@@ -33,8 +34,126 @@ from app.schemas.photo import (
     PhotoListResponse,
     PhotoResponse,
 )
+from app.services.defect_catalog import (
+    CatalogValidationError,
+    validate_v2_defect,
+)
 from app.storage.s3 import delete_object, generate_download_url
 from app.routes.vehicles import _parse_vehicle_id  # reuse the VAN-XXXX parser
+
+
+# ─────────────────────────────────────────────────────
+# v2 defect helpers — used by both atomic POST /inspections and
+# incremental POST /inspections/{id}/defects.
+# ─────────────────────────────────────────────────────
+async def _create_defect_row(
+    session: AsyncSession,
+    inspection_id: int,
+    body: DefectCreate,
+    inspector_id: int,
+) -> ReportedDefect:
+    """Creates a ReportedDefect row from either v2 catalog data or legacy
+    free-text fields. Validates v2 inputs against the catalog before insert
+    and derives the severity from the catalog (overridable per row).
+
+    Raises CatalogValidationError on v2 validation failures (caller maps to 400).
+    """
+    now = utc_now()
+    if body.is_v2():
+        # Parse enums (Pydantic gave us strings since the schema accepts str)
+        try:
+            part_enum = DefectPart(body.part_v2)
+            type_enum = DefectType(body.defect_type_v2)
+        except ValueError as e:
+            raise CatalogValidationError(str(e)) from e
+        pos_enum: DefectPosition | None = None
+        if body.position:
+            try:
+                pos_enum = DefectPosition(body.position)
+            except ValueError as e:
+                raise CatalogValidationError(f"unknown position: {body.position}") from e
+
+        default_severity = await validate_v2_defect(
+            session, part_enum, pos_enum, type_enum, body.details
+        )
+        severity_resolved = body.severity_override or default_severity
+
+        rd = ReportedDefect(
+            inspection_id=inspection_id,
+            # Legacy mirror columns (kept populated for backward compat lists)
+            section=_section_from_part(part_enum),
+            part=part_enum.value,
+            description=(
+                body.notes
+                or _human_summary(part_enum, pos_enum, type_enum, body.details)
+            ),
+            category=None,
+            severity=DefectSeverity(severity_resolved),
+            # v2 columns (canonical)
+            part_enum=part_enum.value,
+            position=pos_enum.value if pos_enum else None,
+            defect_type_enum=type_enum.value,
+            details=body.details or {},
+            notes=body.notes,
+            reported_by_id=inspector_id,
+            reported_at=now,
+        )
+        return rd
+
+    # ── Legacy path ──
+    if not (body.part and body.description and body.severity):
+        raise CatalogValidationError(
+            "must provide either v2 fields (part_v2 + defect_type_v2) or "
+            "legacy fields (section + part + description + severity)"
+        )
+    return ReportedDefect(
+        inspection_id=inspection_id,
+        section=body.section or "Other",
+        part=body.part,
+        description=body.description,
+        category=body.category,
+        severity=body.severity,
+        # No v2 fields populated → row is legacy
+        reported_by_id=inspector_id,
+        reported_at=now,
+    )
+
+
+# Map a part to a generic "section" label for the legacy column. Best-effort
+# only — the v2 catalog is the source of truth, this is just for backward-
+# compat list views that still read 'section'.
+_SECTION_BY_PART_PREFIX: dict[str, str] = {
+    "tire": "7. Tires", "rim": "7. Tires", "wheel_nut": "7. Tires", "mounting_equipment": "7. Tires",
+    "headlight": "1. Front Side", "windshield": "1. Front Side", "wiper_blade": "1. Front Side",
+    "tail_light": "4. Rear", "rear_camera": "4. Rear", "rear_cargo_door": "4. Rear",
+    "side_mirror": "2. Driver Side", "side_panel": "2. Driver Side",
+    "seatbelt": "5. In-Cab", "driver_seat": "5. In-Cab", "steering_wheel": "5. In-Cab",
+    "service_brake": "6. Brakes", "parking_brake": "6. Brakes",
+    "license_plate": "11. Other", "inspection_sticker": "11. Other", "registration_sticker": "11. Other",
+}
+
+
+def _section_from_part(part: DefectPart) -> str:
+    return _SECTION_BY_PART_PREFIX.get(part.value, "11. Other")
+
+
+def _human_summary(
+    part: DefectPart,
+    position: DefectPosition | None,
+    defect_type: DefectType,
+    details: dict,
+) -> str:
+    """Generate a 1-line human description for legacy `description` column."""
+    pos_str = f" {position.value.replace('_', ' ')}" if position else ""
+    base = f"{part.value.replace('_', ' ')}{pos_str} — {defect_type.value.replace('_', ' ')}"
+    if "tread_depth_32nds" in details:
+        base += f" ({details['tread_depth_32nds']}/32)"
+    if details.get("in_drivers_line_of_sight"):
+        base += " (in driver's line of sight)"
+    if "lamp_type" in details:
+        lamps = ", ".join(details["lamp_type"])
+        base += f" — {lamps}"
+    return base.strip()
 
 router = APIRouter(prefix="/inspections", tags=["inspections"])
 
@@ -428,15 +547,12 @@ async def create_inspection(
     session.add(insp)
     await session.flush()
 
+    # Defects: each goes through v2 validation if v2 fields are provided.
     for d in body.defects:
-        rd = ReportedDefect(
-            inspection_id=insp.id,
-            section=d.section,
-            part=d.part,
-            description=d.description,
-            category=d.category,
-            severity=d.severity,
-        )
+        try:
+            rd = await _create_defect_row(session, insp.id, d, current.id)
+        except CatalogValidationError as e:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
         session.add(rd)
 
     # Update vehicle's last-known mileage if new inspection reports higher value
@@ -496,14 +612,10 @@ async def add_defect_to_draft(
 ) -> DefectResponse:
     insp = await _load_draft_for_current(inspection_id, current, session)
 
-    defect = ReportedDefect(
-        inspection_id=insp.id,
-        section=body.section,
-        part=body.part,
-        description=body.description,
-        category=body.category,
-        severity=body.severity,
-    )
+    try:
+        defect = await _create_defect_row(session, insp.id, body, current.id)
+    except CatalogValidationError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
     session.add(defect)
     insp.updated_at = utc_now()
     session.add(insp)
