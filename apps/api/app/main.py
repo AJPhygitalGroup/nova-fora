@@ -12,6 +12,7 @@ from app.routes import (
     inspections,
     uploads,
     vehicles,
+    work_orders,
 )
 from app.settings import get_settings
 from app.storage import ensure_bucket
@@ -79,6 +80,7 @@ app.include_router(vehicles.router)
 app.include_router(inspections.router)
 app.include_router(defects.router)
 app.include_router(defect_catalog.router)
+app.include_router(work_orders.router)
 app.include_router(uploads.router)
 
 

@@ -27,6 +27,12 @@ from app.models.organization import OrgType, Organization
 from app.models.photo import Photo, PhotoCategory
 from app.models.user import User, UserRole, UserStatus
 from app.models.vehicle import Vehicle
+from app.models.work_order import (
+    WorkOrder,
+    WorkOrderFlag,
+    WorkOrderItem,
+    WorkOrderStatus,
+)
 
 __all__ = [
     "DefectDetailsSchema",
@@ -52,6 +58,10 @@ __all__ = [
     "UserRole",
     "UserStatus",
     "Vehicle",
+    "WorkOrder",
+    "WorkOrderFlag",
+    "WorkOrderItem",
+    "WorkOrderStatus",
     "timestamp_column",
     "utc_now",
 ]

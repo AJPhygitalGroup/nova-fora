@@ -24,6 +24,7 @@ from app.db import get_session
 from app.models.inspection import Inspection, ReportedDefect
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
+from app.models.work_order import WorkOrder
 from app.routes.inspections import _parse_inspection_id
 from app.routes.vehicles import _parse_vehicle_id  # shared helper
 from app.schemas.photo import (
@@ -46,6 +47,19 @@ def _parse_defect_id(raw: str) -> int:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             f"invalid defect id: {raw!r}. Use int or 'FD-XXX'.",
+        ) from None
+
+
+def _parse_wo_id(raw: str) -> int:
+    s = raw.strip().upper()
+    if s.startswith("WO-"):
+        s = s[3:]
+    try:
+        return int(s)
+    except ValueError:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"invalid work-order id: {raw!r}. Use int or 'WO-XXXXX'.",
         ) from None
 
 
@@ -89,10 +103,14 @@ async def _check_parent_access(
         return ("inspections", insp.id)
 
     if kind == UploadKind.WORK_ORDER:
-        raise HTTPException(
-            status.HTTP_501_NOT_IMPLEMENTED,
-            "work_order uploads come in Semana 4",
-        )
+        wid = _parse_wo_id(parent_id)
+        wo = (
+            await session.execute(select(WorkOrder).where(WorkOrder.id == wid))
+        ).scalar_one_or_none()
+        if wo is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "work order not found")
+        _require_wo_scope(wo, current)
+        return ("work_orders", wo.id)
 
     raise HTTPException(status.HTTP_400_BAD_REQUEST, f"unknown kind: {kind}")
 
@@ -106,6 +124,22 @@ def _require_inspection_scope(insp: Inspection | None, current: User) -> None:
         and insp.dsp_id != current.organization_id
     ):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "not your inspection")
+
+
+def _require_wo_scope(wo: WorkOrder, current: User) -> None:
+    """WO photos: visible parties (DSP, vendor, assigned tech) + site_admin."""
+    if current.role == UserRole.SITE_ADMIN:
+        return
+    if (
+        current.role == UserRole.DSP_OWNER
+        and wo.dsp_id != current.organization_id
+    ):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not your work order")
+    if (
+        current.role in (UserRole.VENDOR_ADMIN, UserRole.TECHNICIAN)
+        and wo.vendor_id != current.organization_id
+    ):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not your work order")
 
 
 @router.post("/presigned", response_model=PresignedUploadResponse)
