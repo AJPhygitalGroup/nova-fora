@@ -1,12 +1,13 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ClipboardList, Search, Filter, X, Check, CheckCircle2, AlertTriangle, Clock,
   User, Wrench, Camera, FileText, Send, XCircle, PlayCircle, PauseCircle,
   ChevronDown, ChevronUp, MoreVertical, Plus, ArrowRight, Flame, RefreshCw, Hourglass,
-  Truck, Building2, MessageSquare, CircleDashed, Briefcase, PackageCheck
+  Truck, Building2, MessageSquare, CircleDashed, Briefcase, PackageCheck, Loader2
 } from 'lucide-react';
-import { workOrdersData, WO_DECLINE_REASONS, availableTechnicians } from '../data/mockData';
+import { WO_DECLINE_REASONS } from '../data/mockData';
+import { workOrders as woApi, directory as dirApi } from '../api/client';
 import Badge from './ui/Badge';
 
 // ============================================================
@@ -30,6 +31,125 @@ const FLAG_CONFIG = {
 const SEVERITY_COLORS = { Low: 'blue', Medium: 'gold', High: 'orange', Critical: 'red' };
 
 // ============================================================
+// API → UI shape adapter
+// The original UI was built around a flat shape with section/part/severity at
+// the WO level. The new API has those per-item (since 1 WO can bundle N defects).
+// We surface the *first item* fields up to the WO level for the existing UI to
+// render unchanged, plus pass through the items array for richer views.
+// ============================================================
+function mapApiToUi(api) {
+  const firstItem = api.items?.[0];
+  // Notes: backend stores as a single text field with timestamped lines joined
+  // by "\n\n". UI expects an array of strings.
+  const notesArr = api.notes
+    ? api.notes.split(/\n\n+/).map((s) => s.trim()).filter(Boolean)
+    : [];
+  // UI severity is Title-cased ("Low" / "Medium" / ...); backend is lower.
+  const sevRaw = firstItem?.defectSeverity || 'medium';
+  const sev = sevRaw.charAt(0).toUpperCase() + sevRaw.slice(1);
+  return {
+    // Pass-through
+    id: api.id,
+    dspId: api.dspId,
+    dspName: api.dsp,
+    vendorId: api.vendorId,
+    vendorName: api.vendor,
+    vehicleId: api.vehicleId,
+    fleetId: api.fleetId,
+    plate: api.plate,
+    year: api.year,
+    make: api.make,
+    model: api.model,
+    vin: api.vin,
+    lastMileage: api.lastMileage,
+    status: api.status,
+    flags: api.flags || [],
+    scheduledAt: api.scheduledAt,
+    startedAt: api.startedAt,
+    completedAt: api.completedAt,
+    roNumber: api.roNumber,
+    fmc: api.fmc,
+    partsCost: api.partsCost,
+    laborCost: api.laborCost,
+    totalCost: api.totalCost,
+    declinedReason: api.declineReason,
+    canceledReason: api.cancelReason,
+    photoCount: api.photoCount,
+    itemCount: api.itemCount,
+    items: api.items || [],
+    createdAt: api.createdAt,
+    updatedAt: api.updatedAt,
+    createdBy: api.createdBy,
+    assignedTechnician: api.assignedTechnician,
+    assignedTechnicianId: api.assignedTechnicianId,
+    // Surfaced from first item (legacy UI compat)
+    section: firstItem?.defectSection || null,
+    part: firstItem
+      ? (firstItem.defectPartLabel
+          ? `${firstItem.defectPartIcon || ''} ${firstItem.defectPartLabel}${firstItem.defectPositionLabel ? ` (${firstItem.defectPositionLabel})` : ''}`.trim()
+          : firstItem.defectPart)
+      : null,
+    description: firstItem
+      ? (firstItem.defectTypeLabel
+          ? `${firstItem.defectTypeIcon || ''} ${firstItem.defectTypeLabel}`.trim() +
+            (firstItem.repairNotes ? ` — ${firstItem.repairNotes}` : '')
+          : firstItem.defectDescription)
+      : null,
+    severity: sev,
+    reportedBy: api.createdBy,
+    notes: notesArr,
+  };
+}
+
+function mapApiListToUi(apiList) {
+  // The list endpoint returns a lighter shape (no items inline); we keep
+  // a sensible UI mapping using the `summary` field for the part/desc.
+  return apiList.map((api) => {
+    const notesArr = []; // list endpoint doesn't include notes
+    return {
+      id: api.id,
+      dspId: api.dspId,
+      dspName: api.dsp,
+      vendorId: api.vendorId,
+      vendorName: api.vendor,
+      vehicleId: api.vehicleId,
+      fleetId: api.fleetId,
+      plate: api.plate,
+      year: null,
+      make: null,
+      model: null,
+      vin: null,
+      lastMileage: null,
+      status: api.status,
+      flags: api.flags || [],
+      scheduledAt: api.scheduledAt,
+      startedAt: null,
+      completedAt: api.completedAt,
+      roNumber: api.roNumber,
+      fmc: null,
+      partsCost: null,
+      laborCost: null,
+      totalCost: api.totalCost,
+      declinedReason: null,
+      canceledReason: null,
+      photoCount: api.photoCount,
+      itemCount: api.itemCount,
+      items: [],
+      createdAt: api.createdAt,
+      createdBy: api.createdBy,
+      assignedTechnician: api.assignedTechnician,
+      assignedTechnicianId: null,
+      section: null,
+      part: api.summary || `${api.itemCount} defect${api.itemCount === 1 ? '' : 's'}`,
+      description: api.summary,
+      severity: 'Medium', // list view doesn't have severity inline; refined on expand
+      reportedBy: api.createdBy,
+      notes: notesArr,
+    };
+  });
+}
+
+// ============================================================
 // Accept / Assign Technician Modal (dispatcher action)
 // ============================================================
 function AssignTechnicianModal({ wo, onAssign, onClose }) {
@@ -37,13 +157,47 @@ function AssignTechnicianModal({ wo, onAssign, onClose }) {
   const [techOpen, setTechOpen] = useState(false);
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [techs, setTechs] = useState([]);
+  const [techsLoading, setTechsLoading] = useState(true);
 
-  const handleAssign = () => {
+  // Fetch real technicians of the WO's vendor
+  useEffect(() => {
+    let alive = true;
+    setTechsLoading(true);
+    dirApi
+      .users({ role: 'technician', organizationId: wo.vendorId })
+      .then((rows) => {
+        if (!alive) return;
+        // Shape: { id, name, role, ... } from backend
+        setTechs(
+          rows.map((u) => ({
+            id: u.id,
+            name: u.name,
+            specialties: ['General'], // backend doesn't store specialties yet
+            activeWOs: 0,
+          }))
+        );
+      })
+      .catch((err) => {
+        console.error('failed to load technicians', err);
+        if (alive) setTechs([]);
+      })
+      .finally(() => alive && setTechsLoading(false));
+    return () => {
+      alive = false;
+    };
+  }, [wo.vendorId]);
+
+  const handleAssign = async () => {
+    if (!tech) return;
     setSubmitting(true);
-    setTimeout(() => {
-      onAssign({ technician: tech.name, notes });
+    try {
+      await onAssign({ technician: tech, notes });
       onClose();
-    }, 700);
+    } catch (e) {
+      console.error('assign failed', e);
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -80,7 +234,7 @@ function AssignTechnicianModal({ wo, onAssign, onClose }) {
                 {tech ? (
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-semibold text-white truncate">{tech.name}</div>
-                    <div className="text-[11px] text-navy-400 truncate">{tech.specialties.join(', ')} · {tech.activeWOs} active WOs</div>
+                    <div className="text-[11px] text-navy-400 truncate">{(tech.specialties || []).join(', ') || 'Technician'}{tech.activeWOs ? ` · ${tech.activeWOs} active WOs` : ''}</div>
                   </div>
                 ) : (
                   <span className="text-sm text-navy-400">Select a technician…</span>
@@ -91,7 +245,14 @@ function AssignTechnicianModal({ wo, onAssign, onClose }) {
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setTechOpen(false)} />
                   <div className="absolute top-full left-0 right-0 mt-1 max-h-64 overflow-y-auto bg-navy-900 border border-navy-700 rounded-lg shadow-2xl z-20">
-                    {availableTechnicians.map((t) => (
+                    {techsLoading ? (
+                      <div className="px-4 py-6 text-center text-xs text-navy-400">
+                        <Loader2 size={14} className="inline mr-1.5 animate-spin" />
+                        Loading technicians…
+                      </div>
+                    ) : techs.length === 0 ? (
+                      <div className="px-4 py-6 text-center text-xs text-navy-400">No technicians available for this vendor.</div>
+                    ) : techs.map((t) => (
                       <button key={t.id} onClick={() => { setTech(t); setTechOpen(false); }}
                         className={`w-full flex items-center justify-between gap-2 px-4 py-3 text-left hover:bg-navy-800 transition-colors border-b border-navy-800/60 last:border-b-0 min-h-[56px] ${
                           tech?.id === t.id ? 'bg-navy-800' : ''
@@ -639,7 +800,9 @@ function Field({ label, value, mono, small, warn }) {
 // Main Component
 // ============================================================
 export default function WorkOrders({ user }) {
-  const [workOrders, setWorkOrders] = useState(workOrdersData);
+  const [workOrders, setWorkOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
   const [statusFilters, setStatusFilters] = useState([]);
   const [dspFilter, setDspFilter] = useState('all');
@@ -647,9 +810,42 @@ export default function WorkOrders({ user }) {
   const [expandedWO, setExpandedWO] = useState(null);
   const [modal, setModal] = useState(null); // { type, wo }
   const [showLogJob, setShowLogJob] = useState(false);
+  const [actionInFlight, setActionInFlight] = useState(false);
 
   const isTechnician = user?.role === 'technician';
   const isVendor = user?.role === 'vendor_admin' || user?.role === 'site_admin';
+
+  // Fetch initial list — backend already role-scopes
+  const reload = useCallback(async () => {
+    setError(null);
+    try {
+      const res = await woApi.list({ perPage: 200 });
+      setWorkOrders(mapApiListToUi(res.items || []));
+    } catch (e) {
+      console.error('failed to load work orders', e);
+      setError(e.detail || e.message || 'Failed to load work orders');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    reload();
+  }, [reload]);
+
+  // When user expands a card, hydrate with full detail (items + notes + costs)
+  const hydrateExpanded = useCallback(async (woId) => {
+    try {
+      const detail = await woApi.get(woId);
+      const enriched = mapApiToUi(detail);
+      setWorkOrders((prev) =>
+        prev.map((w) => (w.id === woId ? { ...w, ...enriched } : w))
+      );
+    } catch (e) {
+      console.error('hydrate failed', e);
+    }
+  }, []);
 
   // For technicians, filter to only their WOs; for vendors/site admins, show all
   const visibleWOs = useMemo(() => {
@@ -713,48 +909,127 @@ export default function WorkOrders({ user }) {
   // Action dispatcher
   const handleAction = (type, wo) => setModal({ type, wo });
 
-  // Mutations
-  const updateWO = (woId, updates) => {
-    setWorkOrders(workOrders.map((wo) => (wo.id === woId ? { ...wo, ...updates } : wo)));
-  };
-  const addNote = (woId, note) => {
-    setWorkOrders(workOrders.map((wo) => (wo.id === woId ? { ...wo, notes: [...(wo.notes || []), note] } : wo)));
+  // Apply a hydrated WO into the list (used after every mutation)
+  const applyDetail = (apiDetail) => {
+    const ui = mapApiToUi(apiDetail);
+    setWorkOrders((prev) => prev.map((w) => (w.id === ui.id ? { ...w, ...ui } : w)));
   };
 
-  const handleAssign = (assignment) => {
-    updateWO(modal.wo.id, {
-      status: 'in_progress',
-      assignedTechnician: assignment.technician,
-      roNumber: `RO-2026-${Math.floor(8000 + Math.random() * 2000)}`,
-      notes: assignment.notes ? [...(modal.wo.notes || []), `Dispatcher: ${assignment.notes}`] : modal.wo.notes,
-    });
-    setModal(null);
+  /**
+   * Accept & Assign flow:
+   *   pending → acknowledged (status), then assign tech, then ack → in_progress.
+   *   Done in 3 calls so each step's RBAC + state-machine is enforced server-side.
+   */
+  const handleAssign = async ({ technician, notes }) => {
+    const wo = modal.wo;
+    setActionInFlight(true);
+    try {
+      // Step 1: pending → acknowledged (vendor accepts)
+      let detail = wo.status === 'pending'
+        ? await woApi.updateStatus(wo.id, {
+            status: 'acknowledged',
+            notesAppend: notes || undefined,
+          })
+        : null;
+
+      // Step 2: assign technician
+      detail = await woApi.assign(wo.id, {
+        technicianId: technician.id,
+        notesAppend: notes || undefined,
+      });
+
+      // Step 3: acknowledged → in_progress (start work)
+      detail = await woApi.updateStatus(detail.id, { status: 'in_progress' });
+
+      applyDetail(detail);
+    } catch (e) {
+      console.error('assign failed', e);
+      alert(e.detail || e.message || 'Failed to assign technician');
+    } finally {
+      setActionInFlight(false);
+      setModal(null);
+    }
   };
-  const handleDecline = (decline) => {
-    updateWO(modal.wo.id, {
-      status: 'declined',
-      declinedReason: decline.reason,
-      declinedAt: new Date().toISOString(),
-      notes: decline.notes ? [...(modal.wo.notes || []), `Decline note: ${decline.notes}`] : modal.wo.notes,
-    });
-    setModal(null);
+
+  const handleDecline = async ({ reason, notes }) => {
+    const wo = modal.wo;
+    setActionInFlight(true);
+    try {
+      const reasonText = `${reason.code}: ${reason.label}${notes ? ' — ' + notes : ''}`;
+      const detail = await woApi.updateStatus(wo.id, {
+        status: 'declined',
+        declineReason: reasonText,
+        notesAppend: notes || undefined,
+      });
+      applyDetail(detail);
+    } catch (e) {
+      console.error('decline failed', e);
+      alert(e.detail || e.message || 'Failed to decline');
+    } finally {
+      setActionInFlight(false);
+      setModal(null);
+    }
   };
-  const handleComplete = (completion) => {
-    updateWO(modal.wo.id, {
-      status: 'completed',
-      completedAt: new Date().toISOString(),
-      lastMileage: completion.mileage,
-      notes: [...(modal.wo.notes || []), `Completed: ${completion.comments}`],
-    });
-    setModal(null);
+
+  const handleComplete = async ({ comments, mileage }) => {
+    const wo = modal.wo;
+    setActionInFlight(true);
+    try {
+      const note = mileage
+        ? `Completed @ ${mileage.toLocaleString()} mi: ${comments}`
+        : `Completed: ${comments}`;
+      const detail = await woApi.updateStatus(wo.id, {
+        status: 'completed',
+        notesAppend: note,
+      });
+      applyDetail(detail);
+    } catch (e) {
+      console.error('complete failed', e);
+      alert(e.detail || e.message || 'Failed to complete WO');
+    } finally {
+      setActionInFlight(false);
+      setModal(null);
+    }
   };
-  const handleRelease = () => {
-    updateWO(modal.wo.id, {
-      status: 'pending',
-      assignedTechnician: null,
-      notes: [...(modal.wo.notes || []), `Released by ${user.name} — returned to dispatcher`],
-    });
-    setModal(null);
+
+  // Release: un-assign tech (returns to dispatcher pool). State stays in_progress
+  // since our state machine doesn't allow in_progress → acknowledged.
+  const handleRelease = async () => {
+    const wo = modal.wo;
+    setActionInFlight(true);
+    try {
+      const detail = await woApi.assign(wo.id, {
+        technicianId: null,
+        notesAppend: `Released by ${user.name} — returned to dispatcher`,
+      });
+      applyDetail(detail);
+    } catch (e) {
+      console.error('release failed', e);
+      alert(e.detail || e.message || 'Failed to release');
+    } finally {
+      setActionInFlight(false);
+      setModal(null);
+    }
+  };
+
+  // Free-text note append — adds a line to the WO notes via the status patch
+  // endpoint with a no-op status (we round-trip the current status).
+  const addNote = async (woId, note) => {
+    if (!note?.trim()) return;
+    setActionInFlight(true);
+    try {
+      const wo = workOrders.find((w) => w.id === woId);
+      const detail = await woApi.updateStatus(woId, {
+        status: wo.status,
+        notesAppend: note,
+      });
+      applyDetail(detail);
+    } catch (e) {
+      console.error('add note failed', e);
+      alert(e.detail || e.message || 'Failed to add note');
+    } finally {
+      setActionInFlight(false);
+    }
   };
 
   // Today's date string
@@ -886,25 +1161,48 @@ export default function WorkOrders({ user }) {
       </div>
 
       {/* WO list */}
-      <div className="space-y-2">
-        {filtered.map((wo) => (
-          <WorkOrderCard
-            key={wo.id}
-            wo={wo}
-            expanded={expandedWO === wo.id}
-            onToggle={() => setExpandedWO(expandedWO === wo.id ? null : wo.id)}
-            userRole={user?.role}
-            onAction={handleAction}
-          />
-        ))}
-        {filtered.length === 0 && (
-          <div className="bg-navy-900/60 border border-navy-700/40 rounded-xl p-10 text-center">
-            <ClipboardList size={40} className="text-navy-600 mx-auto mb-3" />
-            <h4 className="text-sm font-semibold text-white mb-1">No work orders match your filters</h4>
-            <p className="text-xs text-navy-400">Try clearing filters or changing your search.</p>
-          </div>
-        )}
-      </div>
+      {loading ? (
+        <div className="bg-navy-900/60 border border-navy-700/40 rounded-xl p-10 text-center">
+          <Loader2 size={28} className="animate-spin text-accent-blue mx-auto mb-3" />
+          <p className="text-sm text-navy-300">Loading work orders…</p>
+        </div>
+      ) : error ? (
+        <div className="bg-accent-red/10 border border-accent-red/30 rounded-xl p-6 text-center">
+          <AlertTriangle size={24} className="text-accent-red mx-auto mb-2" />
+          <p className="text-sm text-white">Couldn't load work orders</p>
+          <p className="text-xs text-navy-300 mt-1">{error}</p>
+          <button onClick={reload} className="mt-3 px-3 py-1.5 rounded-lg bg-accent-red/15 border border-accent-red/40 text-accent-red text-xs font-semibold hover:bg-accent-red/25 cursor-pointer">
+            Retry
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filtered.map((wo) => (
+            <WorkOrderCard
+              key={wo.id}
+              wo={wo}
+              expanded={expandedWO === wo.id}
+              onToggle={() => {
+                if (expandedWO === wo.id) {
+                  setExpandedWO(null);
+                } else {
+                  setExpandedWO(wo.id);
+                  hydrateExpanded(wo.id); // fetch full detail on expand
+                }
+              }}
+              userRole={user?.role}
+              onAction={handleAction}
+            />
+          ))}
+          {filtered.length === 0 && (
+            <div className="bg-navy-900/60 border border-navy-700/40 rounded-xl p-10 text-center">
+              <ClipboardList size={40} className="text-navy-600 mx-auto mb-3" />
+              <h4 className="text-sm font-semibold text-white mb-1">No work orders match your filters</h4>
+              <p className="text-xs text-navy-400">{workOrders.length === 0 ? 'No WOs yet — convert defects on the Defects tab.' : 'Try clearing filters or changing your search.'}</p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Modals */}
       <AnimatePresence>

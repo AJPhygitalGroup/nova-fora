@@ -8,6 +8,7 @@ from app.routes import (
     auth,
     defect_catalog,
     defects,
+    directory,
     health,
     inspections,
     uploads,
@@ -81,6 +82,7 @@ app.include_router(inspections.router)
 app.include_router(defects.router)
 app.include_router(defect_catalog.router)
 app.include_router(work_orders.router)
+app.include_router(directory.router)
 app.include_router(uploads.router)
 
 

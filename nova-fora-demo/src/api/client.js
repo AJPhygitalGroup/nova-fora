@@ -426,6 +426,156 @@ export const catalog = {
 };
 
 // ─────────────────────────────────────────────────────
+// Directory (orgs + users) — small lookups for pickers
+// ─────────────────────────────────────────────────────
+export const directory = {
+  /** GET /organizations?orgType=dsp|vendor|platform */
+  organizations(params = {}) {
+    const q = new URLSearchParams();
+    const paramMap = { orgType: 'org_type' };
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined || v === null || v === '') continue;
+      q.set(paramMap[k] || k, String(v));
+    }
+    const qs = q.toString();
+    return apiFetch(`/organizations${qs ? '?' + qs : ''}`);
+  },
+
+  /** GET /users?role=&organizationId= */
+  users(params = {}) {
+    const q = new URLSearchParams();
+    const paramMap = { organizationId: 'organization_id' };
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined || v === null || v === '') continue;
+      q.set(paramMap[k] || k, String(v));
+    }
+    const qs = q.toString();
+    return apiFetch(`/users${qs ? '?' + qs : ''}`);
+  },
+};
+
+// ─────────────────────────────────────────────────────
+// Work Orders module
+// ─────────────────────────────────────────────────────
+export const workOrders = {
+  /**
+   * GET /work-orders — list with role scoping + filters.
+   * params: {
+   *   dspId?, vendorId?, status?, vehicleId?, technicianId?,
+   *   rushOnly?, dateFrom?, dateTo?, page?, perPage?
+   * }
+   */
+  list(params = {}) {
+    const q = new URLSearchParams();
+    const paramMap = {
+      dspId: 'dsp_id',
+      vendorId: 'vendor_id',
+      vehicleId: 'vehicle_id',
+      technicianId: 'technician_id',
+      rushOnly: 'rush_only',
+      dateFrom: 'date_from',
+      dateTo: 'date_to',
+      perPage: 'per_page',
+    };
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined || v === null || v === '') continue;
+      q.set(paramMap[k] || k, String(v));
+    }
+    const qs = q.toString();
+    return apiFetch(`/work-orders${qs ? '?' + qs : ''}`);
+  },
+
+  /** GET /work-orders/{id} — full detail incl. items + resolved defect labels */
+  get(id) {
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}`);
+  },
+
+  /**
+   * POST /work-orders — create from N defects.
+   * body: {
+   *   vendorId, items: [{ defectId, repairNotes?, linePartsCost?, lineLaborCost? }],
+   *   flags? ['rush_order'|'stale'|...], scheduledAt?, notes?, fmc?, roNumber?
+   * }
+   */
+  create(body) {
+    return apiFetch('/work-orders', {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /**
+   * PATCH /work-orders/{id}/status — state-machine validated transition.
+   * body: { status, declineReason?, cancelReason?, scheduledAt?, notesAppend? }
+   * Required side fields per target:
+   *   - 'scheduled' → scheduledAt
+   *   - 'declined'  → declineReason
+   *   - 'canceled'  → cancelReason
+   */
+  updateStatus(id, body) {
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /** PATCH /work-orders/{id}/assign — vendor assigns/un-assigns a tech.
+   * body: { technicianId | null, notesAppend? } */
+  assign(id, body) {
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/assign`, {
+      method: 'PATCH',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /** PATCH /work-orders/{id}/quote — vendor sets parts/labor/RO#.
+   * body: { partsCost?, laborCost?, roNumber? } */
+  updateQuote(id, body) {
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/quote`, {
+      method: 'PATCH',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /** POST /work-orders/{id}/items — add more defects to existing WO */
+  addItems(id, items) {
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/items`, {
+      method: 'POST',
+      body: JSON.stringify({ items: camelToSnake(items) }),
+    });
+  },
+
+  /** DELETE /work-orders/{id}/items/{itemId} — un-bundle a defect */
+  removeItem(woId, itemId) {
+    return apiFetch(
+      `/work-orders/${encodeURIComponent(woId)}/items/${encodeURIComponent(itemId)}`,
+      { method: 'DELETE' }
+    );
+  },
+
+  /** GET /work-orders/{id}/photos */
+  listPhotos(id) {
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/photos`);
+  },
+
+  /** POST /work-orders/{id}/photos — commit after presigned PUT succeeds */
+  commitPhoto(id, body) {
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/photos`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /** DELETE /work-orders/{id}/photos/{photoId} — soft delete */
+  deletePhoto(woId, photoId) {
+    return apiFetch(
+      `/work-orders/${encodeURIComponent(woId)}/photos/${encodeURIComponent(photoId)}`,
+      { method: 'DELETE' }
+    );
+  },
+};
+
+// ─────────────────────────────────────────────────────
 // Uploads module — presigned URL flow
 // ─────────────────────────────────────────────────────
 export const uploads = {

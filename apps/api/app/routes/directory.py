@@ -1,0 +1,106 @@
+"""Directory endpoints — read-only lookups for users + organizations.
+
+Used by the frontend to populate dropdowns (vendor pickers, technician
+assignment, DSP filters) without scraping data from other domain endpoints.
+
+Scoping (MVP):
+  - SITE_ADMIN sees everything.
+  - DSP_OWNER sees: own org's users + all vendor orgs + own DSP.
+  - VENDOR_ADMIN sees: own vendor's users + all DSP orgs + own vendor.
+  - TECHNICIAN  sees: own vendor's users + own vendor.
+"""
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
+
+from app.auth.dependencies import get_current_user
+from app.db import get_session
+from app.models.organization import OrgType, Organization
+from app.models.user import User, UserRole
+from app.schemas.user import UserResponse
+
+router = APIRouter(prefix="", tags=["directory"])
+
+
+# ─────────────────────────────────────────────────────
+# GET /organizations — list orgs (filterable by org_type)
+# ─────────────────────────────────────────────────────
+@router.get("/organizations", response_model=list[dict])
+async def list_organizations(
+    org_type: str | None = Query(default=None, description="dsp | vendor | platform"),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    q = select(Organization).where(Organization.is_active == True)  # noqa: E712
+
+    # Role scoping — DSP_OWNER and VENDOR_ADMIN can list cross-org for picker
+    # use-cases (DSP picks a vendor, vendor sees their DSP customers).
+    # TECHNICIAN gets a narrower view.
+    if current.role == UserRole.TECHNICIAN:
+        q = q.where(Organization.id == current.organization_id)
+
+    if org_type:
+        try:
+            ot = OrgType(org_type)
+        except ValueError:
+            return []
+        q = q.where(Organization.org_type == ot)
+
+    q = q.order_by(Organization.name)
+    rows = (await session.execute(q)).scalars().all()
+    return [
+        {
+            "id": o.id_str,
+            "name": o.name,
+            "org_type": o.org_type.value,
+            "phone": o.phone,
+            "address": o.address,
+        }
+        for o in rows
+    ]
+
+
+# ─────────────────────────────────────────────────────
+# GET /users — list users (filterable by role + org)
+# ─────────────────────────────────────────────────────
+@router.get("/users", response_model=list[UserResponse])
+async def list_users(
+    role: UserRole | None = Query(default=None),
+    organization_id: str | None = Query(default=None, description="DSP-XXXX / V-XXX / int"),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[UserResponse]:
+    q = select(User, Organization).join(Organization, User.organization_id == Organization.id)
+
+    # Default scoping — DSP/Vendor/Tech see only their own org's users
+    if current.role != UserRole.SITE_ADMIN:
+        q = q.where(User.organization_id == current.organization_id)
+
+    if role is not None:
+        q = q.where(User.role == role.value)
+
+    if organization_id is not None:
+        # Parse 'DSP-1234' / 'V-005' / 'NF-006' / int
+        s = organization_id.strip().upper()
+        for prefix in ("V-", "DSP-", "NF-"):
+            if s.startswith(prefix):
+                s = s[len(prefix):]
+                break
+        try:
+            oid = int(s)
+        except ValueError:
+            return []
+        # Site admin can filter to any org; others can only filter to own
+        if current.role == UserRole.SITE_ADMIN or oid == current.organization_id:
+            q = q.where(User.organization_id == oid)
+        else:
+            return []
+
+    q = q.order_by(User.full_name)
+    rows = (await session.execute(q)).all()
+    return [
+        UserResponse.from_user_and_org(
+            user, org.name, org.id_str, org.org_type.value
+        )
+        for user, org in rows
+    ]

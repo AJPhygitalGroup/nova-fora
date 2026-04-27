@@ -253,9 +253,13 @@ export default function Defects({ user }) {
           <CreateWorkOrderModal
             initialVan={createWOContext.van}
             initialDefect={createWOContext.defect}
+            initialDefectId={createWOContext.defectId}
             vans={modalVans}
             user={user}
-            onClose={() => setCreateWOContext(null)}
+            onClose={() => {
+              setCreateWOContext(null);
+              reload();  // refresh the table so the converted defect's status updates
+            }}
           />
         )}
       </AnimatePresence>

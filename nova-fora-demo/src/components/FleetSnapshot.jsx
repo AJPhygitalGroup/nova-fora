@@ -1,12 +1,13 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutGrid, Truck, KeyRound, AlertTriangle, CheckCircle2, X, Lock, Send, Eye,
   ArrowRight, Calendar, Users, Filter, Plus, ShieldCheck, Camera, Clock,
   ChevronDown, ChevronRight, Check, Image as ImageIcon, Star, MapPin,
-  Wrench, Flame, FileText, ClipboardList, Zap, Info
+  Wrench, Flame, FileText, ClipboardList, Zap, Info, Loader2
 } from 'lucide-react';
 import { fleetSnapshotVans, fleetSnapshotDefectDetails, availableVendors, SECTION_TO_SERVICES } from '../data/mockData';
+import { workOrders as woApi, directory as dirApi } from '../api/client';
 import Badge from './ui/Badge';
 
 // Severity → color configuration for heatmap tiles
@@ -561,7 +562,7 @@ function VendorCard({ vendor, selected, onSelect, neededServices }) {
   );
 }
 
-export function CreateWorkOrderModal({ initialVan, initialDefect, vans, user, onClose, onCreate }) {
+export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectId, vans, user, onClose, onCreate }) {
   const [step, setStep] = useState(initialVan ? 2 : 1);
   // Step 1: vehicle + defect
   const [van, setVan] = useState(initialVan || null);
@@ -576,22 +577,60 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, vans, user, on
   const [pmType, setPmType] = useState('Oil Change');
   // Step 2: vendor
   const [vendor, setVendor] = useState(null);
+  const [apiVendors, setApiVendors] = useState(null);  // null = loading; [] = loaded
+  const [vendorsError, setVendorsError] = useState(null);
   // Step 3: review
   const [preferredDate, setPreferredDate] = useState('');
   const [extraNotes, setExtraNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
   const [createdWoId, setCreatedWoId] = useState('');
+
+  // Fetch vendors from the API on mount; fall back to mock list if it fails
+  // (so the demo never breaks even in dev w/ no backend running).
+  useEffect(() => {
+    let alive = true;
+    dirApi
+      .organizations({ orgType: 'vendor' })
+      .then((rows) => {
+        if (!alive) return;
+        // Adapt API shape to UI vendor shape (id/name/services/rating/preferred/...)
+        // Backend doesn't yet store services or rating — annotate with neutral defaults.
+        setApiVendors(
+          rows.map((o) => ({
+            id: o.id,                     // 'V-005'
+            name: o.name,
+            services: ['General Repair'], // placeholder until catalog of services exists
+            rating: 4.5,
+            activeJobs: 0,
+            preferred: true,
+            phone: o.phone,
+            address: o.address,
+          }))
+        );
+      })
+      .catch((err) => {
+        console.warn('vendor fetch failed, using mock list:', err);
+        if (!alive) return;
+        setVendorsError(err.detail || err.message);
+        setApiVendors(availableVendors);  // fallback
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // Services needed for this section
   const neededServices = section ? (SECTION_TO_SERVICES[section] || []) : [];
   // Sort vendors: preferred first, then by matching services + rating
-  const sortedVendors = [...availableVendors].sort((a, b) => {
+  const vendorsToShow = apiVendors || [];
+  const sortedVendors = [...vendorsToShow].sort((a, b) => {
     const aMatch = neededServices.length ? a.services.filter((s) => neededServices.includes(s)).length : 0;
     const bMatch = neededServices.length ? b.services.filter((s) => neededServices.includes(s)).length : 0;
     if (a.preferred !== b.preferred) return a.preferred ? -1 : 1;
     if (aMatch !== bMatch) return bMatch - aMatch;
-    return b.rating - a.rating;
+    return (b.rating || 0) - (a.rating || 0);
   });
 
   // Step 1 validity: defect mode needs section + description; PM mode only needs vehicle + PM type
@@ -599,13 +638,37 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, vans, user, on
     ? (van && (isPM ? !!pmType : (section && description.length > 4)))
     : step === 2 ? !!vendor : true;
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    setSubmitError(null);
+
+    // PM mode is not yet wired to the backend — surface a friendly error.
+    if (isPM) {
+      setSubmitError('Preventive Maintenance work orders are coming soon. For now, convert from a reported defect on the Defects tab.');
+      return;
+    }
+
+    if (!initialDefectId) {
+      setSubmitError('No source defect — open this dialog from the Defects tab.');
+      return;
+    }
+
     setSubmitting(true);
-    setTimeout(() => {
-      const woId = `WO-${Math.floor(55000 + Math.random() * 1000)}`;
-      setCreatedWoId(woId);
+    try {
+      const flags = isRush ? ['rush_order'] : [];
+      const noteParts = [];
+      if (preferredDate) noteParts.push(`Preferred date: ${preferredDate}`);
+      if (extraNotes) noteParts.push(extraNotes);
+      const notes = noteParts.length ? noteParts.join(' — ') : null;
+
+      const created = await woApi.create({
+        vendorId: vendor.id,
+        items: [{ defectId: initialDefectId }],
+        flags,
+        notes,
+      });
+      setCreatedWoId(created.id);
       onCreate?.({
-        id: woId,
+        id: created.id,
         van,
         section,
         part,
@@ -616,10 +679,15 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, vans, user, on
         preferredDate,
         extraNotes,
         createdBy: user?.name,
+        apiResponse: created,
       });
-      setSubmitting(false);
       setSuccess(true);
-    }, 1100);
+    } catch (err) {
+      console.error('create WO failed', err);
+      setSubmitError(err.detail || err.message || 'Failed to create work order');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -965,26 +1033,34 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, vans, user, on
         {/* Footer — sticky at page bottom */}
         {!success && (
           <div className="px-4 sm:px-6 lg:px-8 py-3 sm:py-4 border-t border-navy-800 bg-navy-900/80 backdrop-blur">
-            <div className="max-w-6xl mx-auto flex items-center justify-between gap-2">
-              <button onClick={() => (step === 1 ? onClose() : setStep(step - 1))}
-                className={`px-4 py-2.5 rounded-lg text-sm font-medium cursor-pointer transition-colors ${
-                  step === 1
-                    ? 'text-accent-red border border-accent-red/40 bg-accent-red/10 hover:bg-accent-red/20'
-                    : 'text-navy-300 hover:text-white hover:bg-navy-800'
-                }`}>
-                {step === 1 ? <><X size={12} className="inline mr-1" /> Reject</> : 'Back'}
-              </button>
-              {step < 3 ? (
-                <button onClick={() => setStep(step + 1)} disabled={!canGoNext}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-gradient-to-r from-accent-blue to-accent-purple text-white hover:opacity-90 disabled:opacity-40 cursor-pointer">
-                  Next <ArrowRight size={14} />
-                </button>
-              ) : (
-                <button onClick={handleSubmit} disabled={submitting}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-gradient-to-r from-accent-blue to-accent-purple text-white hover:opacity-90 disabled:opacity-40 cursor-pointer">
-                  {submitting ? (<><motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full" /> Sending…</>) : (<>Send to Vendor <Send size={14} /></>)}
-                </button>
+            <div className="max-w-6xl mx-auto">
+              {submitError && (
+                <div className="mb-3 px-3 py-2 rounded-lg bg-accent-red/10 border border-accent-red/30 text-xs text-accent-red flex items-start gap-2">
+                  <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                  <span className="flex-1">{submitError}</span>
+                </div>
               )}
+              <div className="flex items-center justify-between gap-2">
+                <button onClick={() => (step === 1 ? onClose() : setStep(step - 1))}
+                  className={`px-4 py-2.5 rounded-lg text-sm font-medium cursor-pointer transition-colors ${
+                    step === 1
+                      ? 'text-accent-red border border-accent-red/40 bg-accent-red/10 hover:bg-accent-red/20'
+                      : 'text-navy-300 hover:text-white hover:bg-navy-800'
+                  }`}>
+                  {step === 1 ? <><X size={12} className="inline mr-1" /> Reject</> : 'Back'}
+                </button>
+                {step < 3 ? (
+                  <button onClick={() => setStep(step + 1)} disabled={!canGoNext}
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-gradient-to-r from-accent-blue to-accent-purple text-white hover:opacity-90 disabled:opacity-40 cursor-pointer">
+                    Next <ArrowRight size={14} />
+                  </button>
+                ) : (
+                  <button onClick={handleSubmit} disabled={submitting}
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-gradient-to-r from-accent-blue to-accent-purple text-white hover:opacity-90 disabled:opacity-40 cursor-pointer">
+                    {submitting ? (<><motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full" /> Sending…</>) : (<>Send to Vendor <Send size={14} /></>)}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         )}

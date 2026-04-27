@@ -686,6 +686,25 @@ async def update_status(
 ) -> WorkOrderResponse:
     wo = await _load_wo_for_user(session, wo_id, current)
 
+    # Same-status no-op: allow appending notes without an actual transition.
+    # Useful for the FE's "add note" affordance which round-trips the status.
+    if body.status == wo.status:
+        if not body.notes_append:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "no transition and no notes_append — nothing to do",
+            )
+        now = utc_now()
+        prefix = "" if not wo.notes else "\n\n"
+        wo.notes = (wo.notes or "") + (
+            f"{prefix}[{now.isoformat()}] {current.full_name}: {body.notes_append}"
+        )
+        wo.updated_at = now
+        session.add(wo)
+        await session.commit()
+        await session.refresh(wo)
+        return await _build_wo_response(session, wo)
+
     # State-machine check
     allowed = WORK_ORDER_TRANSITIONS.get(wo.status, set())
     if body.status not in allowed:
