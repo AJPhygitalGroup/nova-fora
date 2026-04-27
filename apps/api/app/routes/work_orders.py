@@ -755,6 +755,8 @@ async def update_status(
             )
         wo.decline_reason = body.decline_reason
         # Free up the bundled defects (revert to acknowledged so DSP can re-route)
+        # AND delete the WorkOrderItem rows so the UNIQUE(defect_id) constraint
+        # doesn't block re-bundling. The WO row stays for audit.
         items = (
             await session.execute(
                 select(WorkOrderItem).where(WorkOrderItem.work_order_id == wo.id)
@@ -770,6 +772,8 @@ async def update_status(
                 d.status = DefectStatus.ACKNOWLEDGED
                 d.updated_at = now
                 session.add(d)
+            await session.delete(it)
+        wo.item_count = 0
     elif body.status == WorkOrderStatus.CANCELED:
         if not body.cancel_reason:
             raise HTTPException(
@@ -791,6 +795,8 @@ async def update_status(
                 d.status = DefectStatus.ACKNOWLEDGED
                 d.updated_at = now
                 session.add(d)
+            await session.delete(it)
+        wo.item_count = 0
 
     if body.notes_append:
         suffix = (
