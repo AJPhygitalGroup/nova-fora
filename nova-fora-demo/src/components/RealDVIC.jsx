@@ -249,6 +249,60 @@ const ROW_SEVERITY_STYLES = {
   defective: { bg: 'bg-accent-red/10 hover:bg-accent-red/15',       border: 'border-accent-red/40',    resultText: 'text-accent-red' },
 };
 
+// Compact inline status of a van's defects: "1 pending", "1 approved",
+// "1 rejected", or for mixed cases like "1 ✓ · 1 ⏳" with each segment colored.
+// When all 3 buckets are zero (legacy mock rows that didn't supply a breakdown),
+// falls back to the plain "{total} defects" label.
+function DefectBreakdownInline({ pending, approved, rejected, total, fallbackClass }) {
+  const sum = pending + approved + rejected;
+  if (sum === 0) {
+    return (
+      <span className={`font-semibold ${fallbackClass || 'text-accent-orange'}`}>
+        {total} defect{total === 1 ? '' : 's'}
+      </span>
+    );
+  }
+
+  // Single-status case: pretty single label
+  if (pending === sum) {
+    return (
+      <span className="font-semibold text-accent-orange">
+        {pending} pending review
+      </span>
+    );
+  }
+  if (approved === sum) {
+    return (
+      <span className="font-semibold text-accent-green">
+        ✓ {approved} approved
+      </span>
+    );
+  }
+  if (rejected === sum) {
+    return (
+      <span className="font-semibold text-navy-400">
+        ✕ {rejected} rejected
+      </span>
+    );
+  }
+
+  // Mixed — concatenate non-zero buckets
+  const parts = [];
+  if (approved > 0) parts.push(<span key="a" className="text-accent-green font-semibold">✓ {approved}</span>);
+  if (pending > 0) parts.push(<span key="p" className="text-accent-orange font-semibold">⏳ {pending}</span>);
+  if (rejected > 0) parts.push(<span key="r" className="text-navy-400 font-semibold">✕ {rejected}</span>);
+  return (
+    <span>
+      {parts.map((p, i) => (
+        <span key={i}>
+          {i > 0 && <span className="text-navy-500 mx-1">·</span>}
+          {p}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
   const inspected = data.inspectedVans || [];
   const notInspected = data.notInspectedVans || [];
@@ -411,9 +465,13 @@ function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
                     {isIncomplete ? (
                       <span className="font-semibold text-accent-red">Not inspectable</span>
                     ) : flagged && defectCount > 0 ? (
-                      <span className={`font-semibold ${style.resultText}`}>
-                        {defectCount} defect{defectCount === 1 ? '' : 's'}
-                      </span>
+                      <DefectBreakdownInline
+                        pending={v.defectPending ?? 0}
+                        approved={v.defectApproved ?? 0}
+                        rejected={v.defectRejected ?? 0}
+                        total={defectCount}
+                        fallbackClass={style.resultText}
+                      />
                     ) : (
                       <span className={`font-semibold ${style.resultText}`}>{v.result}</span>
                     )}
@@ -661,12 +719,15 @@ function CardDetailModal({ cardKey, onClose, onOpenVehicleReport, onApproveDefec
         `${reallyInspected.length} inspected · ${incomplete.length} not inspectable today`,
       inspectedVans: reallyInspected.map((i) => ({
         id: i.fleetId || i.vehicleId,
-        inspectionId: i.id,           // INS-xxxxx — used to open the live report
-        vehicleId: i.vehicleId,        // VAN-xxxx — internal id
-        vendor: i.vendor || '—',       // real vendor org from inspector lookup
+        inspectionId: i.id,
+        vehicleId: i.vehicleId,
+        vendor: i.vendor || '—',
         tech: i.inspector || '—',
         category: 'amr',
         defectCount: i.defectCount ?? 0,
+        defectPending: i.defectCountPending ?? 0,
+        defectApproved: i.defectCountApproved ?? 0,
+        defectRejected: i.defectCountRejected ?? 0,
         result: RESULT_TO_LABEL[i.result] || i.result,
         rawResult: i.result,
         severity: RESULT_TO_SEVERITY[i.result] || 'clean',

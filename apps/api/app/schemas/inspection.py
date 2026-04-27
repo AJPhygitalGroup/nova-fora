@@ -173,6 +173,11 @@ class InspectionListItem(BaseModel):
     submitted_at: datetime | None
     created_at: datetime
     defect_count: int = 0
+    # Workflow breakdown — lets the dashboard show per-row status without
+    # re-fetching each defect. Sum equals defect_count.
+    defect_count_pending: int = 0      # status='pending' (untouched)
+    defect_count_approved: int = 0     # acknowledged / sent_to_vendor / scheduled / converted_to_wo
+    defect_count_rejected: int = 0     # status='dismissed'
 
     model_config = ConfigDict(from_attributes=True)
 

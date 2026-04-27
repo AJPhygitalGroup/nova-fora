@@ -242,15 +242,40 @@ async def list_inspections(
         ).scalars().all()
     vendor_org_by_id = {o.id: o for o in vendor_orgs_rows}
 
-    # Count defects per inspection in one GROUP BY
-    defect_count_rows = (
+    # Count defects per inspection grouped by status in a single query.
+    # Buckets: pending / approved (ack + forwarded) / rejected (dismissed).
+    defect_breakdown_rows = (
         await session.execute(
-            select(ReportedDefect.inspection_id, func.count().label("n"))
+            select(
+                ReportedDefect.inspection_id,
+                ReportedDefect.status,
+                func.count().label("n"),
+            )
             .where(ReportedDefect.inspection_id.in_(insp_ids))
-            .group_by(ReportedDefect.inspection_id)
+            .group_by(ReportedDefect.inspection_id, ReportedDefect.status)
         )
     ).all()
-    defect_count_by_insp = {r[0]: r[1] for r in defect_count_rows}
+    APPROVED_STATUSES = {
+        "acknowledged",
+        "sent_to_vendor",
+        "scheduled",
+        "converted_to_wo",
+    }
+    defect_breakdown: dict[int, dict[str, int]] = {}
+    for insp_id, status_str, n in defect_breakdown_rows:
+        bucket = defect_breakdown.setdefault(
+            insp_id, {"pending": 0, "approved": 0, "rejected": 0}
+        )
+        if status_str == "pending":
+            bucket["pending"] += n
+        elif status_str == "dismissed":
+            bucket["rejected"] += n
+        elif status_str in APPROVED_STATUSES:
+            bucket["approved"] += n
+    # Total per inspection
+    defect_count_by_insp = {
+        k: sum(v.values()) for k, v in defect_breakdown.items()
+    }
 
     items = []
     for i in inspections:
@@ -258,6 +283,9 @@ async def list_inspections(
         o = org_by_id.get(i.dsp_id)
         ins = user_by_id.get(i.inspector_id) if i.inspector_id else None
         vendor_org = vendor_org_by_id.get(ins.organization_id) if ins else None
+        breakdown = defect_breakdown.get(
+            i.id, {"pending": 0, "approved": 0, "rejected": 0}
+        )
         items.append(
             InspectionListItem(
                 id=i.id_str,
@@ -276,6 +304,9 @@ async def list_inspections(
                 submitted_at=i.submitted_at,
                 created_at=i.created_at,
                 defect_count=defect_count_by_insp.get(i.id, 0),
+                defect_count_pending=breakdown["pending"],
+                defect_count_approved=breakdown["approved"],
+                defect_count_rejected=breakdown["rejected"],
             )
         )
 
