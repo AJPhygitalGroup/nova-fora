@@ -9,6 +9,7 @@ import Badge from './ui/Badge';
 import { FlexFleetModal, VehicleReportCard, CreateWorkOrderModal } from './FleetSnapshot';
 import { fleetSnapshotVans } from '../data/mockData';
 import CreateInspectionWizard from './CreateInspectionWizard';
+import LiveInspectionReportCard from './LiveInspectionReportCard';
 import { inspections as inspectionsApi, vehicles as vehiclesApi } from '../api/client';
 
 const tierConfig = {
@@ -284,12 +285,16 @@ function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
     ? inspected.filter((v) => activeCategories.includes(v.category))
     : inspected;
 
-  // Map an inspected van to the fleetSnapshotVans record so we can open the
-  // existing Vehicle Report Card with real plate, mileage, defects, etc.
-  // Every row is clickable — clean vans just show their photos/info, while
-  // flagged vans show the Cancel / Approve actions per defect.
+  // Click → open the report card. If the row carries an inspectionId
+  // (live API data), the parent opens the LiveInspectionReportCard with
+  // real photos + defects. Otherwise it falls back to the legacy mock
+  // VehicleReportCard via fleetSnapshotVans lookup.
   const handleRowClick = (v) => {
     if (!onOpenVehicleReport) return;
+    if (v.inspectionId) {
+      onOpenVehicleReport({ __live: true, ...v });
+      return;
+    }
     const fleetVan = fleetSnapshotVans.find((fv) => fv.id === v.id);
     if (fleetVan) onOpenVehicleReport(fleetVan);
   };
@@ -656,7 +661,9 @@ function CardDetailModal({ cardKey, onClose, onOpenVehicleReport, onApproveDefec
         `${reallyInspected.length} inspected · ${incomplete.length} not inspectable today`,
       inspectedVans: reallyInspected.map((i) => ({
         id: i.fleetId || i.vehicleId,
-        vendor: i.vendor || '—',     // real vendor org from inspector lookup
+        inspectionId: i.id,           // INS-xxxxx — used to open the live report
+        vehicleId: i.vehicleId,        // VAN-xxxx — internal id
+        vendor: i.vendor || '—',       // real vendor org from inspector lookup
         tech: i.inspector || '—',
         category: 'amr',
         defectCount: i.defectCount ?? 0,
@@ -2346,6 +2353,9 @@ export default function RealDVIC({ user }) {
   const [showRepairHistory, setShowRepairHistory] = useState(false);
   const [showFlexFleet, setShowFlexFleet] = useState(false);
   const [vehicleReportVan, setVehicleReportVan] = useState(null);
+  // When opening a row that comes from live API data, we render
+  // LiveInspectionReportCard instead of the legacy mock-driven one.
+  const [liveReport, setLiveReport] = useState(null);
   const [vanUpdates, setVanUpdates] = useState({});
   const [createWOContext, setCreateWOContext] = useState(null); // { van, defect }
 
@@ -2809,9 +2819,15 @@ export default function RealDVIC({ user }) {
             liveInspected={todayInspected}
             onOrderFlexFleet={isDspHome ? () => { setOpenCard(null); setShowFlexFleet(true); } : null}
             onOpenVehicleReport={(van) => {
-              // Close the Vans Inspected modal first, then pop the Vehicle Report Card
+              // Close the Vans Inspected modal first, then pop the appropriate
+              // report card. Live rows (from API) → LiveInspectionReportCard.
+              // Legacy mock rows → original VehicleReportCard with vanUpdates patch.
               setOpenCard(null);
-              setVehicleReportVan({ ...van, ...(vanUpdates[van.id] || {}) });
+              if (van.__live) {
+                setLiveReport(van);
+              } else {
+                setVehicleReportVan({ ...van, ...(vanUpdates[van.id] || {}) });
+              }
             }}
             onApproveDefect={(item) => {
               // Close the Immediate modal and open the Create WO modal pre-filled with
@@ -2837,6 +2853,18 @@ export default function RealDVIC({ user }) {
             onUpdateVan={(vanId, updates) => setVanUpdates({ ...vanUpdates, [vanId]: { ...(vanUpdates[vanId] || {}), ...updates } })}
             userRole={user?.role}
             onCreateWO={(van, defect) => setCreateWOContext({ van, defect })}
+          />
+        )}
+        {liveReport && (
+          <LiveInspectionReportCard
+            inspection={liveReport}
+            user={user}
+            onClose={() => {
+              setLiveReport(null);
+              // Refresh the home metrics since defect statuses may have changed
+              refreshTodayMetrics();
+            }}
+            onCreateWO={(ctx) => setCreateWOContext(ctx)}
           />
         )}
         {createWOContext && (
