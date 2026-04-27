@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Shield, BarChart3, Wrench, ChevronRight, Menu, X, Sun, Moon, Bell,
   LayoutGrid, Truck, ClipboardList, Settings, Eye, Star, Home as HomeIcon, Gift,
-  Droplets, Sparkles, AlertTriangle
+  Droplets, Sparkles, AlertTriangle, Plus,
 } from 'lucide-react';
 import VendorScorecard from './VendorScorecard';
 import RealDVIC from './RealDVIC';
@@ -17,7 +17,18 @@ import Rewards from './Rewards';
 import Defects from './Defects';
 import NotificationsPanel from './NotificationsPanel';
 import RoleSwitcher from './ui/RoleSwitcher';
+import CreateInspectionWizard from './CreateInspectionWizard';
 import { rolePermissions, notificationsSeed } from '../data/mockData';
+
+// Roles that can start a new QC DVIC inspection from the header button.
+// Drivers/inspectors and vendor techs are the primary actors; dsp_owner +
+// site_admin can also create for testing.
+const CAN_START_INSPECTION = new Set([
+  'technician',
+  'vendor_admin',
+  'dsp_owner',
+  'site_admin',
+]);
 
 // View catalog — id, label, subtitle, icon, accent color, component
 const VIEW_CATALOG = {
@@ -35,6 +46,8 @@ const VIEW_CATALOG = {
 
 export default function Layout({ user, onSwitchRole, onLogout, onImpersonate, impersonating, onExitImpersonation }) {
   const [showNotifs, setShowNotifs] = useState(false);
+  const [showStartInspection, setShowStartInspection] = useState(false);
+  const canStartInspection = CAN_START_INSPECTION.has(user?.role);
 
   // Tabs are derived from the user's role — no hardcoding
   const tabs = useMemo(() => {
@@ -169,6 +182,27 @@ export default function Layout({ user, onSwitchRole, onLogout, onImpersonate, im
 
             {/* Right cluster */}
             <div className="flex items-center gap-2 shrink-0">
+              {/* Start QC DVIC inspection — primary action for techs & vendors */}
+              {canStartInspection && (
+                <button
+                  onClick={() => setShowStartInspection(true)}
+                  className="hidden sm:inline-flex items-center gap-1.5 px-3 h-9 rounded-lg bg-gradient-to-r from-accent-blue to-accent-purple text-white text-xs font-semibold hover:opacity-90 transition-all cursor-pointer"
+                  title="Start a new QC DVIC inspection"
+                >
+                  <Plus size={14} />
+                  <span>New Inspection</span>
+                </button>
+              )}
+              {canStartInspection && (
+                <button
+                  onClick={() => setShowStartInspection(true)}
+                  className="sm:hidden relative w-9 h-9 rounded-lg bg-gradient-to-r from-accent-blue to-accent-purple text-white flex items-center justify-center cursor-pointer"
+                  title="Start inspection"
+                >
+                  <Plus size={16} />
+                </button>
+              )}
+
               {/* Notifications bell */}
               <button
                 onClick={() => setShowNotifs(true)}
@@ -295,6 +329,20 @@ export default function Layout({ user, onSwitchRole, onLogout, onImpersonate, im
 
       {/* Notifications side panel */}
       <NotificationsPanel user={user} open={showNotifs} onClose={() => setShowNotifs(false)} />
+
+      {/* Inspection wizard — full-screen modal */}
+      <AnimatePresence>
+        {showStartInspection && (
+          <CreateInspectionWizard
+            user={user}
+            onClose={() => setShowStartInspection(false)}
+            onSubmitted={() => {
+              // Wizard handles its own success screen; close happens on Done.
+              // No-op here, but available for future toast / refresh of lists.
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

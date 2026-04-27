@@ -228,12 +228,13 @@ export const vehicles = {
 };
 
 // ─────────────────────────────────────────────────────
-// Inspections module
+// Inspections module — supports DRAFT incremental flow + atomic create
 // ─────────────────────────────────────────────────────
 export const inspections = {
   /**
    * GET /inspections
-   * params: { dspId?, vehicleId?, dateFrom?, dateTo?, result?, page?, perPage? }
+   * params: { dspId?, vehicleId?, dateFrom?, dateTo?, result?, status?, page?, perPage? }
+   * status defaults to 'submitted' server-side; pass 'draft' for in-progress.
    */
   list(params = {}) {
     const q = new URLSearchParams();
@@ -257,12 +258,53 @@ export const inspections = {
     return apiFetch(`/inspections/${encodeURIComponent(id)}`);
   },
 
-  /** POST /inspections — one-shot create + submit */
+  /**
+   * POST /inspections — create.
+   * If body.defects is empty/missing → DRAFT. Otherwise → SUBMITTED atomic.
+   * The wizard always creates DRAFT, then incrementally adds defects+photos.
+   */
   create(body) {
     return apiFetch('/inspections', {
       method: 'POST',
       body: JSON.stringify(camelToSnake(body)),
     });
+  },
+
+  /** POST /inspections/{id}/defects — add a defect to a DRAFT, returns FD-xxx */
+  addDefect(inspectionId, body) {
+    return apiFetch(
+      `/inspections/${encodeURIComponent(inspectionId)}/defects`,
+      { method: 'POST', body: JSON.stringify(camelToSnake(body)) }
+    );
+  },
+
+  /** DELETE /inspections/{id}/defects/{defectId} — remove from DRAFT */
+  removeDefect(inspectionId, defectId) {
+    return apiFetch(
+      `/inspections/${encodeURIComponent(inspectionId)}/defects/${encodeURIComponent(defectId)}`,
+      { method: 'DELETE' }
+    );
+  },
+
+  /** POST /inspections/{id}/submit — finalize DRAFT */
+  submit(inspectionId, body = {}) {
+    return apiFetch(
+      `/inspections/${encodeURIComponent(inspectionId)}/submit`,
+      { method: 'POST', body: JSON.stringify(camelToSnake(body)) }
+    );
+  },
+
+  /** POST /inspections/{id}/photos — odometer / overview photos directly on inspection */
+  commitInspectionPhoto(inspectionId, body) {
+    return apiFetch(
+      `/inspections/${encodeURIComponent(inspectionId)}/photos`,
+      { method: 'POST', body: JSON.stringify(camelToSnake(body)) }
+    );
+  },
+
+  /** GET /inspections/{id}/photos */
+  listInspectionPhotos(inspectionId) {
+    return apiFetch(`/inspections/${encodeURIComponent(inspectionId)}/photos`);
   },
 };
 

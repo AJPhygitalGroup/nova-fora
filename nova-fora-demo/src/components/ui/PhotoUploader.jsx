@@ -15,7 +15,7 @@ import { useEffect, useRef, useState } from 'react';
 import imageCompression from 'browser-image-compression';
 import { motion } from 'framer-motion';
 import { Camera, X, AlertCircle, RotateCcw, Check } from 'lucide-react';
-import { uploads, defects } from '../../api/client';
+import { uploads, defects, inspections } from '../../api/client';
 
 const COMPRESSION_OPTIONS = {
   maxSizeMB: 0.5,           // 500 KB target
@@ -42,18 +42,22 @@ const readDimensions = (blob) =>
 
 /**
  * Props:
- *  - parentKind: 'defect' (only one for now; more in Semana 4)
- *  - parentId:   e.g. 'FD-008'
- *  - initialPhotos: list from GET /defects/{id}/photos (may be empty)
+ *  - parentKind: 'defect' | 'inspection' (work_order in Semana 4)
+ *  - parentId:   e.g. 'FD-008' or 'INS-00011'
+ *  - category:   default 'damage' for defects, override to 'odometer' / 'overview' / 'qc_after' as needed
+ *  - initialPhotos: list from GET /<parent>/{id}/photos (may be empty)
  *  - onChanged: optional callback fired after a successful upload/delete
  *  - readOnly: if true, hide Add button + delete button
+ *  - maxPhotos: optional cap (e.g. 1 for odometer)
  */
 export default function PhotoUploader({
   parentKind = 'defect',
   parentId,
+  category = 'damage',
   initialPhotos = [],
   onChanged,
   readOnly = false,
+  maxPhotos = null,
 }) {
   // Each item: { id?, url?, preview?, status, error?, _retryFile?, tempId? }
   // - id/url come from the server after commit
@@ -108,15 +112,18 @@ export default function PhotoUploader({
       // 5. Get dimensions (parallel to nothing, so not worth optimizing)
       const dims = await readDimensions(compressed);
 
-      // 6. Commit metadata
-      const saved = await defects.commitPhoto(parentId, {
+      // 6. Commit metadata via the right endpoint per parent type
+      const commitBody = {
         storageKey,
         contentType: compressed.type || 'image/jpeg',
         sizeBytes: compressed.size,
-        category: 'damage',
+        category,
         width: dims.width,
         height: dims.height,
-      });
+      };
+      const saved = parentKind === 'inspection'
+        ? await inspections.commitInspectionPhoto(parentId, commitBody)
+        : await defects.commitPhoto(parentId, commitBody);
 
       // 7. Replace temp with real
       setItems((prev) =>
@@ -171,7 +178,13 @@ export default function PhotoUploader({
       if (item.preview) URL.revokeObjectURL(item.preview);
       return;
     }
-    // Server-side delete
+    // Server-side delete (only defects have a delete endpoint for now;
+    // inspection-level photos can be re-managed by editing the DRAFT).
+    if (parentKind !== 'defect') {
+      // Optimistic local removal — backend cleanup not wired yet.
+      setItems((prev) => prev.filter((x) => x.id !== item.id));
+      return;
+    }
     try {
       await defects.deletePhoto(parentId, item.id);
       setItems((prev) => prev.filter((x) => x.id !== item.id));
@@ -180,6 +193,9 @@ export default function PhotoUploader({
       alert(`Delete failed: ${err?.detail || err?.message || 'unknown'}`);
     }
   };
+
+  // Hide "Add photo" tile if maxPhotos reached
+  const reachedMax = maxPhotos != null && items.filter((x) => x.status === 'done' || x.status === 'compressing' || x.status === 'uploading').length >= maxPhotos;
 
   return (
     <div>
@@ -267,7 +283,7 @@ export default function PhotoUploader({
         ))}
 
         {/* Add-photo tile */}
-        {!readOnly && (
+        {!readOnly && !reachedMax && (
           <button
             onClick={() => inputRef.current?.click()}
             className="aspect-square rounded-lg border-2 border-dashed border-navy-600 hover:border-accent-blue hover:bg-accent-blue/5 flex flex-col items-center justify-center gap-1 text-navy-400 hover:text-accent-blue cursor-pointer transition-colors"
