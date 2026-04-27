@@ -12,6 +12,12 @@ The draft workflow (Section 4 of the plan) is deferred — for now, POST
 Denormalized dsp_id: we store it on Inspection too (not just via vehicle ->
 dsp) so the hot query "all inspections for DSP X today" is a single-index
 scan, no join.
+
+V2 SCHEMA NOTE (Notion Defect Data Schema spec):
+  ReportedDefect now carries v2 enum fields alongside legacy text columns.
+  New code writes to (part_enum, position, defect_type_enum, details).
+  Legacy columns (section/part/description/category) stay populated for
+  backward compat until the frontend wizard fully migrates to v2.
 """
 from datetime import datetime
 from enum import Enum
@@ -218,6 +224,40 @@ class ReportedDefect(SQLModel, table=True):
     # Photos counter (populated when photos are added in later PR)
     photo_count: int = Field(default=0, nullable=False)
 
+    # ── V2 schema fields (Notion Defect Data Schema) ──
+    # All nullable so legacy rows still validate. New code writes these.
+    # See app/models/defect_catalog.py for the enum definitions.
+    part_enum: str | None = Field(
+        default=None, max_length=40, index=True,
+        description="DefectPart enum value (v2). Coexists with legacy free-text 'part'."
+    )
+    position: str | None = Field(
+        default=None, max_length=30,
+        description="DefectPosition enum value. Required for some parts (see defect_part_validity)."
+    )
+    defect_type_enum: str | None = Field(
+        default=None, max_length=40, index=True,
+        description="DefectType enum value (v2). Coexists with legacy 'description'."
+    )
+    details: dict | None = Field(
+        default=None,
+        sa_column=Column("details", sa.JSON, nullable=True),
+        description="JSON follow-up answers. Validated against defect_details_schema."
+    )
+    notes: str | None = Field(
+        default=None, max_length=2000,
+        description="Free text escape hatch (target <5% of rows post-launch)."
+    )
+    reported_by_id: int | None = Field(
+        default=None, foreign_key="users.id", index=True,
+        description="The inspector who reported the defect (denorm of inspection.inspector_id "
+                    "for fast 'defects reported by tech X' queries)."
+    )
+    reported_at: datetime | None = Field(
+        default=None,
+        sa_column=Column("reported_at", sa.DateTime(timezone=True), nullable=True),
+    )
+
     # Timestamps
     created_at: datetime = Field(
         default_factory=utc_now, sa_column=timestamp_column("created_at")
@@ -230,3 +270,8 @@ class ReportedDefect(SQLModel, table=True):
     def id_str(self) -> str:
         """Frontend-compatible ID. FD-123 format."""
         return f"FD-{self.id:03d}" if self.id is not None else ""
+
+    @property
+    def is_v2(self) -> bool:
+        """True if this row was written with the v2 enum schema."""
+        return self.part_enum is not None and self.defect_type_enum is not None

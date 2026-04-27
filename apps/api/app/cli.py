@@ -1,9 +1,11 @@
 """Internal CLI commands. Run with: python -m app.cli <command>
 
 Available commands:
-  seed              Seed 4 demo users + 3 orgs (idempotent — safe to re-run).
-  seed-vehicles     Seed 8 Ribrell 21 vehicles (from the 2026-04-15 scrape).
-  seed-inspections  Seed 8 inspections for those vehicles (2026-04-15 morning).
+  seed                   Seed 4 demo users + 3 orgs (idempotent).
+  seed-vehicles          Seed 8 Ribrell 21 vehicles (from 2026-04-15 scrape).
+  seed-inspections       Seed 8 inspections for those vehicles.
+  seed-defect-catalog    Seed defect_part_system, defect_part_validity,
+                          defect_details_schema reference tables (v2 spec).
   reset-password <email> <new_password>   Admin override for lost passwords.
 """
 import asyncio
@@ -360,6 +362,95 @@ async def cmd_seed_inspections() -> None:
         print(f"\n✅ Inspections seed complete. {created} created, {skipped} already existed.")
 
 
+# ─────────────────────────────────────────────────────
+# Defect catalog seed (v2 schema reference tables)
+# ─────────────────────────────────────────────────────
+async def cmd_seed_defect_catalog() -> None:
+    """Idempotent UPSERT of defect_part_system, defect_part_validity,
+    defect_details_schema rows. Safe to re-run after spec edits."""
+    from app.models.defect_catalog import (
+        DefectDetailsSchema,
+        DefectPartSystem,
+        DefectPartValidity,
+    )
+    from app.seed_defect_catalog import get_seed_data
+
+    seed = get_seed_data()
+
+    async with AsyncSessionLocal() as session:
+        # ── part_system ──
+        ps_count = 0
+        for part, system, is_primary, group in seed["part_system"]:
+            row = (
+                await session.execute(
+                    select(DefectPartSystem)
+                    .where(DefectPartSystem.part == part)
+                    .where(DefectPartSystem.system == system)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                session.add(DefectPartSystem(
+                    part=part, system=system,
+                    is_primary=is_primary, display_group=group,
+                ))
+                ps_count += 1
+            else:
+                row.is_primary = is_primary
+                row.display_group = group
+                session.add(row)
+
+        # ── part_validity ──
+        pv_count = 0
+        for part, valid_positions, position_required, allow_null in seed["part_validity"]:
+            row = (
+                await session.execute(
+                    select(DefectPartValidity).where(DefectPartValidity.part == part)
+                )
+            ).scalar_one_or_none()
+            csv = ",".join(p.value for p in valid_positions)
+            if row is None:
+                session.add(DefectPartValidity(
+                    part=part,
+                    valid_positions_csv=csv,
+                    position_required=position_required,
+                    allow_null_position=allow_null,
+                ))
+                pv_count += 1
+            else:
+                row.valid_positions_csv = csv
+                row.position_required = position_required
+                row.allow_null_position = allow_null
+                session.add(row)
+
+        # ── details_schema ──
+        ds_count = 0
+        for part, defect_type, json_schema, default_severity in seed["details_schema"]:
+            row = (
+                await session.execute(
+                    select(DefectDetailsSchema)
+                    .where(DefectDetailsSchema.part == part)
+                    .where(DefectDetailsSchema.defect_type == defect_type)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                session.add(DefectDetailsSchema(
+                    part=part, defect_type=defect_type,
+                    json_schema=json_schema,
+                    default_severity=default_severity,
+                ))
+                ds_count += 1
+            else:
+                row.json_schema = json_schema
+                row.default_severity = default_severity
+                session.add(row)
+
+        await session.commit()
+        print(f"✅ Defect catalog seed:")
+        print(f"   part_system     — {ps_count} new, {len(seed['part_system']) - ps_count} updated")
+        print(f"   part_validity   — {pv_count} new, {len(seed['part_validity']) - pv_count} updated")
+        print(f"   details_schema  — {ds_count} new, {len(seed['details_schema']) - ds_count} updated")
+
+
 async def cmd_reset_password(email: str, new_password: str) -> None:
     async with AsyncSessionLocal() as session:
         user = (
@@ -385,6 +476,8 @@ def main() -> None:
         asyncio.run(cmd_seed_vehicles())
     elif cmd == "seed-inspections":
         asyncio.run(cmd_seed_inspections())
+    elif cmd == "seed-defect-catalog":
+        asyncio.run(cmd_seed_defect_catalog())
     elif cmd == "reset-password":
         if len(sys.argv) != 4:
             print("Usage: python -m app.cli reset-password <email> <new_password>")
