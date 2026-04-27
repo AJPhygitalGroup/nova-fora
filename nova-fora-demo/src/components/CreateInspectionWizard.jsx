@@ -16,7 +16,7 @@ import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeft, ArrowRight, X, Truck, Gauge, ClipboardList, Check, AlertCircle,
-  Loader2, Plus, Trash2, Camera, ChevronDown, ChevronUp, AlertTriangle,
+  Loader2, Plus, Trash2, Camera, ChevronDown, ChevronUp, AlertTriangle, Building2,
 } from 'lucide-react';
 import {
   inspections as inspectionsApi,
@@ -49,11 +49,13 @@ const SEVERITY_OPTIONS = [
 
 // ─────────────────────────────────────────────────────
 export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
-  const [step, setStep] = useState(1); // 1=vehicle, 2=odometer, 3=sections, 4=review
+  // Steps: 1=DSP, 2=vehicle, 3=odometer, 4=sections, 5=review
+  const [step, setStep] = useState(1);
   const [vehicles, setVehicles] = useState([]);
   const [vehiclesLoading, setVehiclesLoading] = useState(true);
 
   // Wizard state
+  const [dsp, setDsp] = useState(null);  // {id, name, count} — the DSP whose van is being inspected
   const [vehicle, setVehicle] = useState(null);
   const [odometer, setOdometer] = useState('');
   const [inspectionId, setInspectionId] = useState(null); // INS-id once draft is created
@@ -80,9 +82,25 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
       .finally(() => setVehiclesLoading(false));
   }, []);
 
+  // ─── Derive list of DSPs the user has access to ────
+  // For now we derive from the vehicles list (any DSP with >=1 visible van).
+  // When the contract/assignment table exists in Semana 6, swap to the dedicated endpoint.
+  const availableDsps = (() => {
+    const seen = new Map();
+    for (const v of vehicles) {
+      if (!seen.has(v.dspId)) seen.set(v.dspId, { id: v.dspId, name: v.dsp, count: 0 });
+      seen.get(v.dspId).count += 1;
+    }
+    return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
+  })();
+
+  // Vehicles filtered to the selected DSP (used in step 2)
+  const vehiclesForDsp = dsp ? vehicles.filter((v) => v.dspId === dsp.id) : [];
+
   // ─── Step transitions ───────────────────────────────
-  const canGoNextStep1 = !!vehicle;
-  const canGoNextStep2 = inspectionId !== null;  // draft must exist
+  const canGoNextStep1 = !!dsp;
+  const canGoNextStep2 = !!vehicle;
+  const canGoNextStep3 = inspectionId !== null;  // draft must exist after odometer
   const canSubmit = inspectionId !== null;
 
   // Auto-create the DRAFT when entering step 2 (odometer)
@@ -109,19 +127,26 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
 
   const goNext = async () => {
     if (step === 1) {
-      // Move to odometer step
+      // DSP picked → vehicle list
       setStep(2);
     } else if (step === 2) {
-      // Create draft if not yet, then go to sections
-      const id = await ensureDraft();
-      if (id) setStep(3);
+      // Vehicle picked → odometer
+      setStep(3);
     } else if (step === 3) {
-      setStep(4);
+      // Create draft (with vehicle + odometer), then go to sections
+      const id = await ensureDraft();
+      if (id) setStep(4);
+    } else if (step === 4) {
+      setStep(5);
     }
   };
 
   const goBack = () => {
-    if (step > 1) setStep(step - 1);
+    if (step > 1) {
+      // If user backs out from step 2, also clear vehicle (they may switch DSPs)
+      if (step === 2) setVehicle(null);
+      setStep(step - 1);
+    }
   };
 
   // ─── Defect operations ──────────────────────────────
@@ -239,24 +264,37 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
   return (
     <FullScreenShell
       title="QC DVIC Inspection"
-      subtitle={`Step ${step} of 4`}
+      subtitle={`Step ${step} of 5`}
       onClose={onClose}
     >
       {/* Body */}
       <div className="max-w-2xl mx-auto px-4 py-6 pb-32">
-        {/* ── Step 1: vehicle ── */}
+        {/* ── Step 1: DSP picker ── */}
         {step === 1 && (
-          <Step1VehiclePicker
-            vehicles={vehicles}
+          <Step1DspPicker
+            dsps={availableDsps}
             loading={vehiclesLoading}
+            value={dsp}
+            onChange={(d) => {
+              setDsp(d);
+              setVehicle(null);  // clear if user switches DSP
+            }}
+          />
+        )}
+
+        {/* ── Step 2: vehicle picker (filtered to selected DSP) ── */}
+        {step === 2 && (
+          <Step2VehiclePicker
+            dsp={dsp}
+            vehicles={vehiclesForDsp}
             value={vehicle}
             onChange={setVehicle}
           />
         )}
 
-        {/* ── Step 2: odometer ── */}
-        {step === 2 && (
-          <Step2Odometer
+        {/* ── Step 3: odometer ── */}
+        {step === 3 && (
+          <Step3Odometer
             vehicle={vehicle}
             odometer={odometer}
             onOdometerChange={setOdometer}
@@ -267,9 +305,9 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
           />
         )}
 
-        {/* ── Step 3: sections / defects ── */}
-        {step === 3 && (
-          <Step3Sections
+        {/* ── Step 4: sections / defects ── */}
+        {step === 4 && (
+          <Step4Sections
             inspectionId={inspectionId}
             defectsBySection={defectsBySection}
             openSection={openSection}
@@ -282,9 +320,10 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
           />
         )}
 
-        {/* ── Step 4: review + submit ── */}
-        {step === 4 && (
-          <Step4Review
+        {/* ── Step 5: review + submit ── */}
+        {step === 5 && (
+          <Step5Review
+            dsp={dsp}
             vehicle={vehicle}
             odometer={odometer}
             defectsBySection={defectsBySection}
@@ -308,27 +347,29 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
             <ArrowLeft size={14} /> Back
           </button>
 
-          <div className="text-[10px] text-navy-500 uppercase tracking-wide">
-            {step === 1 && 'Pick a vehicle'}
-            {step === 2 && 'Odometer'}
-            {step === 3 && `${totalDefects} defect${totalDefects === 1 ? '' : 's'}`}
-            {step === 4 && 'Review & submit'}
+          <div className="text-[10px] text-navy-500 uppercase tracking-wide hidden sm:block">
+            {step === 1 && 'Pick the DSP'}
+            {step === 2 && 'Pick a vehicle'}
+            {step === 3 && 'Odometer'}
+            {step === 4 && `${totalDefects} defect${totalDefects === 1 ? '' : 's'}`}
+            {step === 5 && 'Review & submit'}
           </div>
 
-          {step < 4 && (
+          {step < 5 && (
             <button
               onClick={goNext}
               disabled={
                 (step === 1 && !canGoNextStep1) ||
-                (step === 2 && creatingDraft)
+                (step === 2 && !canGoNextStep2) ||
+                (step === 3 && creatingDraft)
               }
               className="flex items-center gap-1.5 px-4 py-2 rounded-md bg-accent-blue text-white font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-sm"
             >
               {creatingDraft ? <Loader2 size={14} className="animate-spin" /> : null}
-              {step === 2 && !inspectionId ? 'Start' : 'Next'} <ArrowRight size={14} />
+              {step === 3 && !inspectionId ? 'Start' : 'Next'} <ArrowRight size={14} />
             </button>
           )}
-          {step === 4 && (
+          {step === 5 && (
             <button
               onClick={handleSubmit}
               disabled={submitting || !canSubmit}
@@ -381,27 +422,9 @@ function FullScreenShell({ title, subtitle, onClose, children }) {
 }
 
 // ─────────────────────────────────────────────────────
-// Step 1: pick DSP (if multiple visible) → pick vehicle
+// Step 1: DSP picker (mandatory first)
 // ─────────────────────────────────────────────────────
-function Step1VehiclePicker({ vehicles, loading, value, onChange }) {
-  const [search, setSearch] = useState('');
-  const [dspFilter, setDspFilter] = useState('all');
-
-  // Derive unique DSPs from the vehicle list (scoped server-side per role).
-  // dsp_owner → only their own org → 1 entry → we hide the chips (no need to choose).
-  // vendor / tech / admin → multiple DSPs → show chips.
-  const dsps = (() => {
-    const seen = new Map();
-    for (const v of vehicles) {
-      if (!seen.has(v.dspId)) {
-        seen.set(v.dspId, { id: v.dspId, name: v.dsp, count: 0 });
-      }
-      seen.get(v.dspId).count += 1;
-    }
-    return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
-  })();
-  const showDspChips = dsps.length > 1;
-
+function Step1DspPicker({ dsps, loading, value, onChange }) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -410,8 +433,81 @@ function Step1VehiclePicker({ vehicles, loading, value, onChange }) {
     );
   }
 
+  if (dsps.length === 0) {
+    return (
+      <div className="py-12 text-center">
+        <Building2 size={32} className="text-navy-500 mx-auto mb-3" />
+        <p className="text-sm text-navy-400">
+          You don't have access to any DSPs with vehicles assigned.
+        </p>
+        <p className="text-[11px] text-navy-500 mt-1">
+          Contact your admin to be assigned to a DSP fleet.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 mb-2">
+        <Building2 size={16} className="text-accent-blue" />
+        <h3 className="text-sm font-semibold text-white">
+          Which DSP are you servicing today?
+        </h3>
+      </div>
+      <p className="text-xs text-navy-400 -mt-1 mb-2">
+        Pick the fleet whose van you're about to inspect.
+      </p>
+
+      <div className="grid sm:grid-cols-2 gap-2">
+        {dsps.map((d) => {
+          const selected = value?.id === d.id;
+          return (
+            <button
+              key={d.id}
+              onClick={() => onChange(d)}
+              className={`text-left rounded-lg p-4 border-2 transition-all cursor-pointer ${
+                selected
+                  ? 'border-accent-blue bg-accent-blue/10'
+                  : 'border-navy-700 bg-navy-900/60 hover:border-navy-600'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <div
+                  className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
+                    selected
+                      ? 'bg-accent-blue/20 border border-accent-blue/40'
+                      : 'bg-navy-800 border border-navy-700'
+                  }`}
+                >
+                  <Building2
+                    size={18}
+                    className={selected ? 'text-accent-blue' : 'text-navy-400'}
+                  />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-white truncate">{d.name}</div>
+                  <div className="text-[11px] text-navy-400">
+                    {d.count} van{d.count === 1 ? '' : 's'} in fleet
+                  </div>
+                </div>
+                {selected && <Check size={16} className="text-accent-blue ml-auto shrink-0" />}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// Step 2: vehicle picker (already filtered to selected DSP)
+// ─────────────────────────────────────────────────────
+function Step2VehiclePicker({ dsp, vehicles, value, onChange }) {
+  const [search, setSearch] = useState('');
+
   const filtered = vehicles.filter((v) => {
-    if (dspFilter !== 'all' && v.dspId !== dspFilter) return false;
     if (!search) return true;
     const s = search.toLowerCase();
     return (
@@ -422,54 +518,14 @@ function Step1VehiclePicker({ vehicles, loading, value, onChange }) {
     );
   });
 
-  // Group filtered list by DSP when "All DSPs" view is active and multiple DSPs exist
-  const groupedByDsp = (() => {
-    if (!showDspChips || dspFilter !== 'all') return null;
-    const map = new Map();
-    for (const v of filtered) {
-      if (!map.has(v.dspId)) map.set(v.dspId, { id: v.dspId, name: v.dsp, vans: [] });
-      map.get(v.dspId).vans.push(v);
-    }
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-  })();
-
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 mb-2">
         <Truck size={16} className="text-accent-blue" />
         <h3 className="text-sm font-semibold text-white">
-          {showDspChips ? 'Pick the DSP and the vehicle' : 'Which vehicle are you inspecting?'}
+          Pick a van from <span className="text-accent-blue">{dsp?.name}</span>
         </h3>
       </div>
-
-      {/* DSP filter chips — only when the user has visibility on >1 DSP */}
-      {showDspChips && (
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-          <button
-            onClick={() => setDspFilter('all')}
-            className={`shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold border cursor-pointer transition-all ${
-              dspFilter === 'all'
-                ? 'bg-accent-blue/20 border-accent-blue/50 text-accent-blue'
-                : 'bg-navy-800/40 border-navy-700 text-navy-400 hover:text-white'
-            }`}
-          >
-            All DSPs <span className="ml-1 text-[10px] opacity-70">({vehicles.length})</span>
-          </button>
-          {dsps.map((d) => (
-            <button
-              key={d.id}
-              onClick={() => setDspFilter(d.id)}
-              className={`shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold border cursor-pointer transition-all ${
-                dspFilter === d.id
-                  ? 'bg-accent-green/20 border-accent-green/50 text-accent-green'
-                  : 'bg-navy-800/40 border-navy-700 text-navy-400 hover:text-white'
-              }`}
-            >
-              {d.name} <span className="ml-1 text-[10px] opacity-70">({d.count})</span>
-            </button>
-          ))}
-        </div>
-      )}
 
       <input
         type="search"
@@ -479,32 +535,18 @@ function Step1VehiclePicker({ vehicles, loading, value, onChange }) {
         className="w-full rounded-lg px-3 py-2.5 bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue text-sm"
       />
 
-      {/* Vehicles — grouped by DSP if showing all, else flat */}
-      {groupedByDsp ? (
-        <div className="space-y-4">
-          {groupedByDsp.map((grp) => (
-            <div key={grp.id}>
-              <div className="text-[10px] text-navy-400 font-semibold uppercase tracking-wide mb-1.5 px-1">
-                {grp.name} <span className="text-navy-500">· {grp.vans.length} van{grp.vans.length === 1 ? '' : 's'}</span>
-              </div>
-              <div className="grid sm:grid-cols-2 gap-2">
-                {grp.vans.map((v) => (
-                  <VehicleCard key={v.id} v={v} selected={value?.id === v.id} onSelect={onChange} />
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="grid sm:grid-cols-2 gap-2">
-          {filtered.map((v) => (
-            <VehicleCard key={v.id} v={v} selected={value?.id === v.id} onSelect={onChange} />
-          ))}
-        </div>
-      )}
+      <div className="grid sm:grid-cols-2 gap-2">
+        {filtered.map((v) => (
+          <VehicleCard key={v.id} v={v} selected={value?.id === v.id} onSelect={onChange} />
+        ))}
+      </div>
 
       {filtered.length === 0 && (
-        <div className="py-8 text-center text-sm text-navy-400">No vehicles match.</div>
+        <div className="py-8 text-center text-sm text-navy-400">
+          {vehicles.length === 0
+            ? `${dsp?.name} has no vehicles in your visibility.`
+            : 'No vehicles match the search.'}
+        </div>
       )}
     </div>
   );
@@ -539,9 +581,9 @@ function VehicleCard({ v, selected, onSelect }) {
 }
 
 // ─────────────────────────────────────────────────────
-// Step 2: odometer + start draft
+// Step 3: odometer + start draft
 // ─────────────────────────────────────────────────────
-function Step2Odometer({ vehicle, odometer, onOdometerChange, inspectionId, creatingDraft, createError, onEnsureDraft }) {
+function Step3Odometer({ vehicle, odometer, onOdometerChange, inspectionId, creatingDraft, createError, onEnsureDraft }) {
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-2">
@@ -606,9 +648,9 @@ function Step2Odometer({ vehicle, odometer, onOdometerChange, inspectionId, crea
 }
 
 // ─────────────────────────────────────────────────────
-// Step 3: sections walkthrough
+// Step 4: sections walkthrough
 // ─────────────────────────────────────────────────────
-function Step3Sections({
+function Step4Sections({
   inspectionId, defectsBySection, openSection, setOpenSection,
   addingDefect, setAddingDefect, onCommitDefect, onRemoveDefect,
 }) {
@@ -799,12 +841,17 @@ function NewDefectForm({ onCommit, onCancel }) {
 }
 
 // ─────────────────────────────────────────────────────
-// Step 4: review + submit
+// Step 5: review + submit
 // ─────────────────────────────────────────────────────
-function Step4Review({ vehicle, odometer, defectsBySection, totalDefects, inspectionId, submitting, submitError, onSubmit }) {
+function Step5Review({ dsp, vehicle, odometer, defectsBySection, totalDefects, inspectionId, submitting, submitError, onSubmit }) {
   const sectionEntries = Object.entries(defectsBySection).filter(([, arr]) => arr && arr.length > 0);
   return (
     <div className="space-y-4">
+      <div className="rounded-lg border border-navy-700 bg-navy-900/60 p-3">
+        <div className="text-[10px] uppercase tracking-wide text-navy-400 mb-1">DSP</div>
+        <div className="text-sm font-bold text-white">{dsp?.name}</div>
+      </div>
+
       <div className="rounded-lg border border-navy-700 bg-navy-900/60 p-3">
         <div className="text-[10px] uppercase tracking-wide text-navy-400 mb-1">Vehicle</div>
         <div className="text-sm font-bold text-white font-mono">{vehicle?.fleetId}</div>
