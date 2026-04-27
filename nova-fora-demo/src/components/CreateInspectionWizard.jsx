@@ -25,28 +25,17 @@ import {
   APIError,
 } from '../api/client';
 import PhotoUploader from './ui/PhotoUploader';
+import DefectWizard from './DefectWizard';
 
-// 11 standard DVIC sections (matches what nova4a uses)
-const SECTIONS = [
-  '1. Front Side',
-  '2. Driver Side',
-  '3. Passenger Side',
-  '4. Rear',
-  '5. In-Cab',
-  '6. Brakes',
-  '7. Tires',
-  '8. Engine',
-  '9. Lights',
-  '10. Cargo Area',
-  '11. Other',
-];
+const SEVERITY_TINT = {
+  low: 'bg-accent-blue/15 border-accent-blue/40 text-accent-blue',
+  medium: 'bg-accent-gold/15 border-accent-gold/40 text-accent-gold',
+  high: 'bg-accent-orange/15 border-accent-orange/40 text-accent-orange',
+  critical: 'bg-accent-red/15 border-accent-red/40 text-accent-red',
+};
 
-const SEVERITY_OPTIONS = [
-  { value: 'low', label: 'Low', tint: 'text-accent-blue border-accent-blue/40 bg-accent-blue/15' },
-  { value: 'medium', label: 'Medium', tint: 'text-accent-gold border-accent-gold/40 bg-accent-gold/15' },
-  { value: 'high', label: 'High', tint: 'text-accent-orange border-accent-orange/40 bg-accent-orange/15' },
-  { value: 'critical', label: 'Critical', tint: 'text-accent-red border-accent-red/40 bg-accent-red/15' },
-];
+// (Legacy 11-section taxonomy + free-text severity picker were deprecated
+// in v2 of the defect schema — replaced by the catalog-driven DefectWizard.)
 
 // Reasons a tech might not be able to inspect a vehicle.
 // These create SUBMITTED inspections with result='incomplete' + this reason.
@@ -92,9 +81,12 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
   const [inspectionId, setInspectionId] = useState(null);
   const [creatingDraft, setCreatingDraft] = useState(false);
   const [createError, setCreateError] = useState(null);
-  const [defectsBySection, setDefectsBySection] = useState({});
-  const [openSection, setOpenSection] = useState(null);
-  const [addingDefect, setAddingDefect] = useState(null);
+  // v2 schema: flat list of defects (no sections — they're derived from part).
+  // Each item: { id, partLabel, partIcon, positionLabel, defectTypeLabel,
+  //              defectTypeIcon, severity, photos: [], _v2: true }
+  const [defects, setDefects] = useState([]);
+  // Whether the DefectWizard overlay is open
+  const [showDefectWizard, setShowDefectWizard] = useState(false);
 
   // Session-wide state (kept across multiple inspections in one shift)
   const [dsp, setDsp] = useState(null);  // {id, numericId, name, count}
@@ -232,52 +224,33 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
     }
   };
 
-  // ─── Defect operations ──────────────────────────────
-  const handleAddDefectStart = (section) => {
-    setOpenSection(section);
-    setAddingDefect(section);
+  // ─── Defect operations (v2 flat list) ──────────────
+  // The DefectWizard handles its own POST /defects call and returns the
+  // created row enriched with catalog labels. We just append to our list.
+  const handleDefectCommitted = (created) => {
+    setDefects((prev) => [
+      ...prev,
+      {
+        id: created.id,
+        partLabel: created.partLabel,
+        partIcon: created.partIcon,
+        positionLabel: created.positionLabel,
+        defectTypeLabel: created.defectTypeLabel,
+        defectTypeIcon: created.defectTypeIcon,
+        severity: created.severity,
+        // Backend mirror columns (used by photo uploader + reviews)
+        section: created.section,
+        description: created.description,
+      },
+    ]);
+    setShowDefectWizard(false);
   };
 
-  const handleAddDefectCommit = async (section, defectData) => {
-    if (!inspectionId) return null;
-    try {
-      const created = await inspectionsApi.addDefect(inspectionId, {
-        section,
-        part: defectData.part,
-        description: defectData.description,
-        severity: defectData.severity,
-        category: defectData.category || null,
-      });
-      // Add to local state with empty photos
-      setDefectsBySection((prev) => ({
-        ...prev,
-        [section]: [
-          ...(prev[section] || []),
-          {
-            id: created.id,
-            part: created.part,
-            description: created.description,
-            severity: created.severity,
-            photos: [],
-          },
-        ],
-      }));
-      setAddingDefect(null);
-      return created.id;
-    } catch (err) {
-      alert(`Add defect failed: ${err?.detail || err?.message || 'unknown'}`);
-      return null;
-    }
-  };
-
-  const handleRemoveDefect = async (section, defect) => {
-    if (!confirm(`Remove "${defect.part}" defect?`)) return;
+  const handleRemoveDefect = async (defect) => {
+    if (!confirm(`Remove "${defect.partLabel || defect.part || 'defect'}"?`)) return;
     try {
       await inspectionsApi.removeDefect(inspectionId, defect.id);
-      setDefectsBySection((prev) => ({
-        ...prev,
-        [section]: (prev[section] || []).filter((d) => d.id !== defect.id),
-      }));
+      setDefects((prev) => prev.filter((d) => d.id !== defect.id));
     } catch (err) {
       alert(`Remove failed: ${err?.detail || err?.message || 'unknown'}`);
     }
@@ -324,7 +297,7 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
     setInspectionId(null);
     setCreatingDraft(false);
     setCreateError(null);
-    setDefectsBySection({});
+    setDefects([]);
     setOpenSection(null);
     setAddingDefect(null);
     setSubmitResult(null);
@@ -390,11 +363,7 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
   };
 
   // ─── Counts derived for UI ──────────────────────────
-  const totalDefects = Object.values(defectsBySection)
-    .reduce((sum, arr) => sum + arr.length, 0);
-  const sectionsCovered = Object.keys(defectsBySection).filter(
-    (s) => (defectsBySection[s] || []).length > 0
-  );
+  const totalDefects = defects.length;
 
   // ─── Phase: post-submit chooser ─────────────────────
   if (phase === 'postSubmit' && submitResult) {
@@ -504,17 +473,12 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
           />
         )}
 
-        {/* ── Step 5: sections / defects ── */}
+        {/* ── Step 5: defects (flat list + DefectWizard overlay) ── */}
         {step === 5 && (
-          <Step5Sections
+          <Step5Defects
             inspectionId={inspectionId}
-            defectsBySection={defectsBySection}
-            openSection={openSection}
-            setOpenSection={setOpenSection}
-            addingDefect={addingDefect}
-            setAddingDefect={setAddingDefect}
-            onAddDefect={handleAddDefectStart}
-            onCommitDefect={handleAddDefectCommit}
+            defects={defects}
+            onOpenWizard={() => setShowDefectWizard(true)}
             onRemoveDefect={handleRemoveDefect}
           />
         )}
@@ -526,12 +490,21 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
             keysReceived={keysReceived}
             vehicle={vehicle}
             odometer={odometer}
-            defectsBySection={defectsBySection}
+            defects={defects}
             totalDefects={totalDefects}
             inspectionId={inspectionId}
             submitting={submitting}
             submitError={submitError}
             onSubmit={handleSubmit}
+          />
+        )}
+
+        {/* DefectWizard overlay — opens above the inspection wizard */}
+        {showDefectWizard && (
+          <DefectWizard
+            inspectionId={inspectionId}
+            onCommitted={handleDefectCommitted}
+            onCancel={() => setShowDefectWizard(false)}
           />
         )}
       </div>
@@ -941,103 +914,70 @@ function Step4Odometer({ vehicle, odometer, onOdometerChange, inspectionId, crea
 }
 
 // ─────────────────────────────────────────────────────
-// Step 5: sections walkthrough
+// Step 5 (v2): flat defects list + DefectWizard overlay launch
 // ─────────────────────────────────────────────────────
-function Step5Sections({
-  inspectionId, defectsBySection, openSection, setOpenSection,
-  addingDefect, setAddingDefect, onCommitDefect, onRemoveDefect,
-}) {
+function Step5Defects({ inspectionId, defects, onOpenWizard, onRemoveDefect }) {
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2 mb-3">
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 mb-1">
         <ClipboardList size={16} className="text-accent-blue" />
-        <h3 className="text-sm font-semibold text-white">Walkthrough — tap "+" on any section to add a defect</h3>
+        <h3 className="text-sm font-semibold text-white">
+          Defects {defects.length > 0 && <span className="text-navy-400 font-normal">({defects.length})</span>}
+        </h3>
       </div>
+      <p className="text-xs text-navy-400 -mt-1">
+        Tap "Add defect" for any issue you find during the walkthrough.
+        Each defect goes through a quick 3-5 tap form, then you can attach photos.
+      </p>
 
-      {SECTIONS.map((section) => {
-        const sectionDefects = defectsBySection[section] || [];
-        const isOpen = openSection === section || sectionDefects.length > 0;
-        return (
-          <div
-            key={section}
-            className="rounded-lg border border-navy-700/60 bg-navy-900/40 overflow-hidden"
-          >
-            <button
-              onClick={() => setOpenSection(isOpen ? null : section)}
-              className="w-full flex items-center justify-between px-3 py-3 hover:bg-navy-800/40 cursor-pointer"
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-white">{section}</span>
-                {sectionDefects.length > 0 && (
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-accent-orange/15 border border-accent-orange/40 text-accent-orange text-[10px] font-semibold">
-                    <AlertTriangle size={9} /> {sectionDefects.length}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-1">
-                {sectionDefects.length === 0 && !isOpen && (
-                  <span className="text-[10px] text-navy-500 font-semibold uppercase tracking-wide">
-                    Pass
-                  </span>
-                )}
-                {isOpen ? <ChevronUp size={14} className="text-navy-400" /> : <ChevronDown size={14} className="text-navy-400" />}
-              </div>
-            </button>
+      {/* Defect cards */}
+      {defects.map((d) => (
+        <V2DefectCard
+          key={d.id}
+          defect={d}
+          onRemove={() => onRemoveDefect(d)}
+        />
+      ))}
 
-            <AnimatePresence>
-              {isOpen && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  className="border-t border-navy-800/60 overflow-hidden"
-                >
-                  <div className="p-3 space-y-3">
-                    {sectionDefects.map((d) => (
-                      <DefectCard
-                        key={d.id}
-                        defect={d}
-                        onRemove={() => onRemoveDefect(section, d)}
-                      />
-                    ))}
+      {/* Add button */}
+      <button
+        onClick={onOpenWizard}
+        className="w-full flex items-center justify-center gap-2 px-4 py-4 rounded-xl border-2 border-dashed border-accent-blue/40 bg-accent-blue/5 hover:bg-accent-blue/10 text-accent-blue cursor-pointer font-semibold text-sm transition-all"
+      >
+        <Plus size={16} /> Add defect
+      </button>
 
-                    {addingDefect === section ? (
-                      <NewDefectForm
-                        onCommit={(data) => onCommitDefect(section, data)}
-                        onCancel={() => setAddingDefect(null)}
-                      />
-                    ) : (
-                      <button
-                        onClick={() => setAddingDefect(section)}
-                        className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-md border border-dashed border-navy-600 text-navy-400 hover:text-accent-blue hover:border-accent-blue cursor-pointer text-sm"
-                      >
-                        <Plus size={14} /> Add defect to {section.split(' ').slice(1).join(' ').toLowerCase() || section}
-                      </button>
-                    )}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        );
-      })}
+      {defects.length === 0 && (
+        <p className="text-[11px] text-navy-500 text-center pt-2">
+          If everything's fine, you can skip ahead — empty inspections are PASSED.
+        </p>
+      )}
     </div>
   );
 }
 
-function DefectCard({ defect, onRemove }) {
-  const sev = SEVERITY_OPTIONS.find((s) => s.value === defect.severity);
+function V2DefectCard({ defect, onRemove }) {
+  const tint = SEVERITY_TINT[defect.severity] || SEVERITY_TINT.medium;
+  const positionLine = defect.positionLabel ? ` (${defect.positionLabel})` : '';
   return (
-    <div className="rounded-lg border border-navy-700 bg-navy-950/40 p-3">
+    <div className="rounded-lg border border-navy-700 bg-navy-900/60 p-3">
       <div className="flex items-start justify-between gap-2 mb-2">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-sm font-semibold text-white">{defect.part}</span>
-            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${sev?.tint || ''}`}>
-              {sev?.label || defect.severity}
-            </span>
+        <div className="flex items-start gap-2 min-w-0">
+          <span className="text-2xl shrink-0">{defect.partIcon || '🔧'}</span>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+              <span className="text-sm font-semibold text-white">
+                {defect.partLabel || defect.part}{positionLine}
+              </span>
+              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${tint} capitalize`}>
+                {defect.severity}
+              </span>
+            </div>
+            <p className="text-xs text-navy-300">
+              {defect.defectTypeIcon} {defect.defectTypeLabel || defect.description}
+            </p>
+            <p className="text-[10px] text-navy-500 font-mono">{defect.id}</p>
           </div>
-          <p className="text-xs text-navy-300 line-clamp-2">{defect.description}</p>
         </div>
         <button
           onClick={onRemove}
@@ -1047,7 +987,7 @@ function DefectCard({ defect, onRemove }) {
           <Trash2 size={14} />
         </button>
       </div>
-      {/* Inline photo uploader for this defect */}
+      {/* Photo uploader inline — tech can attach damage photos right here */}
       <div className="mt-2">
         <PhotoUploader
           parentKind="defect"
@@ -1059,85 +999,20 @@ function DefectCard({ defect, onRemove }) {
   );
 }
 
-function NewDefectForm({ onCommit, onCancel }) {
-  const [part, setPart] = useState('');
-  const [description, setDescription] = useState('');
-  const [severity, setSeverity] = useState('medium');
-  const [submitting, setSubmitting] = useState(false);
-
-  const canSubmit = part.trim().length > 0 && description.trim().length > 4;
-
-  const handleSubmit = async () => {
-    if (!canSubmit) return;
-    setSubmitting(true);
-    await onCommit({ part: part.trim(), description: description.trim(), severity });
-    setSubmitting(false);
-  };
-
-  return (
-    <div className="rounded-lg border border-accent-blue/40 bg-accent-blue/5 p-3 space-y-3">
-      <div>
-        <label className="text-[10px] font-semibold text-navy-300 uppercase tracking-wide block mb-1">Part</label>
-        <input
-          type="text"
-          value={part}
-          onChange={(e) => setPart(e.target.value)}
-          placeholder="e.g. Windshield, Brake light, Side mirror"
-          className="w-full rounded-md px-3 py-2 bg-navy-900 border border-navy-700 text-white text-sm outline-none focus:border-accent-blue"
-        />
-      </div>
-      <div>
-        <label className="text-[10px] font-semibold text-navy-300 uppercase tracking-wide block mb-1">Description</label>
-        <textarea
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="What's wrong with it?"
-          rows={2}
-          className="w-full rounded-md px-3 py-2 bg-navy-900 border border-navy-700 text-white text-sm outline-none focus:border-accent-blue resize-none"
-        />
-      </div>
-      <div>
-        <label className="text-[10px] font-semibold text-navy-300 uppercase tracking-wide block mb-1">Severity</label>
-        <div className="flex flex-wrap gap-1.5">
-          {SEVERITY_OPTIONS.map((s) => (
-            <button
-              key={s.value}
-              type="button"
-              onClick={() => setSeverity(s.value)}
-              className={`px-2.5 py-1 rounded-md border text-[11px] font-semibold cursor-pointer transition-all ${
-                severity === s.value ? s.tint : 'border-navy-700 text-navy-400 bg-navy-800/40 hover:text-white'
-              }`}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="flex items-center gap-2 pt-1">
-        <button
-          onClick={onCancel}
-          className="px-3 py-1.5 rounded-md border border-navy-700 text-navy-300 text-xs hover:text-white hover:border-navy-600 cursor-pointer"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={handleSubmit}
-          disabled={!canSubmit || submitting}
-          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md bg-accent-blue text-white text-xs font-semibold disabled:opacity-40 cursor-pointer"
-        >
-          {submitting && <Loader2 size={12} className="animate-spin" />}
-          Add &amp; take photo
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // ─────────────────────────────────────────────────────
-// Step 6: review + submit
+// Step 6: review + submit (v2 — flat defects list)
 // ─────────────────────────────────────────────────────
-function Step6Review({ dsp, keysReceived, vehicle, odometer, defectsBySection, totalDefects, inspectionId, submitting, submitError, onSubmit }) {
-  const sectionEntries = Object.entries(defectsBySection).filter(([, arr]) => arr && arr.length > 0);
+function Step6Review({ dsp, keysReceived, vehicle, odometer, defects, totalDefects, inspectionId, submitting, submitError, onSubmit }) {
+  // Group defects by their (legacy mirror) section for review readability.
+  const sectionGroups = (() => {
+    const map = {};
+    for (const d of defects) {
+      const section = d.section || 'Other';
+      if (!map[section]) map[section] = [];
+      map[section].push(d);
+    }
+    return Object.entries(map);
+  })();
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-navy-700 bg-navy-900/60 p-3">
@@ -1177,16 +1052,26 @@ function Step6Review({ dsp, keysReceived, vehicle, odometer, defectsBySection, t
           </div>
         ) : (
           <div className="space-y-2 mt-2">
-            {sectionEntries.map(([section, defects]) => (
+            {sectionGroups.map(([section, list]) => (
               <div key={section} className="text-xs">
                 <div className="text-navy-400 font-semibold">{section}</div>
                 <ul className="ml-3 mt-0.5 space-y-0.5">
-                  {defects.map((d) => (
-                    <li key={d.id} className="text-navy-200 flex items-center gap-1.5">
-                      <span className="text-navy-500">{d.id}</span>
-                      <span className="text-white font-medium">{d.part}</span>
+                  {list.map((d) => (
+                    <li key={d.id} className="text-navy-200 flex items-center gap-1.5 flex-wrap">
+                      <span className="text-navy-500 font-mono">{d.id}</span>
+                      <span>{d.partIcon || ''}</span>
+                      <span className="text-white font-medium">
+                        {d.partLabel || d.part}
+                        {d.positionLabel && <span className="text-navy-400"> ({d.positionLabel})</span>}
+                      </span>
                       <span className="text-navy-500">·</span>
-                      <span className="text-navy-300">{d.severity}</span>
+                      <span className="text-navy-300">{d.defectTypeLabel || ''}</span>
+                      <span className="text-navy-500">·</span>
+                      <span className={`capitalize ${
+                        d.severity === 'critical' ? 'text-accent-red' :
+                        d.severity === 'high' ? 'text-accent-orange' :
+                        d.severity === 'medium' ? 'text-accent-gold' : 'text-accent-blue'
+                      }`}>{d.severity}</span>
                     </li>
                   ))}
                 </ul>

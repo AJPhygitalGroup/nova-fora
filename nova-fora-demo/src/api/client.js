@@ -364,6 +364,68 @@ export const defects = {
 };
 
 // ─────────────────────────────────────────────────────
+// Defect catalog — fetched once per session and cached in module scope.
+// ─────────────────────────────────────────────────────
+let _catalogPromise = null;
+
+export const catalog = {
+  /**
+   * GET /defect-catalog (cached). Returns the response unchanged after
+   * camelCase normalization. Use the helpers below to slice it.
+   */
+  load() {
+    if (!_catalogPromise) {
+      _catalogPromise = apiFetch('/defect-catalog').catch((err) => {
+        _catalogPromise = null;  // allow retry on failure
+        throw err;
+      });
+    }
+    return _catalogPromise;
+  },
+
+  /** Force refetch (e.g. after admin edit). */
+  invalidate() {
+    _catalogPromise = null;
+  },
+
+  // ─── helpers — operate on a loaded catalog object ───
+  partsForSystem(cat, systemId) {
+    return cat.parts.filter((p) =>
+      p.appearances.some((a) => a.system === systemId)
+    );
+  },
+
+  /** Returns { groupKey: [parts] }. groupKey is the display_group or '_flat'. */
+  partsByGroup(cat, systemId) {
+    const groups = {};
+    for (const part of cat.parts) {
+      const app = part.appearances.find((a) => a.system === systemId);
+      if (!app) continue;
+      const key = app.displayGroup || '_flat';
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(part);
+    }
+    return groups;
+  },
+
+  getPart(cat, partId) {
+    return cat.parts.find((p) => p.id === partId);
+  },
+
+  getDefectType(part, typeId) {
+    return part?.defectTypes?.find((t) => t.id === typeId);
+  },
+
+  getSystem(cat, systemId) {
+    return cat.systems.find((s) => s.id === systemId);
+  },
+
+  getPosition(part, posId) {
+    return part?.validPositions?.find((p) => p.id === posId);
+  },
+};
+
+// ─────────────────────────────────────────────────────
 // Uploads module — presigned URL flow
 // ─────────────────────────────────────────────────────
 export const uploads = {
