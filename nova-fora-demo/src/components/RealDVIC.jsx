@@ -2297,11 +2297,17 @@ export default function RealDVIC({ user }) {
   const [vanUpdates, setVanUpdates] = useState({});
   const [createWOContext, setCreateWOContext] = useState(null); // { van, defect }
 
-  // Live "Vans inspected today" — pulled from /inspections + /vehicles
+  // Live "Vans inspected today" — pulled from /inspections + /vehicles.
   // Server scopes by JWT: dsp_owner sees own DSP, vendor/tech sees all DSPs.
-  const [todayCount, setTodayCount] = useState(0);
+  //
+  // We split into TRUE inspections (real walkaround happened) vs INCOMPLETE
+  // (van flagged as won't-start / not-at-lot / no-keys). The card shows
+  // "real inspected of fleet" + the incomplete count as a separate badge,
+  // because for the DSP owner they're operationally distinct.
+  const [todayCount, setTodayCount] = useState(0);            // unique vans truly inspected
+  const [todayIncompleteCount, setTodayIncompleteCount] = useState(0); // unique vans flagged as not-inspectable
   const [fleetTotal, setFleetTotal] = useState(0);
-  const [todayInspected, setTodayInspected] = useState([]);  // for the "Vans inspected" expandable list
+  const [todayInspected, setTodayInspected] = useState([]);   // for the expand modal
 
   const refreshTodayMetrics = useCallback(async () => {
     try {
@@ -2310,16 +2316,27 @@ export default function RealDVIC({ user }) {
         inspectionsApi.list({ dateFrom: today, dateTo: today, perPage: 100 }),
         vehiclesApi.list({ perPage: 100 }),
       ]);
-      // Unique vehicles inspected today (one van might be inspected twice — count distinct)
-      const seen = new Set();
+      // First-seen wins per vehicleId — if a van had both a real inspection
+      // AND was later flagged, the FIRST recorded result wins. (In practice
+      // this won't happen because the wizard only creates incomplete for
+      // vans without an inspection.)
+      const seen = new Map(); // vehicleId -> result
       const uniq = [];
       for (const i of inspsRes.items) {
         if (!seen.has(i.vehicleId)) {
-          seen.add(i.vehicleId);
+          seen.set(i.vehicleId, i.result);
           uniq.push(i);
         }
       }
-      setTodayCount(uniq.length);
+      // Real inspections = anything that's not "incomplete"
+      let realCount = 0;
+      let incompleteCount = 0;
+      for (const result of seen.values()) {
+        if (result === 'incomplete') incompleteCount += 1;
+        else realCount += 1;
+      }
+      setTodayCount(realCount);
+      setTodayIncompleteCount(incompleteCount);
       setFleetTotal(vehsRes.total ?? vehsRes.items.length);
       setTodayInspected(uniq);
     } catch (err) {
@@ -2448,7 +2465,17 @@ export default function RealDVIC({ user }) {
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05, duration: 0.4 }}
               onClick={() => setOpenCard('inspected')}
               className="bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl p-5 hover:border-navy-600/60 transition-all cursor-pointer h-full flex flex-col">
-              <div className="flex items-start justify-end mb-3">
+              <div className="flex items-start justify-between mb-3">
+                {/* Left: incomplete badge (only shown if any) */}
+                {todayIncompleteCount > 0 ? (
+                  <span
+                    className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-accent-red/15 text-accent-red border border-accent-red/30"
+                    title={`${todayIncompleteCount} van${todayIncompleteCount === 1 ? '' : 's'} flagged as not inspectable today`}
+                  >
+                    <AlertTriangle size={10} /> {todayIncompleteCount} flagged
+                  </span>
+                ) : <span />}
+                {/* Right: coverage % (real inspections only) */}
                 {fleetTotal > 0 && (
                   <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
                     todayCount === fleetTotal
@@ -2457,7 +2484,7 @@ export default function RealDVIC({ user }) {
                       ? 'bg-navy-700/40 text-navy-400'
                       : 'bg-accent-orange/15 text-accent-orange'
                   }`}>
-                    {fleetTotal === 0 ? '—' : `${Math.round((todayCount / fleetTotal) * 100)}%`}
+                    {`${Math.round((todayCount / fleetTotal) * 100)}%`}
                   </span>
                 )}
               </div>
@@ -2466,6 +2493,11 @@ export default function RealDVIC({ user }) {
                   {todayCount} <span className="text-navy-400 font-normal text-xl">of {fleetTotal}</span>
                 </div>
                 <div className="text-sm text-navy-400">Vans Inspected in Recent QC DVIC</div>
+                {todayIncompleteCount > 0 && (
+                  <div className="text-[11px] text-accent-red mt-1">
+                    {todayIncompleteCount} not inspectable
+                  </div>
+                )}
               </div>
               <div className="mt-auto pt-2 text-center text-[11px] text-navy-400">
                 Next inspection <span className="text-white font-medium">{nextInspectionDate}</span>
