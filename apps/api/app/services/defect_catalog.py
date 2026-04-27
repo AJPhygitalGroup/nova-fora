@@ -167,6 +167,9 @@ async def validate_v2_defect(
          For now we only check required keys exist when schema declares them.
     """
     # 1. Lookup the (part, defect_type) row → also gives us default severity
+    type_value = defect_type.value if hasattr(defect_type, "value") else str(defect_type)
+    part_value = part.value if hasattr(part, "value") else str(part)
+
     schema_row = (
         await session.execute(
             select(DefectDetailsSchema)
@@ -176,7 +179,7 @@ async def validate_v2_defect(
     ).scalar_one_or_none()
     if schema_row is None:
         raise CatalogValidationError(
-            f"defect_type {defect_type} is not allowed on part {part.value}"
+            f"defect_type '{type_value}' is not allowed on part '{part_value}'"
         )
 
     # 2. Position validity
@@ -187,8 +190,7 @@ async def validate_v2_defect(
     ).scalar_one_or_none()
 
     if validity is None:
-        # Should not happen in well-seeded DB, but be defensive.
-        raise CatalogValidationError(f"no validity rule registered for part {part.value}")
+        raise CatalogValidationError(f"no validity rule registered for part '{part_value}'")
 
     valid_positions = [
         DefectPosition(p) for p in validity.valid_positions_csv.split(",") if p
@@ -196,13 +198,14 @@ async def validate_v2_defect(
     if position is None:
         if validity.position_required:
             raise CatalogValidationError(
-                f"position is required for part {part.value}"
+                f"position is required for part '{part_value}'"
             )
     else:
         if position not in valid_positions:
+            valid_str = ", ".join(p.value for p in valid_positions) or "none"
             raise CatalogValidationError(
-                f"position {position.value} is not valid for part {part.value} "
-                f"(valid: {[p.value for p in valid_positions] or 'none'})"
+                f"position '{position.value}' is not valid for part '{part_value}' "
+                f"(valid: {valid_str})"
             )
 
     # 3. Details — minimal validation: if schema declares 'required', ensure those keys are present.
@@ -211,7 +214,7 @@ async def validate_v2_defect(
     for key in required_fields:
         if key not in details:
             raise CatalogValidationError(
-                f"details.{key} is required for ({part.value}, {defect_type.value})"
+                f"details.{key} is required for ('{part_value}', '{type_value}')"
             )
 
     return schema_row.default_severity
