@@ -17,6 +17,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeft, ArrowRight, X, Truck, Gauge, ClipboardList, Check, AlertCircle,
   Loader2, Plus, Trash2, Camera, ChevronDown, ChevronUp, AlertTriangle, Building2,
+  KeyRound,
 } from 'lucide-react';
 import {
   inspections as inspectionsApi,
@@ -70,14 +71,15 @@ function todayUtcDate() {
 
 // ─────────────────────────────────────────────────────
 export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
-  // Phase-based state machine. Within `inspecting` phase, `step` 1-5 walks
-  // through DSP/vehicle/odometer/sections/review for ONE vehicle.
+  // Phase-based state machine. Within `inspecting` phase, `step` 1-6 walks
+  // through DSP/keys/vehicle/odometer/sections/review for ONE vehicle.
+  // (Key recorder is step 2 — done ONCE per session and reused.)
   // After submit:
   //   - postSubmit: 3-action chooser (next van / switch DSP / complete fleet)
   //   - completeWarning: shown when user clicks Complete with vans pending
   //   - fleetDone: terminal celebration screen
   const [phase, setPhase] = useState('inspecting');
-  const [step, setStep] = useState(1); // 1=DSP, 2=vehicle, 3=odometer, 4=sections, 5=review
+  const [step, setStep] = useState(1); // 1=DSP, 2=keys, 3=vehicle, 4=odometer, 5=sections, 6=review
 
   // Fleet data — fetched once at mount, refetched after submit so the
   // "remaining" calculation reflects the latest server state.
@@ -96,6 +98,8 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
 
   // Session-wide state (kept across multiple inspections in one shift)
   const [dsp, setDsp] = useState(null);  // {id, numericId, name, count}
+  const [keysReceived, setKeysReceived] = useState('');  // string for input ergonomics
+  const [keysConfirmed, setKeysConfirmed] = useState(false);  // tech tapped 'Continue' on the keys step
   const [inspectedSession, setInspectedSession] = useState([]); // {vehicleId, fleetId, defectCount, result}[]
 
   // Submit state
@@ -172,21 +176,24 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
 
   // ─── Step transitions ───────────────────────────────
   const canGoNextStep1 = !!dsp;
-  const canGoNextStep2 = !!vehicle;
-  const canGoNextStep3 = inspectionId !== null;  // draft must exist after odometer
+  const canGoNextStep2 = keysConfirmed;  // need to confirm keys count (or skip)
+  const canGoNextStep3 = !!vehicle;
+  const canGoNextStep4 = inspectionId !== null;  // draft must exist after odometer
   const canSubmit = inspectionId !== null;
 
-  // Auto-create the DRAFT when entering step 2 (odometer)
+  // Auto-create the DRAFT when entering the odometer step
   const ensureDraft = async () => {
     if (inspectionId) return inspectionId;
     setCreatingDraft(true);
     setCreateError(null);
     try {
       const odoNum = odometer ? parseInt(odometer, 10) : null;
+      const keysNum = keysReceived ? parseInt(keysReceived, 10) : null;
       const draft = await inspectionsApi.create({
         vehicleId: vehicle.id,
         odometerMiles: odoNum && !Number.isNaN(odoNum) ? odoNum : null,
         odometerSource: odoNum ? 'manual' : null,
+        keysReceived: keysNum && !Number.isNaN(keysNum) ? keysNum : null,
       });
       setInspectionId(draft.id);
       return draft.id;
@@ -200,24 +207,27 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
 
   const goNext = async () => {
     if (step === 1) {
-      // DSP picked → vehicle list
+      // DSP picked → keys
       setStep(2);
     } else if (step === 2) {
-      // Vehicle picked → odometer
+      // Keys confirmed → vehicle list
       setStep(3);
     } else if (step === 3) {
-      // Create draft (with vehicle + odometer), then go to sections
-      const id = await ensureDraft();
-      if (id) setStep(4);
+      // Vehicle picked → odometer
+      setStep(4);
     } else if (step === 4) {
-      setStep(5);
+      // Create draft (with vehicle + odometer + keys), then go to sections
+      const id = await ensureDraft();
+      if (id) setStep(5);
+    } else if (step === 5) {
+      setStep(6);
     }
   };
 
   const goBack = () => {
     if (step > 1) {
-      // If user backs out from step 2, also clear vehicle (they may switch DSPs)
-      if (step === 2) setVehicle(null);
+      // If user goes back into the vehicle picker, clear current vehicle
+      if (step === 3) setVehicle(null);
       setStep(step - 1);
     }
   };
@@ -322,17 +332,20 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
   };
 
   // ─── Action: inspect another van in the SAME DSP ────
+  // Skip DSP + keys (already done for this session) → straight to vehicle picker.
   const handleInspectAnother = () => {
     resetForNextVehicle();
     setPhase('inspecting');
-    setStep(2); // skip DSP picker — we keep the same DSP
+    setStep(3);
   };
 
-  // ─── Action: switch DSP (full reset) ────────────────
+  // ─── Action: switch DSP (full reset including keys) ─
   const handleSwitchDsp = () => {
     resetForNextVehicle();
     setDsp(null);
-    setInspectedSession([]); // new session
+    setKeysReceived('');
+    setKeysConfirmed(false);
+    setInspectedSession([]);
     setTodayInspections([]);
     setPhase('inspecting');
     setStep(1);
@@ -436,7 +449,7 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
   return (
     <FullScreenShell
       title="QC DVIC Inspection"
-      subtitle={`Step ${step} of 5`}
+      subtitle={`Step ${step} of 6`}
       onClose={onClose}
     >
       {/* Body */}
@@ -449,14 +462,28 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
             value={dsp}
             onChange={(d) => {
               setDsp(d);
-              setVehicle(null);  // clear if user switches DSP
+              setVehicle(null);
+              // If user switches DSP, force them to re-confirm keys
+              setKeysConfirmed(false);
             }}
           />
         )}
 
-        {/* ── Step 2: vehicle picker (filtered to selected DSP) ── */}
+        {/* ── Step 2: key recorder (mandatory before vehicle picker) ── */}
         {step === 2 && (
-          <Step2VehiclePicker
+          <Step2KeyRecorder
+            dsp={dsp}
+            keysReceived={keysReceived}
+            onKeysChange={setKeysReceived}
+            keysConfirmed={keysConfirmed}
+            onConfirm={() => setKeysConfirmed(true)}
+            onUnconfirm={() => setKeysConfirmed(false)}
+          />
+        )}
+
+        {/* ── Step 3: vehicle picker (filtered to selected DSP) ── */}
+        {step === 3 && (
+          <Step3VehiclePicker
             dsp={dsp}
             vehicles={vehiclesForDsp}
             value={vehicle}
@@ -464,9 +491,9 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
           />
         )}
 
-        {/* ── Step 3: odometer ── */}
-        {step === 3 && (
-          <Step3Odometer
+        {/* ── Step 4: odometer ── */}
+        {step === 4 && (
+          <Step4Odometer
             vehicle={vehicle}
             odometer={odometer}
             onOdometerChange={setOdometer}
@@ -477,9 +504,9 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
           />
         )}
 
-        {/* ── Step 4: sections / defects ── */}
-        {step === 4 && (
-          <Step4Sections
+        {/* ── Step 5: sections / defects ── */}
+        {step === 5 && (
+          <Step5Sections
             inspectionId={inspectionId}
             defectsBySection={defectsBySection}
             openSection={openSection}
@@ -492,10 +519,11 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
           />
         )}
 
-        {/* ── Step 5: review + submit ── */}
-        {step === 5 && (
-          <Step5Review
+        {/* ── Step 6: review + submit ── */}
+        {step === 6 && (
+          <Step6Review
             dsp={dsp}
+            keysReceived={keysReceived}
             vehicle={vehicle}
             odometer={odometer}
             defectsBySection={defectsBySection}
@@ -521,27 +549,29 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
 
           <div className="text-[10px] text-navy-500 uppercase tracking-wide hidden sm:block">
             {step === 1 && 'Pick the DSP'}
-            {step === 2 && 'Pick a vehicle'}
-            {step === 3 && 'Odometer'}
-            {step === 4 && `${totalDefects} defect${totalDefects === 1 ? '' : 's'}`}
-            {step === 5 && 'Review & submit'}
+            {step === 2 && 'Record keys'}
+            {step === 3 && 'Pick a vehicle'}
+            {step === 4 && 'Odometer'}
+            {step === 5 && `${totalDefects} defect${totalDefects === 1 ? '' : 's'}`}
+            {step === 6 && 'Review & submit'}
           </div>
 
-          {step < 5 && (
+          {step < 6 && (
             <button
               onClick={goNext}
               disabled={
                 (step === 1 && !canGoNextStep1) ||
                 (step === 2 && !canGoNextStep2) ||
-                (step === 3 && creatingDraft)
+                (step === 3 && !canGoNextStep3) ||
+                (step === 4 && creatingDraft)
               }
               className="flex items-center gap-1.5 px-4 py-2 rounded-md bg-accent-blue text-white font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-sm"
             >
               {creatingDraft ? <Loader2 size={14} className="animate-spin" /> : null}
-              {step === 3 && !inspectionId ? 'Start' : 'Next'} <ArrowRight size={14} />
+              {step === 4 && !inspectionId ? 'Start' : 'Next'} <ArrowRight size={14} />
             </button>
           )}
-          {step === 5 && (
+          {step === 6 && (
             <button
               onClick={handleSubmit}
               disabled={submitting || !canSubmit}
@@ -674,9 +704,107 @@ function Step1DspPicker({ dsps, loading, value, onChange }) {
 }
 
 // ─────────────────────────────────────────────────────
-// Step 2: vehicle picker (already filtered to selected DSP)
+// Step 2: Key recorder (mandatory after DSP)
 // ─────────────────────────────────────────────────────
-function Step2VehiclePicker({ dsp, vehicles, value, onChange }) {
+function Step2KeyRecorder({ dsp, keysReceived, onKeysChange, keysConfirmed, onConfirm, onUnconfirm }) {
+  const num = keysReceived ? parseInt(keysReceived, 10) : null;
+  const isValid = num !== null && !Number.isNaN(num) && num >= 0;
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center gap-2 mb-2">
+        <KeyRound size={16} className="text-accent-blue" />
+        <h3 className="text-sm font-semibold text-white">
+          How many keys did <span className="text-accent-blue">{dsp?.name}</span> hand over?
+        </h3>
+      </div>
+      <p className="text-xs text-navy-400 -mt-2">
+        Count the physical keys you received. This number is logged once for the
+        whole session and reconciled when you return them.
+      </p>
+
+      {/* Big numeric input */}
+      <div className="rounded-xl border border-navy-700 bg-navy-900/60 p-5">
+        <label className="text-[10px] uppercase tracking-wide text-navy-400 block mb-2">
+          Keys received
+        </label>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              const next = Math.max(0, (num ?? 0) - 1);
+              onKeysChange(String(next));
+              onUnconfirm();
+            }}
+            disabled={num === null || num === 0}
+            className="w-12 h-12 rounded-lg border border-navy-700 text-2xl text-white hover:bg-navy-800 disabled:opacity-30 cursor-pointer"
+          >
+            −
+          </button>
+          <input
+            type="number"
+            inputMode="numeric"
+            value={keysReceived}
+            onChange={(e) => {
+              onKeysChange(e.target.value.replace(/[^0-9]/g, ''));
+              onUnconfirm();
+            }}
+            placeholder="0"
+            className="flex-1 rounded-lg px-3 py-3 bg-navy-800 border border-navy-700 text-white text-3xl font-bold font-mono text-center outline-none focus:border-accent-blue"
+          />
+          <button
+            type="button"
+            onClick={() => {
+              const next = (num ?? 0) + 1;
+              onKeysChange(String(next));
+              onUnconfirm();
+            }}
+            className="w-12 h-12 rounded-lg border border-navy-700 text-2xl text-white hover:bg-navy-800 cursor-pointer"
+          >
+            +
+          </button>
+        </div>
+      </div>
+
+      {/* Confirmation toggle */}
+      {!keysConfirmed ? (
+        <button
+          onClick={onConfirm}
+          disabled={!isValid}
+          className="w-full py-3 rounded-lg bg-accent-blue text-white font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+        >
+          {isValid
+            ? `Confirm — I received ${num} key${num === 1 ? '' : 's'}`
+            : 'Enter a number to continue'}
+        </button>
+      ) : (
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-accent-green/10 border border-accent-green/40">
+          <Check size={16} className="text-accent-green shrink-0" />
+          <span className="text-sm text-white">
+            Logged: <span className="font-bold">{num}</span> key{num === 1 ? '' : 's'}
+          </span>
+          <button
+            onClick={onUnconfirm}
+            className="ml-auto text-[11px] text-navy-300 hover:text-white underline cursor-pointer"
+          >
+            Edit
+          </button>
+        </div>
+      )}
+
+      <p className="text-[11px] text-navy-500 text-center">
+        Tip: if {dsp?.name} doesn't hand keys for some vans (kept in box, etc.),
+        record the actual number you received now. You can flag those vans in the
+        review step.
+      </p>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// Step 3: vehicle picker (already filtered to selected DSP)
+// ─────────────────────────────────────────────────────
+function Step3VehiclePicker({ dsp, vehicles, value, onChange }) {
   const [search, setSearch] = useState('');
 
   const filtered = vehicles.filter((v) => {
@@ -734,14 +862,7 @@ function VehicleCard({ v, selected, onSelect }) {
           : 'border-navy-700 bg-navy-900/60 hover:border-navy-600'
       }`}
     >
-      <div className="flex items-start justify-between gap-2 mb-1">
-        <span className="text-sm font-bold text-white font-mono">{v.fleetId}</span>
-        {v.grounded && (
-          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-accent-red/20 border border-accent-red/40 text-accent-red">
-            GROUNDED
-          </span>
-        )}
-      </div>
+      <div className="text-sm font-bold text-white font-mono mb-1">{v.fleetId}</div>
       <div className="text-xs text-navy-300 truncate">
         {v.year} {v.make} {v.model}
       </div>
@@ -753,9 +874,9 @@ function VehicleCard({ v, selected, onSelect }) {
 }
 
 // ─────────────────────────────────────────────────────
-// Step 3: odometer + start draft
+// Step 4: odometer + start draft
 // ─────────────────────────────────────────────────────
-function Step3Odometer({ vehicle, odometer, onOdometerChange, inspectionId, creatingDraft, createError, onEnsureDraft }) {
+function Step4Odometer({ vehicle, odometer, onOdometerChange, inspectionId, creatingDraft, createError, onEnsureDraft }) {
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-2">
@@ -820,9 +941,9 @@ function Step3Odometer({ vehicle, odometer, onOdometerChange, inspectionId, crea
 }
 
 // ─────────────────────────────────────────────────────
-// Step 4: sections walkthrough
+// Step 5: sections walkthrough
 // ─────────────────────────────────────────────────────
-function Step4Sections({
+function Step5Sections({
   inspectionId, defectsBySection, openSection, setOpenSection,
   addingDefect, setAddingDefect, onCommitDefect, onRemoveDefect,
 }) {
@@ -1013,15 +1134,23 @@ function NewDefectForm({ onCommit, onCancel }) {
 }
 
 // ─────────────────────────────────────────────────────
-// Step 5: review + submit
+// Step 6: review + submit
 // ─────────────────────────────────────────────────────
-function Step5Review({ dsp, vehicle, odometer, defectsBySection, totalDefects, inspectionId, submitting, submitError, onSubmit }) {
+function Step6Review({ dsp, keysReceived, vehicle, odometer, defectsBySection, totalDefects, inspectionId, submitting, submitError, onSubmit }) {
   const sectionEntries = Object.entries(defectsBySection).filter(([, arr]) => arr && arr.length > 0);
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-navy-700 bg-navy-900/60 p-3">
         <div className="text-[10px] uppercase tracking-wide text-navy-400 mb-1">DSP</div>
         <div className="text-sm font-bold text-white">{dsp?.name}</div>
+      </div>
+
+      <div className="rounded-lg border border-navy-700 bg-navy-900/60 p-3 flex items-center gap-2">
+        <KeyRound size={14} className="text-accent-blue" />
+        <div className="text-sm text-white">
+          <span className="font-bold">{keysReceived || '—'}</span>{' '}
+          <span className="text-navy-400">keys received from {dsp?.name}</span>
+        </div>
       </div>
 
       <div className="rounded-lg border border-navy-700 bg-navy-900/60 p-3">

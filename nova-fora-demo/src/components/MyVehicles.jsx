@@ -730,9 +730,7 @@ function VehicleTable({ vans, isVendor, canEdit, onRowClick, onCopy, copiedId, o
             <td className="px-4 py-3"><Badge variant={v.vehicleClass === 'Rental' ? 'purple' : v.vehicleClass === 'Owned' ? 'blue' : 'gold'}>{v.vehicleClass}</Badge></td>
             <td className="px-4 py-3 text-sm text-navy-300">{v.fmc}</td>
             <td className="px-4 py-3">
-              {v.grounded ? (
-                <Badge variant="red" size="md"><Lock size={9} className="inline mr-0.5" /> Grounded</Badge>
-              ) : v.severity === 'clean' ? (
+              {v.severity === 'clean' ? (
                 <Badge variant="green"><CheckCircle2 size={9} className="inline mr-0.5" /> Clean</Badge>
               ) : v.severity === 'critical' ? (
                 <Badge variant="red">{v.defectCount} defects</Badge>
@@ -775,8 +773,7 @@ function VehicleCardMobile({ v, onClick, onCopy, copiedId, isVendor, showDsp, on
       <button onClick={onClick} className="w-full text-left">
         <div className="flex items-center justify-between mb-1 gap-2">
           <span className="text-sm font-semibold text-white">{v.fleetId}</span>
-          {v.grounded ? <Badge variant="red" size="md"><Lock size={9} className="inline mr-0.5" /> Grounded</Badge>
-            : v.severity === 'clean' ? <Badge variant="green"><CheckCircle2 size={9} className="inline mr-0.5" /> Clean</Badge>
+          {v.severity === 'clean' ? <Badge variant="green"><CheckCircle2 size={9} className="inline mr-0.5" /> Clean</Badge>
             : <Badge variant={v.severity === 'critical' ? 'red' : v.severity === 'high' ? 'orange' : 'gold'}>{v.defectCount} defect{v.defectCount > 1 ? 's' : ''}</Badge>}
         </div>
         {showDsp && <div className="text-[11px] text-accent-blue font-medium mb-1">{v.dsp}</div>}
@@ -998,7 +995,6 @@ export default function MyVehicles({ user }) {
 
   const totalCount = fleet.length;
   const rentalCount = fleet.filter((v) => v.vehicleClass === 'Rental').length;
-  const groundedCount = fleet.filter((v) => v.grounded).length;
   const cleanCount = fleet.filter((v) => v.defectCount === 0).length;
   const defectiveCount = fleet.filter((v) => v.defectCount > 0).length;
 
@@ -1076,7 +1072,6 @@ export default function MyVehicles({ user }) {
             )}
             {isVendor && <span className="text-navy-400">across <span className="text-white font-medium">{uniqueDsps.length}</span> DSPs</span>}
             {!isVendor && rentalCount > 0 && <span className="text-navy-400">· <span className="text-accent-purple">{rentalCount} rentals</span></span>}
-            {!isVendor && groundedCount > 0 && <span className="text-navy-400">· <span className="text-accent-red">{groundedCount} grounded</span></span>}
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">

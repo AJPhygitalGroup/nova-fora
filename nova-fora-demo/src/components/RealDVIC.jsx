@@ -261,18 +261,23 @@ function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
       : [...activeCategories, id]
   );
 
-  // Derived counts
+  // Derived counts (read from real data; fall back to mocked values when not present)
   const now = new Date();
   const timeStr = now.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
   const total = inspected.length;
   const withIssues = inspected.filter((v) => v.severity !== 'clean').length;
   const critical = inspected.filter((v) => v.severity === 'defective' || v.severity === 'high').length;
-  const grounded = 1;
-  const keysRecorded = total - grounded;
+  const incompleteCount = inspected.filter((v) => v.rawResult === 'incomplete').length;
+  // Keys recorded — use real data if the parent passed it, else 0 (no mock fallback)
+  const keysRecorded = data.keysRecordedReal ?? 0;
 
-  // Primary vendor = the vendor who did the most inspections today
+  // Primary vendor = the vendor (vendor org name) who did the most inspections
+  // today. Excludes "—" entries (no inspector linked).
   const vendorCount = {};
-  inspected.forEach((v) => { vendorCount[v.vendor] = (vendorCount[v.vendor] || 0) + 1; });
+  inspected.forEach((v) => {
+    if (!v.vendor || v.vendor === '—') return;
+    vendorCount[v.vendor] = (vendorCount[v.vendor] || 0) + 1;
+  });
   const primaryVendor = Object.entries(vendorCount).sort((a, b) => b[1] - a[1])[0]?.[0];
 
   const filteredInspected = activeCategories.length
@@ -303,14 +308,21 @@ function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
       <div className="rounded-xl border border-navy-700/40 bg-navy-800/30 p-3">
         <div className="flex items-center gap-2 mb-2">
           <KeyRound size={14} className="text-accent-blue" />
-          <span className="text-sm font-semibold text-white"><span className="text-accent-blue">{keysRecorded}</span> keys recorded</span>
+          <span className="text-sm font-semibold text-white">
+            <span className="text-accent-blue">{keysRecorded}</span> keys recorded
+          </span>
           <span className="text-[11px] text-navy-400">&middot; {timeStr}</span>
         </div>
         <div className="text-[11px] text-navy-300">
           <span className="text-white font-semibold">{total}</span> vehicles &middot;{' '}
           <span className="text-accent-orange font-semibold">{withIssues}</span> with issues &middot;{' '}
-          <span className="text-accent-red font-semibold">{critical}</span> critical &middot;{' '}
-          <span className="text-accent-red font-semibold">{grounded}</span> grounded
+          <span className="text-accent-red font-semibold">{critical}</span> critical
+          {incompleteCount > 0 && (
+            <>
+              {' '}&middot;{' '}
+              <span className="text-accent-red font-semibold">{incompleteCount}</span> not inspectable
+            </>
+          )}
         </div>
       </div>
 
@@ -370,7 +382,15 @@ function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
             // All rows are clickable now — clicking opens the Vehicle Report Card
             // where defects can be approved (→ Create WO) or rejected.
             const clickable = !!onOpenVehicleReport;
-            const defectCount = v.severity === 'defective' ? 5 : v.severity === 'high' ? 3 : v.severity === 'medium' ? 2 : 0;
+            // Use real defect count from API when present; fall back to a
+            // severity-based heuristic for legacy mock rows.
+            const defectCount = typeof v.defectCount === 'number'
+              ? v.defectCount
+              : v.severity === 'defective' ? 5
+              : v.severity === 'high' ? 3
+              : v.severity === 'medium' ? 2
+              : 0;
+            const isIncomplete = v.rawResult === 'incomplete';
             return (
               <div key={v.id}
                 onClick={() => handleRowClick(v)}
@@ -383,8 +403,12 @@ function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
                 </div>
                 <div className="flex-1 min-w-0 text-right">
                   <div className="text-xs truncate">
-                    {flagged && defectCount > 0 ? (
-                      <span className={`font-semibold ${style.resultText}`}>{defectCount} defects</span>
+                    {isIncomplete ? (
+                      <span className="font-semibold text-accent-red">Not inspectable</span>
+                    ) : flagged && defectCount > 0 ? (
+                      <span className={`font-semibold ${style.resultText}`}>
+                        {defectCount} defect{defectCount === 1 ? '' : 's'}
+                      </span>
                     ) : (
                       <span className={`font-semibold ${style.resultText}`}>{v.result}</span>
                     )}
@@ -614,17 +638,26 @@ function CardDetailModal({ cardKey, onClose, onOpenVehicleReport, onApproveDefec
       flagged: 'Flagged',
       incomplete: 'Incomplete',
     };
+    // Keys recorded for today: take the first non-null value across the
+    // session's inspections (it's set ONCE on session-start and copied to
+    // each row, so any non-null answer works).
+    const keysRecordedReal = liveInspected.find((i) => i.keysReceived != null)?.keysReceived ?? null;
     data = {
       ...data,
       summary: `${liveInspected.length} inspected today`,
       inspectedVans: liveInspected.map((i) => ({
         id: i.fleetId || i.vehicleId,
-        vendor: i.dsp || '—',
+        vendor: i.vendor || '—',     // real vendor org from inspector lookup
         tech: i.inspector || '—',
         category: 'amr',
-        severity: RESULT_TO_SEVERITY[i.result] || 'clean',
+        defectCount: i.defectCount ?? 0,
         result: RESULT_TO_LABEL[i.result] || i.result,
+        rawResult: i.result,
+        severity: RESULT_TO_SEVERITY[i.result] || 'clean',
+        keysReceived: i.keysReceived,
       })),
+      // Pass through to renderer so it doesn't compute fake numbers
+      keysRecordedReal,
     };
   }
   const Icon = data.icon;

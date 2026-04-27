@@ -134,6 +134,11 @@ class Inspection(SQLModel, table=True):
     notes: str | None = Field(default=None, max_length=2000)
     incomplete_reason: str | None = Field(default=None, max_length=500)
 
+    # QC DVIC session-wide: how many physical keys the tech received from
+    # the DSP at the start of the session. Recorded once per session before
+    # the first vehicle is inspected. Helps reconcile against returned keys.
+    keys_received: int | None = Field(default=None, ge=0)
+
     # Timing
     started_at: datetime | None = Field(
         default=None,

@@ -83,7 +83,7 @@ def _parse_inspection_id(raw: str) -> int:
 async def _build_inspection_response(
     session: AsyncSession, insp: Inspection
 ) -> InspectionResponse:
-    """Full detail with defects + joined vehicle/org/inspector."""
+    """Full detail with defects + joined vehicle/org/inspector + vendor org."""
     vehicle = (
         await session.execute(select(Vehicle).where(Vehicle.id == insp.vehicle_id))
     ).scalar_one_or_none()
@@ -92,13 +92,21 @@ async def _build_inspection_response(
             select(Organization).where(Organization.id == insp.dsp_id)
         )
     ).scalar_one_or_none()
+
     inspector = None
+    vendor_org = None
     if insp.inspector_id:
         inspector = (
             await session.execute(
                 select(User).where(User.id == insp.inspector_id)
             )
         ).scalar_one_or_none()
+        if inspector:
+            vendor_org = (
+                await session.execute(
+                    select(Organization).where(Organization.id == inspector.organization_id)
+                )
+            ).scalar_one_or_none()
 
     defect_rows = (
         await session.execute(
@@ -118,10 +126,13 @@ async def _build_inspection_response(
         dsp=org.name if org else "",
         inspector=inspector.full_name if inspector else None,
         inspector_id=str(inspector.id) if inspector else None,
+        vendor=vendor_org.name if vendor_org else None,
+        vendor_id=vendor_org.id_str if vendor_org else None,
         status=insp.status,
         result=insp.result,
         odometer_miles=insp.odometer_miles,
         odometer_source=insp.odometer_source,
+        keys_received=insp.keys_received,
         notes=insp.notes,
         incomplete_reason=insp.incomplete_reason,
         started_at=insp.started_at,
@@ -222,6 +233,15 @@ async def list_inspections(
         ).scalars().all()
     user_by_id = {u.id: u for u in inspector_rows}
 
+    # Vendor orgs (each inspector belongs to one org — could be vendor or DSP)
+    vendor_org_ids = {u.organization_id for u in inspector_rows if u.organization_id}
+    vendor_orgs_rows = []
+    if vendor_org_ids:
+        vendor_orgs_rows = (
+            await session.execute(select(Organization).where(Organization.id.in_(vendor_org_ids)))
+        ).scalars().all()
+    vendor_org_by_id = {o.id: o for o in vendor_orgs_rows}
+
     # Count defects per inspection in one GROUP BY
     defect_count_rows = (
         await session.execute(
@@ -237,6 +257,7 @@ async def list_inspections(
         v = veh_by_id.get(i.vehicle_id)
         o = org_by_id.get(i.dsp_id)
         ins = user_by_id.get(i.inspector_id) if i.inspector_id else None
+        vendor_org = vendor_org_by_id.get(ins.organization_id) if ins else None
         items.append(
             InspectionListItem(
                 id=i.id_str,
@@ -245,9 +266,12 @@ async def list_inspections(
                 dsp_id=o.id_str if o else "",
                 dsp=o.name if o else "",
                 inspector=ins.full_name if ins else None,
+                vendor=vendor_org.name if vendor_org else None,
+                vendor_id=vendor_org.id_str if vendor_org else None,
                 status=i.status,
                 result=i.result,
                 odometer_miles=i.odometer_miles,
+                keys_received=i.keys_received,
                 submitted_at=i.submitted_at,
                 created_at=i.created_at,
                 defect_count=defect_count_by_insp.get(i.id, 0),
@@ -339,6 +363,7 @@ async def create_inspection(
             result=InspectionResult.PASSED,  # placeholder, re-computed on submit
             odometer_miles=body.odometer_miles,
             odometer_source=body.odometer_source,
+            keys_received=body.keys_received,
             notes=body.notes,
             incomplete_reason=body.incomplete_reason,
             started_at=now,
@@ -362,6 +387,7 @@ async def create_inspection(
         result=computed,
         odometer_miles=body.odometer_miles,
         odometer_source=body.odometer_source,
+        keys_received=body.keys_received,
         notes=body.notes,
         incomplete_reason=body.incomplete_reason,
         started_at=now,

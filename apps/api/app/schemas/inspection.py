@@ -102,6 +102,7 @@ class InspectionCreate(BaseModel):
     notes: str | None = Field(default=None, max_length=2000)
     incomplete_reason: str | None = Field(default=None, max_length=500)
     defects: list[DefectCreate] = Field(default_factory=list)
+    keys_received: int | None = Field(default=None, ge=0, le=200)
 
     # If provided, overrides the computed result (site_admin / QA workflows)
     result_override: InspectionResult | None = None
@@ -136,10 +137,13 @@ class InspectionResponse(BaseModel):
     dsp: str               # "Ribrell 21"
     inspector: str | None = None  # full_name of inspector, if any
     inspector_id: str | None = None
+    vendor: str | None = None
+    vendor_id: str | None = None
     status: InspectionStatus = InspectionStatus.SUBMITTED
     result: InspectionResult
     odometer_miles: int | None
     odometer_source: OdometerSource | None = None
+    keys_received: int | None = None
     notes: str | None
     incomplete_reason: str | None
     started_at: datetime | None
@@ -159,9 +163,12 @@ class InspectionListItem(BaseModel):
     dsp_id: str
     dsp: str
     inspector: str | None = None
+    vendor: str | None = None       # inspector's organization (vendor org)
+    vendor_id: str | None = None    # V-005 etc.
     status: InspectionStatus
     result: InspectionResult
     odometer_miles: int | None
+    keys_received: int | None = None
     submitted_at: datetime | None
     created_at: datetime
     defect_count: int = 0
