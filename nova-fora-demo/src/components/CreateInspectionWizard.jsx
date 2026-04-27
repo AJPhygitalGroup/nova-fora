@@ -47,32 +47,65 @@ const SEVERITY_OPTIONS = [
   { value: 'critical', label: 'Critical', tint: 'text-accent-red border-accent-red/40 bg-accent-red/15' },
 ];
 
+// Reasons a tech might not be able to inspect a vehicle.
+// These create SUBMITTED inspections with result='incomplete' + this reason.
+const INCOMPLETE_REASONS = [
+  { value: 'vehicle_wont_start', label: "Vehicle won't start" },
+  { value: 'not_at_lot', label: 'Vehicle not at the lot' },
+  { value: 'no_keys', label: 'Vehicle keys not present' },
+];
+
+// Helper: extract numeric int from a prefixed id ("DSP-0004" → 4)
+function numericIdFromPrefixed(prefixed) {
+  if (!prefixed) return null;
+  const parts = String(prefixed).split('-');
+  const n = parseInt(parts[parts.length - 1], 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Today's date in UTC (YYYY-MM-DD) — matches the server's date_from/date_to filter
+function todayUtcDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 // ─────────────────────────────────────────────────────
 export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
-  // Steps: 1=DSP, 2=vehicle, 3=odometer, 4=sections, 5=review
-  const [step, setStep] = useState(1);
+  // Phase-based state machine. Within `inspecting` phase, `step` 1-5 walks
+  // through DSP/vehicle/odometer/sections/review for ONE vehicle.
+  // After submit:
+  //   - postSubmit: 3-action chooser (next van / switch DSP / complete fleet)
+  //   - completeWarning: shown when user clicks Complete with vans pending
+  //   - fleetDone: terminal celebration screen
+  const [phase, setPhase] = useState('inspecting');
+  const [step, setStep] = useState(1); // 1=DSP, 2=vehicle, 3=odometer, 4=sections, 5=review
+
+  // Fleet data — fetched once at mount, refetched after submit so the
+  // "remaining" calculation reflects the latest server state.
   const [vehicles, setVehicles] = useState([]);
   const [vehiclesLoading, setVehiclesLoading] = useState(true);
 
-  // Wizard state
-  const [dsp, setDsp] = useState(null);  // {id, name, count} — the DSP whose van is being inspected
+  // Per-inspection state (resets every time we start a new vehicle)
   const [vehicle, setVehicle] = useState(null);
   const [odometer, setOdometer] = useState('');
-  const [inspectionId, setInspectionId] = useState(null); // INS-id once draft is created
+  const [inspectionId, setInspectionId] = useState(null);
   const [creatingDraft, setCreatingDraft] = useState(false);
   const [createError, setCreateError] = useState(null);
-
-  // Map of section -> array of defects ({ id (FD), part, description, severity, photoCount, photos })
   const [defectsBySection, setDefectsBySection] = useState({});
-
-  // Section accordion state — which one is open for "+ Add Defect"
   const [openSection, setOpenSection] = useState(null);
-  const [addingDefect, setAddingDefect] = useState(null); // section name or null
+  const [addingDefect, setAddingDefect] = useState(null);
+
+  // Session-wide state (kept across multiple inspections in one shift)
+  const [dsp, setDsp] = useState(null);  // {id, numericId, name, count}
+  const [inspectedSession, setInspectedSession] = useState([]); // {vehicleId, fleetId, defectCount, result}[]
 
   // Submit state
   const [submitting, setSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState(null);
   const [submitError, setSubmitError] = useState(null);
+
+  // Server-side "today's inspections" cache for the chosen DSP (refetched after each submit)
+  const [todayInspections, setTodayInspections] = useState([]);
+  const [loadingToday, setLoadingToday] = useState(false);
 
   // Load vehicles on mount
   useEffect(() => {
@@ -88,14 +121,54 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
   const availableDsps = (() => {
     const seen = new Map();
     for (const v of vehicles) {
-      if (!seen.has(v.dspId)) seen.set(v.dspId, { id: v.dspId, name: v.dsp, count: 0 });
+      if (!seen.has(v.dspId)) {
+        seen.set(v.dspId, {
+          id: v.dspId,
+          numericId: numericIdFromPrefixed(v.dspId),
+          name: v.dsp,
+          count: 0,
+        });
+      }
       seen.get(v.dspId).count += 1;
     }
     return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
   })();
 
-  // Vehicles filtered to the selected DSP (used in step 2)
+  // Vehicles filtered to the selected DSP (used in step 2 + remaining)
   const vehiclesForDsp = dsp ? vehicles.filter((v) => v.dspId === dsp.id) : [];
+
+  // Set of vehicle IDs that ALREADY have an inspection today (server-truth)
+  const inspectedTodayIds = new Set(todayInspections.map((i) => i.vehicleId));
+  // Remaining vans to inspect in this DSP today
+  const remainingVehicles = vehiclesForDsp.filter((v) => !inspectedTodayIds.has(v.id));
+
+  // Refetch today's inspections for the selected DSP
+  const refreshTodayInspections = async () => {
+    if (!dsp?.numericId) return;
+    setLoadingToday(true);
+    try {
+      const today = todayUtcDate();
+      const res = await inspectionsApi.list({
+        dspId: dsp.numericId,
+        dateFrom: today,
+        dateTo: today,
+        perPage: 100,
+      });
+      setTodayInspections(res.items || []);
+    } catch (err) {
+      console.warn('refresh today inspections failed', err);
+    } finally {
+      setLoadingToday(false);
+    }
+  };
+
+  // When the user picks a DSP, fetch today's inspections so we can show the
+  // "remaining" count anywhere downstream.
+  useEffect(() => {
+    if (dsp) refreshTodayInspections();
+    else setTodayInspections([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dsp?.id]);
 
   // ─── Step transitions ───────────────────────────────
   const canGoNextStep1 = !!dsp;
@@ -211,11 +284,95 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
         odometerSource: odometer ? 'manual' : null,
       });
       setSubmitResult(final);
+      // Add to session log
+      setInspectedSession((prev) => [
+        ...prev,
+        {
+          inspectionId: final.id,
+          vehicleId: final.vehicleId,
+          fleetId: final.fleetId,
+          defectCount: final.defects?.length || 0,
+          result: final.result,
+        },
+      ]);
+      // Server now has one more inspection today → refresh the cache so
+      // the "remaining" count goes down before the postSubmit screen renders.
+      await refreshTodayInspections();
+      setPhase('postSubmit');
       onSubmitted?.(final);
     } catch (err) {
       setSubmitError(err?.detail || err?.message || 'Submit failed');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  // ─── Per-inspection reset (for next van in same DSP) ─
+  const resetForNextVehicle = () => {
+    setVehicle(null);
+    setOdometer('');
+    setInspectionId(null);
+    setCreatingDraft(false);
+    setCreateError(null);
+    setDefectsBySection({});
+    setOpenSection(null);
+    setAddingDefect(null);
+    setSubmitResult(null);
+    setSubmitError(null);
+  };
+
+  // ─── Action: inspect another van in the SAME DSP ────
+  const handleInspectAnother = () => {
+    resetForNextVehicle();
+    setPhase('inspecting');
+    setStep(2); // skip DSP picker — we keep the same DSP
+  };
+
+  // ─── Action: switch DSP (full reset) ────────────────
+  const handleSwitchDsp = () => {
+    resetForNextVehicle();
+    setDsp(null);
+    setInspectedSession([]); // new session
+    setTodayInspections([]);
+    setPhase('inspecting');
+    setStep(1);
+  };
+
+  // ─── Action: complete fleet ────────────────────────
+  const handleCompleteFleet = () => {
+    if (remainingVehicles.length === 0) {
+      setPhase('fleetDone');
+    } else {
+      setPhase('completeWarning');
+    }
+  };
+
+  // ─── Action: confirm bulk-skip remaining vans ──────
+  const [bulkSkipReasons, setBulkSkipReasons] = useState({}); // {vehicleId: reasonValue}
+  const [bulkSubmitting, setBulkSubmitting] = useState(false);
+  const [bulkError, setBulkError] = useState(null);
+
+  const handleConfirmIncomplete = async () => {
+    setBulkSubmitting(true);
+    setBulkError(null);
+    try {
+      // For each remaining vehicle that has a reason picked, create an
+      // incomplete inspection. Vehicles without a reason picked are skipped
+      // (the user must explicitly choose for each).
+      const targets = remainingVehicles.filter((v) => bulkSkipReasons[v.id]);
+      for (const v of targets) {
+        await inspectionsApi.create({
+          vehicleId: v.id,
+          incompleteReason: bulkSkipReasons[v.id],
+          resultOverride: 'incomplete',
+        });
+      }
+      await refreshTodayInspections();
+      setPhase('fleetDone');
+    } catch (err) {
+      setBulkError(err?.detail || err?.message || 'Bulk submit failed');
+    } finally {
+      setBulkSubmitting(false);
     }
   };
 
@@ -226,38 +383,53 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
     (s) => (defectsBySection[s] || []).length > 0
   );
 
-  // ─── Success screen (after submit) ──────────────────
-  if (submitResult) {
+  // ─── Phase: post-submit chooser ─────────────────────
+  if (phase === 'postSubmit' && submitResult) {
     return (
-      <FullScreenShell title="Inspection submitted" onClose={onClose}>
-        <div className="max-w-md mx-auto px-4 py-12 text-center">
-          <motion.div
-            initial={{ scale: 0 }}
-            animate={{ scale: 1 }}
-            transition={{ type: 'spring' }}
-            className="w-20 h-20 rounded-full bg-accent-green/20 border-2 border-accent-green flex items-center justify-center mx-auto mb-6"
-          >
-            <Check size={40} className="text-accent-green" />
-          </motion.div>
-          <h2 className="text-2xl font-bold text-white mb-2">All set, {user?.name?.split(' ')[0] || 'tech'}.</h2>
-          <p className="text-navy-400 mb-1 font-mono text-sm">
-            {submitResult.id} &middot; {submitResult.fleetId} &middot; {totalDefects} defect{totalDefects === 1 ? '' : 's'}
-          </p>
-          <p className={`text-sm font-semibold mb-6 ${
-            submitResult.result === 'passed' ? 'text-accent-green' :
-            submitResult.result === 'flagged' ? 'text-accent-red' :
-            submitResult.result === 'conditional' ? 'text-accent-gold' : 'text-navy-300'
-          }`}>
-            Result: {submitResult.result}
-          </p>
-          <button
-            onClick={onClose}
-            className="w-full py-3 rounded-lg bg-accent-blue text-white font-semibold cursor-pointer"
-          >
-            Done
-          </button>
-        </div>
-      </FullScreenShell>
+      <PostSubmitChoice
+        user={user}
+        dsp={dsp}
+        submitResult={submitResult}
+        totalDefects={totalDefects}
+        remainingVehicles={remainingVehicles}
+        inspectedSession={inspectedSession}
+        loadingToday={loadingToday}
+        onInspectAnother={handleInspectAnother}
+        onSwitchDsp={handleSwitchDsp}
+        onCompleteFleet={handleCompleteFleet}
+        onClose={onClose}
+      />
+    );
+  }
+
+  // ─── Phase: complete warning (some vans not inspected) ─
+  if (phase === 'completeWarning') {
+    return (
+      <CompleteWarningScreen
+        dsp={dsp}
+        remainingVehicles={remainingVehicles}
+        inspectedSession={inspectedSession}
+        bulkSkipReasons={bulkSkipReasons}
+        setBulkSkipReasons={setBulkSkipReasons}
+        bulkSubmitting={bulkSubmitting}
+        bulkError={bulkError}
+        onCancel={() => setPhase('postSubmit')}
+        onConfirm={handleConfirmIncomplete}
+        onClose={onClose}
+      />
+    );
+  }
+
+  // ─── Phase: fleet done (final celebration) ──────────
+  if (phase === 'fleetDone') {
+    return (
+      <FleetDoneScreen
+        user={user}
+        dsp={dsp}
+        inspectedSession={inspectedSession}
+        skippedCount={todayInspections.filter((i) => i.result === 'incomplete').length}
+        onClose={onClose}
+      />
     );
   }
 
@@ -912,5 +1084,315 @@ function Step5Review({ dsp, vehicle, odometer, defectsBySection, totalDefects, i
         Draft: {inspectionId || '—'}
       </div>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// Post-submit chooser: 3 actions + recent inspection summary
+// ─────────────────────────────────────────────────────
+function PostSubmitChoice({
+  user, dsp, submitResult, totalDefects, remainingVehicles, inspectedSession,
+  loadingToday, onInspectAnother, onSwitchDsp, onCompleteFleet, onClose,
+}) {
+  const remaining = remainingVehicles.length;
+  const isSinglePending = remaining === 1;
+  const sessionTotal = inspectedSession.length;
+
+  return (
+    <FullScreenShell title="Inspection submitted" onClose={onClose}>
+      <div className="max-w-md mx-auto px-4 py-8">
+        {/* Hero */}
+        <div className="text-center mb-7">
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            transition={{ type: 'spring' }}
+            className="w-16 h-16 rounded-full bg-accent-green/20 border-2 border-accent-green flex items-center justify-center mx-auto mb-3"
+          >
+            <Check size={28} className="text-accent-green" />
+          </motion.div>
+          <h2 className="text-xl font-bold text-white mb-1">
+            All set, {user?.name?.split(' ')[0] || 'tech'}.
+          </h2>
+          <p className="text-navy-400 mb-1 font-mono text-xs">
+            {submitResult.id} &middot; {submitResult.fleetId} &middot; {totalDefects} defect{totalDefects === 1 ? '' : 's'}
+          </p>
+          <p className={`text-sm font-semibold ${
+            submitResult.result === 'passed' ? 'text-accent-green' :
+            submitResult.result === 'flagged' ? 'text-accent-red' :
+            submitResult.result === 'conditional' ? 'text-accent-gold' : 'text-navy-300'
+          }`}>
+            Result: {submitResult.result}
+          </p>
+        </div>
+
+        {/* Session counter */}
+        <div className="rounded-lg border border-navy-700 bg-navy-900/60 p-3 mb-5 text-center">
+          <div className="text-[11px] uppercase tracking-wide text-navy-400 mb-0.5">This session</div>
+          <div className="text-sm text-white">
+            <span className="font-bold">{sessionTotal}</span> inspected
+            {' · '}
+            <span className="text-accent-orange font-bold">{remaining}</span> remaining in {dsp?.name}
+          </div>
+        </div>
+
+        {/* Action 1 — Inspect another van */}
+        <button
+          onClick={onInspectAnother}
+          disabled={remaining === 0}
+          className={`w-full mb-3 p-4 rounded-xl border-2 text-left transition-all ${
+            remaining === 0
+              ? 'border-navy-800 bg-navy-900/30 opacity-40 cursor-not-allowed'
+              : 'border-accent-blue/50 bg-accent-blue/10 hover:bg-accent-blue/20 cursor-pointer'
+          }`}
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-accent-blue/20 border border-accent-blue/40 flex items-center justify-center shrink-0">
+              <Truck size={18} className="text-accent-blue" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-semibold text-white">
+                Inspect another van
+              </div>
+              <div className="text-[11px] text-navy-300">
+                {loadingToday
+                  ? 'Loading remaining…'
+                  : remaining === 0
+                  ? 'No more vans pending in this DSP'
+                  : `${remaining} ${isSinglePending ? 'van' : 'vans'} remaining in ${dsp?.name}`}
+              </div>
+            </div>
+            <ArrowRight size={16} className="text-accent-blue shrink-0" />
+          </div>
+        </button>
+
+        {/* Action 2 — Switch DSP */}
+        <button
+          onClick={onSwitchDsp}
+          className="w-full mb-3 p-4 rounded-xl border-2 border-navy-700 bg-navy-900/40 hover:bg-navy-800/60 hover:border-navy-600 transition-all text-left cursor-pointer"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-navy-800 border border-navy-700 flex items-center justify-center shrink-0">
+              <Building2 size={18} className="text-navy-300" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-semibold text-white">Inspect another DSP</div>
+              <div className="text-[11px] text-navy-400">Start a new session for a different fleet</div>
+            </div>
+            <ArrowRight size={16} className="text-navy-400 shrink-0" />
+          </div>
+        </button>
+
+        {/* Action 3 — Complete fleet */}
+        <button
+          onClick={onCompleteFleet}
+          className={`w-full p-4 rounded-xl border-2 text-left transition-all cursor-pointer ${
+            remaining === 0
+              ? 'border-accent-green/50 bg-accent-green/10 hover:bg-accent-green/20'
+              : 'border-accent-orange/40 bg-accent-orange/5 hover:bg-accent-orange/10'
+          }`}
+        >
+          <div className="flex items-center gap-3">
+            <div
+              className={`w-10 h-10 rounded-lg border flex items-center justify-center shrink-0 ${
+                remaining === 0
+                  ? 'bg-accent-green/20 border-accent-green/40'
+                  : 'bg-accent-orange/20 border-accent-orange/40'
+              }`}
+            >
+              {remaining === 0 ? (
+                <Check size={18} className="text-accent-green" />
+              ) : (
+                <AlertTriangle size={18} className="text-accent-orange" />
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-semibold text-white">
+                Complete {dsp?.name} inspection
+              </div>
+              <div className="text-[11px] text-navy-300">
+                {remaining === 0
+                  ? 'All vans inspected — finalize the session'
+                  : `${remaining} van${isSinglePending ? '' : 's'} not yet inspected — you'll need to flag them`}
+              </div>
+            </div>
+            <ArrowRight size={16} className="text-navy-400 shrink-0" />
+          </div>
+        </button>
+
+        {/* Footer escape hatch */}
+        <button
+          onClick={onClose}
+          className="w-full mt-6 text-[11px] text-navy-500 hover:text-navy-300 cursor-pointer"
+        >
+          Pause &amp; close (resume from your dashboard)
+        </button>
+      </div>
+    </FullScreenShell>
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// Complete-warning screen: per-vehicle reason picker
+// ─────────────────────────────────────────────────────
+function CompleteWarningScreen({
+  dsp, remainingVehicles, inspectedSession, bulkSkipReasons, setBulkSkipReasons,
+  bulkSubmitting, bulkError, onCancel, onConfirm, onClose,
+}) {
+  const allReasonPicked = remainingVehicles.every((v) => bulkSkipReasons[v.id]);
+  const reasonsCount = remainingVehicles.filter((v) => bulkSkipReasons[v.id]).length;
+
+  return (
+    <FullScreenShell
+      title="Vans not yet inspected"
+      subtitle={`${remainingVehicles.length} pending in ${dsp?.name}`}
+      onClose={onClose}
+    >
+      <div className="max-w-2xl mx-auto px-4 py-6 pb-32">
+        {/* Warning banner */}
+        <div className="rounded-lg border-2 border-accent-orange/40 bg-accent-orange/10 p-4 mb-5">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={20} className="text-accent-orange shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-bold text-white mb-1">
+                {remainingVehicles.length} van{remainingVehicles.length === 1 ? '' : 's'} not inspected
+              </div>
+              <p className="text-xs text-navy-200">
+                You inspected {inspectedSession.length} of {inspectedSession.length + remainingVehicles.length} vans in {dsp?.name}.
+                Pick a reason for each remaining van so the DSP knows why it
+                wasn't inspected. Each one will be flagged in their dashboard
+                with the reason.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Per-vehicle reason picker */}
+        <div className="space-y-2 mb-5">
+          {remainingVehicles.map((v) => {
+            const picked = bulkSkipReasons[v.id];
+            return (
+              <div
+                key={v.id}
+                className={`rounded-lg border p-3 ${
+                  picked
+                    ? 'border-accent-red/40 bg-accent-red/5'
+                    : 'border-navy-700 bg-navy-900/60'
+                }`}
+              >
+                <div className="flex items-center gap-3 mb-2">
+                  <span className="text-sm font-bold text-white font-mono">{v.fleetId}</span>
+                  <span className="text-[11px] text-navy-400 truncate">
+                    {v.year} {v.make} {v.model}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+                  {INCOMPLETE_REASONS.map((r) => (
+                    <button
+                      key={r.value}
+                      onClick={() =>
+                        setBulkSkipReasons((prev) => ({ ...prev, [v.id]: r.value }))
+                      }
+                      className={`text-left px-2.5 py-1.5 rounded-md text-[11px] font-semibold border cursor-pointer transition-all ${
+                        picked === r.value
+                          ? 'bg-accent-red/20 border-accent-red/50 text-accent-red'
+                          : 'bg-navy-800 border-navy-700 text-navy-300 hover:text-white hover:border-navy-600'
+                      }`}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {bulkError && (
+          <div className="flex items-start gap-2 p-3 rounded-lg bg-accent-red/15 border border-accent-red/40 text-accent-red text-xs mb-3">
+            <AlertCircle size={14} className="shrink-0 mt-0.5" />
+            <span>{bulkError}</span>
+          </div>
+        )}
+
+        <div className="text-[11px] text-navy-500 text-center">
+          {reasonsCount} of {remainingVehicles.length} reasons picked
+        </div>
+      </div>
+
+      {/* Sticky footer */}
+      <div className="fixed bottom-0 left-0 right-0 border-t border-navy-800 bg-navy-950/95 backdrop-blur px-4 py-3 z-10">
+        <div className="max-w-2xl mx-auto flex items-center justify-between gap-3">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 rounded-md border border-navy-700 text-navy-300 hover:text-white hover:border-navy-600 cursor-pointer text-sm"
+          >
+            Back
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={bulkSubmitting || !allReasonPicked}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-md bg-accent-red text-white font-semibold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-sm"
+          >
+            {bulkSubmitting ? <Loader2 size={14} className="animate-spin" /> : <AlertTriangle size={14} />}
+            Flag {remainingVehicles.length} &amp; complete
+          </button>
+        </div>
+      </div>
+    </FullScreenShell>
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// Fleet done — final celebration
+// ─────────────────────────────────────────────────────
+function FleetDoneScreen({ user, dsp, inspectedSession, skippedCount, onClose }) {
+  const total = inspectedSession.length + skippedCount;
+  return (
+    <FullScreenShell title="Fleet inspection complete" onClose={onClose}>
+      <div className="max-w-md mx-auto px-4 py-12 text-center">
+        <motion.div
+          initial={{ scale: 0 }}
+          animate={{ scale: 1 }}
+          transition={{ type: 'spring' }}
+          className="w-24 h-24 rounded-full bg-accent-green/20 border-2 border-accent-green flex items-center justify-center mx-auto mb-6"
+        >
+          <Check size={48} className="text-accent-green" />
+        </motion.div>
+        <h2 className="text-2xl font-bold text-white mb-2">
+          {dsp?.name} fleet — done.
+        </h2>
+        <p className="text-navy-300 text-sm mb-6">
+          Great work, {user?.name?.split(' ')[0] || 'tech'}. The DSP dashboard
+          is being updated now.
+        </p>
+
+        <div className="grid grid-cols-2 gap-2 mb-6">
+          <div className="rounded-lg border border-accent-green/40 bg-accent-green/10 p-3">
+            <div className="text-2xl font-bold text-accent-green">{inspectedSession.length}</div>
+            <div className="text-[10px] uppercase tracking-wide text-navy-300">Inspected</div>
+          </div>
+          <div
+            className={`rounded-lg border p-3 ${
+              skippedCount > 0
+                ? 'border-accent-red/40 bg-accent-red/10'
+                : 'border-navy-700 bg-navy-900/60'
+            }`}
+          >
+            <div className={`text-2xl font-bold ${skippedCount > 0 ? 'text-accent-red' : 'text-navy-400'}`}>
+              {skippedCount}
+            </div>
+            <div className="text-[10px] uppercase tracking-wide text-navy-300">Flagged</div>
+          </div>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="w-full py-3 rounded-lg bg-accent-blue text-white font-semibold cursor-pointer"
+        >
+          Done
+        </button>
+      </div>
+    </FullScreenShell>
   );
 }

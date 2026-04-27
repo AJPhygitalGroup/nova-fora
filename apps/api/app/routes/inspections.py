@@ -316,12 +316,19 @@ async def create_inspection(
     # for any DSP's vehicles. In real ops the vendor-DSP contract bounds who
     # services whom; we enforce that post-Jun 15.
 
-    # Dual mode:
-    # - Empty defects[] → DRAFT (tech is about to fill it incrementally with
-    #   inline photos per defect via /inspections/{id}/defects).
-    # - Non-empty defects[] → SUBMITTED atomically (bulk import, seed, etc.)
+    # Tri mode:
+    # - Empty defects[] AND no result_override AND no incomplete_reason → DRAFT
+    #   (tech is about to fill it incrementally with inline photos via the wizard).
+    # - incomplete_reason set (vehicle won't start / not at lot / no keys) →
+    #   SUBMITTED atomically with result=INCOMPLETE (skip-with-reason flow).
+    # - Non-empty defects[] OR result_override → SUBMITTED atomically (seed,
+    #   bulk import, atomic API consumers).
     now = utc_now()
-    is_draft = not body.defects and body.result_override is None
+    is_draft = (
+        not body.defects
+        and body.result_override is None
+        and not body.incomplete_reason
+    )
 
     if is_draft:
         insp = Inspection(
