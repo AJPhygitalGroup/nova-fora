@@ -381,10 +381,27 @@ function FullScreenShell({ title, subtitle, onClose, children }) {
 }
 
 // ─────────────────────────────────────────────────────
-// Step 1: vehicle picker
+// Step 1: pick DSP (if multiple visible) → pick vehicle
 // ─────────────────────────────────────────────────────
 function Step1VehiclePicker({ vehicles, loading, value, onChange }) {
   const [search, setSearch] = useState('');
+  const [dspFilter, setDspFilter] = useState('all');
+
+  // Derive unique DSPs from the vehicle list (scoped server-side per role).
+  // dsp_owner → only their own org → 1 entry → we hide the chips (no need to choose).
+  // vendor / tech / admin → multiple DSPs → show chips.
+  const dsps = (() => {
+    const seen = new Map();
+    for (const v of vehicles) {
+      if (!seen.has(v.dspId)) {
+        seen.set(v.dspId, { id: v.dspId, name: v.dsp, count: 0 });
+      }
+      seen.get(v.dspId).count += 1;
+    }
+    return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
+  })();
+  const showDspChips = dsps.length > 1;
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -392,7 +409,9 @@ function Step1VehiclePicker({ vehicles, loading, value, onChange }) {
       </div>
     );
   }
+
   const filtered = vehicles.filter((v) => {
+    if (dspFilter !== 'all' && v.dspId !== dspFilter) return false;
     if (!search) return true;
     const s = search.toLowerCase();
     return (
@@ -402,12 +421,56 @@ function Step1VehiclePicker({ vehicles, loading, value, onChange }) {
       v.model?.toLowerCase().includes(s)
     );
   });
+
+  // Group filtered list by DSP when "All DSPs" view is active and multiple DSPs exist
+  const groupedByDsp = (() => {
+    if (!showDspChips || dspFilter !== 'all') return null;
+    const map = new Map();
+    for (const v of filtered) {
+      if (!map.has(v.dspId)) map.set(v.dspId, { id: v.dspId, name: v.dsp, vans: [] });
+      map.get(v.dspId).vans.push(v);
+    }
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  })();
+
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 mb-2">
         <Truck size={16} className="text-accent-blue" />
-        <h3 className="text-sm font-semibold text-white">Which vehicle are you inspecting?</h3>
+        <h3 className="text-sm font-semibold text-white">
+          {showDspChips ? 'Pick the DSP and the vehicle' : 'Which vehicle are you inspecting?'}
+        </h3>
       </div>
+
+      {/* DSP filter chips — only when the user has visibility on >1 DSP */}
+      {showDspChips && (
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+          <button
+            onClick={() => setDspFilter('all')}
+            className={`shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold border cursor-pointer transition-all ${
+              dspFilter === 'all'
+                ? 'bg-accent-blue/20 border-accent-blue/50 text-accent-blue'
+                : 'bg-navy-800/40 border-navy-700 text-navy-400 hover:text-white'
+            }`}
+          >
+            All DSPs <span className="ml-1 text-[10px] opacity-70">({vehicles.length})</span>
+          </button>
+          {dsps.map((d) => (
+            <button
+              key={d.id}
+              onClick={() => setDspFilter(d.id)}
+              className={`shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold border cursor-pointer transition-all ${
+                dspFilter === d.id
+                  ? 'bg-accent-green/20 border-accent-green/50 text-accent-green'
+                  : 'bg-navy-800/40 border-navy-700 text-navy-400 hover:text-white'
+              }`}
+            >
+              {d.name} <span className="ml-1 text-[10px] opacity-70">({d.count})</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       <input
         type="search"
         value={search}
@@ -415,43 +478,63 @@ function Step1VehiclePicker({ vehicles, loading, value, onChange }) {
         placeholder="Fleet ID, VIN, plate…"
         className="w-full rounded-lg px-3 py-2.5 bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue text-sm"
       />
-      <div className="grid sm:grid-cols-2 gap-2">
-        {filtered.map((v) => {
-          const selected = value?.id === v.id;
-          return (
-            <button
-              key={v.id}
-              onClick={() => onChange(v)}
-              className={`text-left rounded-lg p-3 border-2 transition-all cursor-pointer ${
-                selected
-                  ? 'border-accent-blue bg-accent-blue/10'
-                  : 'border-navy-700 bg-navy-900/60 hover:border-navy-600'
-              }`}
-            >
-              <div className="flex items-start justify-between gap-2 mb-1">
-                <span className="text-sm font-bold text-white font-mono">{v.fleetId}</span>
-                {v.grounded && (
-                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-accent-red/20 border border-accent-red/40 text-accent-red">
-                    GROUNDED
-                  </span>
-                )}
+
+      {/* Vehicles — grouped by DSP if showing all, else flat */}
+      {groupedByDsp ? (
+        <div className="space-y-4">
+          {groupedByDsp.map((grp) => (
+            <div key={grp.id}>
+              <div className="text-[10px] text-navy-400 font-semibold uppercase tracking-wide mb-1.5 px-1">
+                {grp.name} <span className="text-navy-500">· {grp.vans.length} van{grp.vans.length === 1 ? '' : 's'}</span>
               </div>
-              <div className="text-xs text-navy-300 truncate">
-                {v.year} {v.make} {v.model}
+              <div className="grid sm:grid-cols-2 gap-2">
+                {grp.vans.map((v) => (
+                  <VehicleCard key={v.id} v={v} selected={value?.id === v.id} onSelect={onChange} />
+                ))}
               </div>
-              <div className="text-[10px] text-navy-500 mt-1">
-                {v.plate} &middot; {v.mileage?.toLocaleString() || 0} mi
-              </div>
-            </button>
-          );
-        })}
-        {filtered.length === 0 && (
-          <div className="col-span-2 py-8 text-center text-sm text-navy-400">
-            No vehicles match.
-          </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="grid sm:grid-cols-2 gap-2">
+          {filtered.map((v) => (
+            <VehicleCard key={v.id} v={v} selected={value?.id === v.id} onSelect={onChange} />
+          ))}
+        </div>
+      )}
+
+      {filtered.length === 0 && (
+        <div className="py-8 text-center text-sm text-navy-400">No vehicles match.</div>
+      )}
+    </div>
+  );
+}
+
+function VehicleCard({ v, selected, onSelect }) {
+  return (
+    <button
+      onClick={() => onSelect(v)}
+      className={`text-left rounded-lg p-3 border-2 transition-all cursor-pointer ${
+        selected
+          ? 'border-accent-blue bg-accent-blue/10'
+          : 'border-navy-700 bg-navy-900/60 hover:border-navy-600'
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2 mb-1">
+        <span className="text-sm font-bold text-white font-mono">{v.fleetId}</span>
+        {v.grounded && (
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-accent-red/20 border border-accent-red/40 text-accent-red">
+            GROUNDED
+          </span>
         )}
       </div>
-    </div>
+      <div className="text-xs text-navy-300 truncate">
+        {v.year} {v.make} {v.model}
+      </div>
+      <div className="text-[10px] text-navy-500 mt-1">
+        {v.plate} &middot; {v.mileage?.toLocaleString() || 0} mi
+      </div>
+    </button>
   );
 }
 

@@ -8,6 +8,7 @@ import ProgressBar from './ui/ProgressBar';
 import Badge from './ui/Badge';
 import { FlexFleetModal, VehicleReportCard, CreateWorkOrderModal } from './FleetSnapshot';
 import { fleetSnapshotVans } from '../data/mockData';
+import CreateInspectionWizard from './CreateInspectionWizard';
 
 const tierConfig = {
   1: { label: 'Tier 1', range: '1–25 defects', cash: '$1', bucks: '$1', color: '#3b82f6', bg: 'bg-accent-blue/10', border: 'border-accent-blue/30', pending: 1 },
@@ -2687,7 +2688,12 @@ export default function RealDVIC({ user }) {
           />
         )}
         {showInspection && <InspectionReadinessModal onClose={() => setShowInspection(false)} />}
-        {showStartInspection && <StartInspectionModal user={user} onClose={() => setShowStartInspection(false)} />}
+        {showStartInspection && (
+          <CreateInspectionWizard
+            user={user}
+            onClose={() => setShowStartInspection(false)}
+          />
+        )}
         {showRepairHistory && <RepairHistoryModal repairedWOs={repairedWOs} user={user} onClose={() => setShowRepairHistory(false)} />}
         {showFlexFleet && <FlexFleetModal onClose={() => setShowFlexFleet(false)} />}
       </AnimatePresence>
