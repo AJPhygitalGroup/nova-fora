@@ -272,6 +272,7 @@ async def list_inspections(
                 result=i.result,
                 odometer_miles=i.odometer_miles,
                 keys_received=i.keys_received,
+                incomplete_reason=i.incomplete_reason,
                 submitted_at=i.submitted_at,
                 created_at=i.created_at,
                 defect_count=defect_count_by_insp.get(i.id, 0),

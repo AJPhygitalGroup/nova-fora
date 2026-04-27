@@ -169,6 +169,7 @@ class InspectionListItem(BaseModel):
     result: InspectionResult
     odometer_miles: int | None
     keys_received: int | None = None
+    incomplete_reason: str | None = None  # vehicle_wont_start / not_at_lot / no_keys
     submitted_at: datetime | None
     created_at: datetime
     defect_count: int = 0

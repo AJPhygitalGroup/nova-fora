@@ -630,22 +630,31 @@ function CardDetailModal({ cardKey, onClose, onOpenVehicleReport, onApproveDefec
       passed: 'clean',
       conditional: 'medium',
       flagged: 'high',
-      incomplete: 'defective',
     };
     const RESULT_TO_LABEL = {
       passed: 'Passed',
       conditional: 'Conditional',
       flagged: 'Flagged',
-      incomplete: 'Incomplete',
     };
+    const REASON_TO_LABEL = {
+      vehicle_wont_start: "Vehicle won't start",
+      not_at_lot: 'Vehicle not at the lot',
+      no_keys: 'Vehicle keys not present',
+    };
+
+    // Split: real inspections vs flagged-as-not-inspectable
+    const reallyInspected = liveInspected.filter((i) => i.result !== 'incomplete');
+    const incomplete = liveInspected.filter((i) => i.result === 'incomplete');
+
     // Keys recorded for today: take the first non-null value across the
-    // session's inspections (it's set ONCE on session-start and copied to
-    // each row, so any non-null answer works).
+    // session's inspections (set ONCE on session-start, copied to each row).
     const keysRecordedReal = liveInspected.find((i) => i.keysReceived != null)?.keysReceived ?? null;
+
     data = {
       ...data,
-      summary: `${liveInspected.length} inspected today`,
-      inspectedVans: liveInspected.map((i) => ({
+      summary:
+        `${reallyInspected.length} inspected · ${incomplete.length} not inspectable today`,
+      inspectedVans: reallyInspected.map((i) => ({
         id: i.fleetId || i.vehicleId,
         vendor: i.vendor || '—',     // real vendor org from inspector lookup
         tech: i.inspector || '—',
@@ -656,7 +665,17 @@ function CardDetailModal({ cardKey, onClose, onOpenVehicleReport, onApproveDefec
         severity: RESULT_TO_SEVERITY[i.result] || 'clean',
         keysReceived: i.keysReceived,
       })),
-      // Pass through to renderer so it doesn't compute fake numbers
+      // Real "not inspected" list: vans the tech flagged with a reason
+      notInspectedVans: incomplete.map((i) => ({
+        id: i.fleetId || i.vehicleId,
+        reason:
+          REASON_TO_LABEL[i.incompleteReason] ||
+          i.incompleteReason ||
+          'Not inspected (no reason recorded)',
+      })),
+      // 'Approve new' is for a different workflow (newly activated vans
+      // needing baseline DVIC). Empty until that flow is wired.
+      approveNewVans: [],
       keysRecordedReal,
     };
   }
