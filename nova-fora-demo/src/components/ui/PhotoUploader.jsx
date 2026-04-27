@@ -13,7 +13,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import imageCompression from 'browser-image-compression';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Camera, X, AlertCircle, RotateCcw, Check } from 'lucide-react';
 import { uploads, defects, inspections } from '../../api/client';
 
@@ -63,10 +63,24 @@ export default function PhotoUploader({
   // - id/url come from the server after commit
   // - preview is a local blob URL for optimistic display
   // - status: 'compressing' | 'uploading' | 'done' | 'error'
+  // - justCompletedAt: timestamp set when an upload transitions to 'done'.
+  //   Used to render a 600 ms green pulse + flash on the thumb.
   const [items, setItems] = useState(() =>
     initialPhotos.map((p) => ({ ...p, status: 'done' }))
   );
   const inputRef = useRef(null);
+
+  // Inline success toast — shows "✓ N photo(s) uploaded" for ~2 s after each
+  // successful commit. Multiple rapid uploads accumulate the count rather
+  // than stacking toasts.
+  const [successCount, setSuccessCount] = useState(0);
+  const successTimerRef = useRef(null);
+  const showSuccess = () => {
+    setSuccessCount((c) => c + 1);
+    clearTimeout(successTimerRef.current);
+    successTimerRef.current = setTimeout(() => setSuccessCount(0), 2200);
+  };
+  useEffect(() => () => clearTimeout(successTimerRef.current), []);
 
   // Keep local state in sync when parent refetches photos
   useEffect(() => {
@@ -134,12 +148,22 @@ export default function PhotoUploader({
                 status: 'done',
                 tempId: null,
                 preview: null,
+                justCompletedAt: Date.now(),
               }
             : x
         )
       );
       // Release blob URL after a short delay so the swap isn't jarring
       setTimeout(() => URL.revokeObjectURL(preview), 1500);
+      // Clear the celebration ring after 700ms (animation finishes)
+      setTimeout(() => {
+        setItems((prev) => prev.map((x) =>
+          x.id === saved.id ? { ...x, justCompletedAt: null } : x
+        ));
+      }, 700);
+
+      // Inline toast feedback
+      showSuccess();
 
       onChanged?.('added', saved);
     } catch (err) {
@@ -198,7 +222,7 @@ export default function PhotoUploader({
   const reachedMax = maxPhotos != null && items.filter((x) => x.status === 'done' || x.status === 'compressing' || x.status === 'uploading').length >= maxPhotos;
 
   return (
-    <div>
+    <div className="relative">
       <input
         ref={inputRef}
         type="file"
@@ -212,10 +236,39 @@ export default function PhotoUploader({
         }}
       />
 
+      {/* Inline success toast — auto-dismisses in ~2 s */}
+      <AnimatePresence>
+        {successCount > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.18 }}
+            className="mb-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent-green/15 border border-accent-green/40 text-accent-green text-[11px] font-semibold"
+          >
+            <Check size={12} />
+            {successCount === 1
+              ? 'Photo uploaded successfully'
+              : `${successCount} photos uploaded`}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
         {items.map((p, i) => (
-          <div
+          <motion.div
             key={p.id || p.tempId || i}
+            // Brief celebration when the upload just completed: green ring +
+            // gentle scale pulse for 600 ms.
+            animate={p.justCompletedAt ? {
+              boxShadow: [
+                '0 0 0 0 rgba(34,197,94,0)',
+                '0 0 0 4px rgba(34,197,94,0.5)',
+                '0 0 0 0 rgba(34,197,94,0)',
+              ],
+              scale: [1, 1.03, 1],
+            } : {}}
+            transition={{ duration: 0.6, ease: 'easeOut' }}
             className="relative aspect-square rounded-lg overflow-hidden border border-navy-700 bg-navy-900"
           >
             <img
@@ -272,14 +325,21 @@ export default function PhotoUploader({
               </button>
             )}
             {p.status === 'done' && (
-              <div
-                className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-accent-green text-white flex items-center justify-center"
+              <motion.div
+                initial={p.justCompletedAt ? { scale: 0 } : false}
+                animate={{ scale: 1 }}
+                transition={{ type: 'spring', stiffness: 400, damping: 18 }}
+                className={`absolute bottom-1 right-1 rounded-full bg-accent-green text-white flex items-center justify-center transition-all ${
+                  p.justCompletedAt
+                    ? 'w-7 h-7 ring-2 ring-accent-green/50'
+                    : 'w-5 h-5'
+                }`}
                 title="Synced"
               >
-                <Check size={11} />
-              </div>
+                <Check size={p.justCompletedAt ? 16 : 11} strokeWidth={3} />
+              </motion.div>
             )}
-          </div>
+          </motion.div>
         ))}
 
         {/* Add-photo tile */}
