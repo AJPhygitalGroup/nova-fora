@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { Shield, ShieldCheck, AlertTriangle, Award, TrendingUp, Users, Flame, Camera, Gift, Lock, Star, Plus, Hourglass, CheckCheck, X, Clock, Wrench, CheckCircle2, Calendar, KeyRound, ChevronRight, Info, SkipForward, PlayCircle, ClipboardCheck, ChevronDown, Check, ArrowRight, Bell, LayoutGrid, Truck, ThumbsUp, ThumbsDown } from 'lucide-react';
@@ -9,6 +9,7 @@ import Badge from './ui/Badge';
 import { FlexFleetModal, VehicleReportCard, CreateWorkOrderModal } from './FleetSnapshot';
 import { fleetSnapshotVans } from '../data/mockData';
 import CreateInspectionWizard from './CreateInspectionWizard';
+import { inspections as inspectionsApi, vehicles as vehiclesApi } from '../api/client';
 
 const tierConfig = {
   1: { label: 'Tier 1', range: '1–25 defects', cash: '$1', bucks: '$1', color: '#3b82f6', bg: 'bg-accent-blue/10', border: 'border-accent-blue/30', pending: 1 },
@@ -594,9 +595,38 @@ function ScheduledRepairsGrouped({ items }) {
   );
 }
 
-function CardDetailModal({ cardKey, onClose, onOpenVehicleReport, onApproveDefect, onOrderFlexFleet }) {
+function CardDetailModal({ cardKey, onClose, onOpenVehicleReport, onApproveDefect, onOrderFlexFleet, liveInspected }) {
   if (!cardKey) return null;
-  const data = cardDetails[cardKey];
+  let data = cardDetails[cardKey];
+  // Override the 'inspected' card with the live API data when we have it.
+  // This way the modal shows the same vans you just inspected via the wizard,
+  // not the mock list.
+  if (cardKey === 'inspected' && Array.isArray(liveInspected)) {
+    const RESULT_TO_SEVERITY = {
+      passed: 'clean',
+      conditional: 'medium',
+      flagged: 'high',
+      incomplete: 'defective',
+    };
+    const RESULT_TO_LABEL = {
+      passed: 'Passed',
+      conditional: 'Conditional',
+      flagged: 'Flagged',
+      incomplete: 'Incomplete',
+    };
+    data = {
+      ...data,
+      summary: `${liveInspected.length} inspected today`,
+      inspectedVans: liveInspected.map((i) => ({
+        id: i.fleetId || i.vehicleId,
+        vendor: i.dsp || '—',
+        tech: i.inspector || '—',
+        category: 'amr',
+        severity: RESULT_TO_SEVERITY[i.result] || 'clean',
+        result: RESULT_TO_LABEL[i.result] || i.result,
+      })),
+    };
+  }
   const Icon = data.icon;
 
   return (
@@ -2267,6 +2297,46 @@ export default function RealDVIC({ user }) {
   const [vanUpdates, setVanUpdates] = useState({});
   const [createWOContext, setCreateWOContext] = useState(null); // { van, defect }
 
+  // Live "Vans inspected today" — pulled from /inspections + /vehicles
+  // Server scopes by JWT: dsp_owner sees own DSP, vendor/tech sees all DSPs.
+  const [todayCount, setTodayCount] = useState(0);
+  const [fleetTotal, setFleetTotal] = useState(0);
+  const [todayInspected, setTodayInspected] = useState([]);  // for the "Vans inspected" expandable list
+
+  const refreshTodayMetrics = useCallback(async () => {
+    try {
+      const today = new Date().toISOString().slice(0, 10); // UTC YYYY-MM-DD
+      const [inspsRes, vehsRes] = await Promise.all([
+        inspectionsApi.list({ dateFrom: today, dateTo: today, perPage: 100 }),
+        vehiclesApi.list({ perPage: 100 }),
+      ]);
+      // Unique vehicles inspected today (one van might be inspected twice — count distinct)
+      const seen = new Set();
+      const uniq = [];
+      for (const i of inspsRes.items) {
+        if (!seen.has(i.vehicleId)) {
+          seen.add(i.vehicleId);
+          uniq.push(i);
+        }
+      }
+      setTodayCount(uniq.length);
+      setFleetTotal(vehsRes.total ?? vehsRes.items.length);
+      setTodayInspected(uniq);
+    } catch (err) {
+      console.warn('refresh today metrics failed', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshTodayMetrics();
+  }, [refreshTodayMetrics]);
+
+  // After the wizard submits (closes), refresh
+  const wizardJustClosed = !showStartInspection;
+  useEffect(() => {
+    if (wizardJustClosed) refreshTodayMetrics();
+  }, [wizardJustClosed, refreshTodayMetrics]);
+
   // Completed WOs filtered by DSP (DSP owner sees only theirs; admin sees all)
   const repairedWOs = user?.role === 'dsp_owner'
     ? workOrdersData.filter((wo) => wo.status === 'completed' && wo.dspId === user?.orgId)
@@ -2379,10 +2449,22 @@ export default function RealDVIC({ user }) {
               onClick={() => setOpenCard('inspected')}
               className="bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl p-5 hover:border-navy-600/60 transition-all cursor-pointer h-full flex flex-col">
               <div className="flex items-start justify-end mb-3">
-                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-accent-green/15 text-accent-green">+18%</span>
+                {fleetTotal > 0 && (
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                    todayCount === fleetTotal
+                      ? 'bg-accent-green/15 text-accent-green'
+                      : todayCount === 0
+                      ? 'bg-navy-700/40 text-navy-400'
+                      : 'bg-accent-orange/15 text-accent-orange'
+                  }`}>
+                    {fleetTotal === 0 ? '—' : `${Math.round((todayCount / fleetTotal) * 100)}%`}
+                  </span>
+                )}
               </div>
               <div className="text-center">
-                <div className="text-2xl font-bold text-white mb-1">23 <span className="text-navy-400 font-normal text-xl">of 30</span></div>
+                <div className="text-2xl font-bold text-white mb-1">
+                  {todayCount} <span className="text-navy-400 font-normal text-xl">of {fleetTotal}</span>
+                </div>
                 <div className="text-sm text-navy-400">Vans Inspected in Recent QC DVIC</div>
               </div>
               <div className="mt-auto pt-2 text-center text-[11px] text-navy-400">
@@ -2640,6 +2722,7 @@ export default function RealDVIC({ user }) {
           <CardDetailModal
             cardKey={openCard}
             onClose={() => setOpenCard(null)}
+            liveInspected={todayInspected}
             onOrderFlexFleet={isDspHome ? () => { setOpenCard(null); setShowFlexFleet(true); } : null}
             onOpenVehicleReport={(van) => {
               // Close the Vans Inspected modal first, then pop the Vehicle Report Card
