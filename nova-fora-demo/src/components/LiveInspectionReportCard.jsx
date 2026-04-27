@@ -271,8 +271,34 @@ export default function LiveInspectionReportCard({ inspection, user, onClose, on
 // ─────────────────────────────────────────────────────
 // Defect row with photos + action buttons
 // ─────────────────────────────────────────────────────
+// Format the structured details object into a 1-line legible string.
+function formatDetailsSummary(details) {
+  if (!details) return '';
+  const parts = [];
+  if (details.tread_depth_32nds !== undefined) parts.push(`${details.tread_depth_32nds}/32`);
+  if (details.in_drivers_line_of_sight === true) parts.push("in driver's line of sight");
+  if (details.in_drivers_line_of_sight === false) parts.push("outside driver's line of sight");
+  if (details.lamp_type?.length) parts.push(details.lamp_type.join(', '));
+  if (details.state) parts.push(details.state);
+  if (details.expiration_month) parts.push(`expired ${details.expiration_month}`);
+  if (details.expiration_date) parts.push(`expired ${details.expiration_date}`);
+  return parts.join(' · ');
+}
+
 function DefectRow({ defect, photos, action, canAct, onApprove, onReject }) {
   const tint = SEVERITY_TINT[defect.severity] || SEVERITY_TINT.low;
+  const isV2 = !!defect.isV2;
+  const partHeader = isV2
+    ? `${defect.partIcon || ''} ${defect.partLabel || defect.part}${defect.positionLabel ? ` (${defect.positionLabel})` : ''}`.trim()
+    : defect.part;
+  const issueLine = isV2
+    ? (() => {
+        const t = `${defect.defectTypeIcon || ''} ${defect.defectTypeLabel || ''}`.trim();
+        const det = formatDetailsSummary(defect.details);
+        return det ? `${t} — ${det}` : t;
+      })()
+    : defect.description;
+
   return (
     <div
       className={`rounded-lg border p-3 transition-all ${
@@ -285,16 +311,19 @@ function DefectRow({ defect, photos, action, canAct, onApprove, onReject }) {
     >
       <div className="flex items-start justify-between gap-3 mb-2">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-sm font-semibold text-white">{defect.part}</span>
-            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${tint}`}>
-              {defect.severity?.charAt(0).toUpperCase() + defect.severity?.slice(1)}
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <span className="text-sm font-semibold text-white">{partHeader}</span>
+            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${tint} capitalize`}>
+              {defect.severity}
             </span>
             <span className="text-[10px] text-navy-500 font-mono">{defect.id}</span>
           </div>
           <p className={`text-xs ${action === 'rejected' ? 'line-through text-navy-500' : 'text-navy-200'}`}>
-            {defect.description}
+            {issueLine}
           </p>
+          {isV2 && defect.description && defect.description !== issueLine && (
+            <p className="text-[11px] text-navy-400 mt-1 italic">{defect.description}</p>
+          )}
         </div>
       </div>
 

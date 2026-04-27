@@ -2348,12 +2348,25 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onVi
                 }`}>
                   <td className="px-4 py-2.5 text-white font-semibold font-mono">{d.van}</td>
                   <td className="px-4 py-2.5 text-white">
-                    <div className="flex items-center gap-1.5">
-                      {d.desc}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        {d.line1 ? (
+                          // v2 two-line structured display
+                          <>
+                            <div className="text-sm text-white font-medium truncate">{d.line1}</div>
+                            {d.line2 && (
+                              <div className="text-[11px] text-navy-300 truncate">{d.line2}</div>
+                            )}
+                          </>
+                        ) : (
+                          // legacy fallback
+                          d.desc
+                        )}
+                      </div>
                       {onViewPhotos ? (
                         <button
                           onClick={(e) => { e.stopPropagation(); onViewPhotos(d); }}
-                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold transition-colors cursor-pointer ${
+                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold transition-colors cursor-pointer shrink-0 ${
                             d.photoCount > 0
                               ? 'bg-accent-blue/15 border border-accent-blue/40 text-accent-blue hover:bg-accent-blue/25'
                               : 'bg-navy-800 border border-navy-700 text-navy-400 hover:text-white hover:border-navy-600'

@@ -54,7 +54,13 @@ class DefectCreate(BaseModel):
 
 
 class DefectResponse(BaseModel):
-    """One defect in a response (embedded inside InspectionResponse or flat)."""
+    """One defect in a response (embedded inside InspectionResponse or flat).
+
+    Includes BOTH legacy fields (section, part, description) AND v2 fields
+    (part_label, position_label, defect_type_label, etc.) so the frontend
+    can render rich structured info when available and fall back to free
+    text for legacy rows.
+    """
 
     id: str          # FD-XXX
     inspection_id: str    # INS-XXXXX
@@ -66,6 +72,17 @@ class DefectResponse(BaseModel):
     status: DefectStatus
     photo_count: int
     created_at: datetime
+
+    # ── v2 schema fields (optional — populated when row is v2) ──
+    is_v2: bool = False
+    part_label: str | None = None
+    part_icon: str | None = None
+    position: str | None = None
+    position_label: str | None = None
+    defect_type: str | None = None
+    defect_type_label: str | None = None
+    defect_type_icon: str | None = None
+    details: dict | None = None
 
     # Denormalized for flat /defects view (fills in when returned from /defects
     # endpoint — optional in embedded view inside an inspection).
@@ -81,6 +98,44 @@ class DefectResponse(BaseModel):
 
     @classmethod
     def from_defect(cls, d: ReportedDefect, inspection_id_str: str) -> "DefectResponse":
+        # Lazy import to avoid circular references (defect_labels imports models).
+        from app.defect_labels import PART_LABELS, POSITION_LABELS, TYPE_LABELS
+        from app.models.defect_catalog import (
+            DefectPart,
+            DefectPosition,
+            DefectType,
+        )
+
+        is_v2 = bool(d.part_enum and d.defect_type_enum)
+        part_label = None
+        part_icon = None
+        defect_type_label = None
+        defect_type_icon = None
+        position_label = None
+
+        if d.part_enum:
+            try:
+                pe = DefectPart(d.part_enum)
+                part_label = PART_LABELS.get(pe, {}).get("label")
+                part_icon = PART_LABELS.get(pe, {}).get("icon")
+            except ValueError:
+                pass
+
+        if d.defect_type_enum:
+            try:
+                te = DefectType(d.defect_type_enum)
+                defect_type_label = TYPE_LABELS.get(te, {}).get("label")
+                defect_type_icon = TYPE_LABELS.get(te, {}).get("icon")
+            except ValueError:
+                pass
+
+        if d.position:
+            try:
+                pos = DefectPosition(d.position)
+                position_label = POSITION_LABELS.get(pos, {}).get("label")
+            except ValueError:
+                pass
+
         return cls(
             id=d.id_str,
             inspection_id=inspection_id_str,
@@ -92,6 +147,16 @@ class DefectResponse(BaseModel):
             status=d.status,
             photo_count=d.photo_count,
             created_at=d.created_at,
+            # v2 fields
+            is_v2=is_v2,
+            part_label=part_label,
+            part_icon=part_icon,
+            position=d.position,
+            position_label=position_label,
+            defect_type=d.defect_type_enum,
+            defect_type_label=defect_type_label,
+            defect_type_icon=defect_type_icon,
+            details=d.details if d.details else None,
         )
 
 

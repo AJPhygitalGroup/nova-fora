@@ -26,21 +26,56 @@ const STATUS_TO_LABEL = {
   dismissed: 'Rejected',
 };
 
+// Format the structured details object into a 1-line legible string.
+// Examples: "3/32" · "in driver's line of sight" · "check_engine, oil — flashing"
+function formatDetails(details) {
+  if (!details) return '';
+  const parts = [];
+  if (details.tread_depth_32nds !== undefined) parts.push(`${details.tread_depth_32nds}/32`);
+  if (details.in_drivers_line_of_sight === true) parts.push("in driver's line of sight");
+  if (details.in_drivers_line_of_sight === false) parts.push("outside driver's line of sight");
+  if (details.lamp_type?.length) parts.push(details.lamp_type.join(', '));
+  if (details.state) parts.push(details.state);
+  if (details.expiration_month) parts.push(`expired ${details.expiration_month}`);
+  if (details.expiration_date) parts.push(`expired ${details.expiration_date}`);
+  return parts.join(' · ');
+}
+
 function fromApiDefect(d) {
+  const isV2 = !!d.isV2;
+  // Build a 2-line display:
+  //   line1: "🛞 Tire (Passenger rear)"   ← part icon + part label + position
+  //   line2: "📉 Low tread — 3/32"        ← defect type icon + label + details
+  let line1, line2;
+  if (isV2) {
+    const partBit = `${d.partIcon || ''} ${d.partLabel || d.part}`.trim();
+    const posBit = d.positionLabel ? ` (${d.positionLabel})` : '';
+    line1 = `${partBit}${posBit}`;
+    const typeBit = `${d.defectTypeIcon || ''} ${d.defectTypeLabel || ''}`.trim();
+    const detBit = formatDetails(d.details);
+    line2 = detBit ? `${typeBit} — ${detBit}` : typeBit;
+  } else {
+    line1 = d.part || '—';
+    line2 = d.description || '';
+  }
+
   return {
     id: d.id,                              // FD-008 (defect's own id)
-    // Display: show the fleet_id (e.g. "PR013") — what the driver sees on
-    // the van. The internal "VAN-0001" is kept separately for lookups.
     van: d.fleetId || d.van || '—',
     vanInternalId: d.van,                  // "VAN-0001" — for vehicle lookup
     plate: d.plate || null,
-    desc: d.description,
+    // Two-line structured display (preferred when available)
+    line1,
+    line2,
+    // Legacy single-line fallback (kept for backward-compat with table rendering)
+    desc: line2 || d.description || '',
     category: d.category || d.section || '—',
     severity: SEVERITY_TO_LABEL[d.severity] || d.severity,
     status: STATUS_TO_LABEL[d.status] || d.status,
     da: d.reportedBy || '—',
     photo: (d.photoCount || 0) > 0,
     photoCount: d.photoCount || 0,
+    isV2,
     // Raw fields for any debug / advanced UI
     _rawStatus: d.status,
     _rawSeverity: d.severity,
