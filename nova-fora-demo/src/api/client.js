@@ -314,7 +314,7 @@ export const inspections = {
 export const defects = {
   /**
    * GET /defects — flat list across all inspections (role-scoped server-side).
-   * params: { dspId?, status?, severity?, vehicleId?, dateFrom?, dateTo?, page?, perPage? }
+   * params: { dspId?, status?, vehicleId?, dateFrom?, dateTo?, page?, perPage? }
    */
   list(params = {}) {
     const q = new URLSearchParams();

@@ -10,14 +10,22 @@ import { fleetSnapshotVans, fleetSnapshotDefectDetails, availableVendors, SECTIO
 import { workOrders as woApi, directory as dirApi } from '../api/client';
 import Badge from './ui/Badge';
 
-// Severity → color configuration for heatmap tiles
-const SEVERITY_CONFIG = {
-  clean:    { bg: 'bg-accent-green/15',   border: 'border-accent-green/40',  text: 'text-accent-green',  label: 'Clean',    bar: 'bg-accent-green', ring: 'ring-accent-green/30' },
-  low:      { bg: 'bg-accent-blue/15',    border: 'border-accent-blue/40',   text: 'text-accent-blue',   label: 'Low',      bar: 'bg-accent-blue',  ring: 'ring-accent-blue/30' },
-  medium:   { bg: 'bg-accent-gold/15',    border: 'border-accent-gold/40',   text: 'text-accent-gold',   label: 'Medium',   bar: 'bg-accent-gold',  ring: 'ring-accent-gold/30' },
-  high:     { bg: 'bg-accent-orange/15',  border: 'border-accent-orange/40', text: 'text-accent-orange', label: 'High',     bar: 'bg-accent-orange',ring: 'ring-accent-orange/30' },
-  critical: { bg: 'bg-accent-red/20',     border: 'border-accent-red/50',    text: 'text-accent-red',    label: 'Critical', bar: 'bg-accent-red',   ring: 'ring-accent-red/40' },
+// Defect-count → color configuration for heatmap tiles.
+// (Replaces the old severity grading. Driven by defect count buckets:
+//  0 = clean / 1-2 = some / 3+ = many.)
+const TILE_BUCKETS = {
+  clean: { bg: 'bg-accent-green/15',  border: 'border-accent-green/40',  text: 'text-accent-green',  label: 'Clean',   bar: 'bg-accent-green',  ring: 'ring-accent-green/30' },
+  some:  { bg: 'bg-accent-gold/15',   border: 'border-accent-gold/40',   text: 'text-accent-gold',   label: '1-2 defects', bar: 'bg-accent-gold',   ring: 'ring-accent-gold/30' },
+  many:  { bg: 'bg-accent-orange/15', border: 'border-accent-orange/40', text: 'text-accent-orange', label: '3+ defects',  bar: 'bg-accent-orange', ring: 'ring-accent-orange/30' },
 };
+
+function bucketForVan(van) {
+  if (van.grounded) return 'many';
+  const n = van.defectCount || 0;
+  if (n === 0) return 'clean';
+  if (n <= 2) return 'some';
+  return 'many';
+}
 
 const DEFECT_STATUS_CONFIG = {
   pending:        { label: 'Pending',         variant: 'gold' },
@@ -28,11 +36,9 @@ const DEFECT_STATUS_CONFIG = {
   completed:      { label: 'Completed',       variant: 'green' },
 };
 
-const SEVERITY_BADGE = { Low: 'blue', Medium: 'gold', High: 'orange', Critical: 'red' };
-
 // Tile sizes based on screen breakpoint — we want the heatmap to feel dense like a real fleet view
 function HeatmapTile({ van, onClick }) {
-  const conf = SEVERITY_CONFIG[van.severity] || SEVERITY_CONFIG.clean;
+  const conf = TILE_BUCKETS[bucketForVan(van)];
   return (
     <motion.button
       initial={{ opacity: 0, scale: 0.9 }}
@@ -65,7 +71,7 @@ function HeatmapTile({ van, onClick }) {
 function SeverityLegend() {
   return (
     <div className="flex flex-wrap items-center gap-2 text-[11px]">
-      {Object.entries(SEVERITY_CONFIG).map(([k, c]) => (
+      {Object.entries(TILE_BUCKETS).map(([k, c]) => (
         <div key={k} className="flex items-center gap-1.5">
           <div className={`w-3 h-3 rounded-sm ${c.bar}`} />
           <span className="text-navy-300">{c.label}</span>
@@ -283,8 +289,8 @@ export function VehicleReportCard({ van, onClose, onUpdateVan, userRole, onCreat
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                       <h3 className="text-xl sm:text-2xl font-bold text-white">{van.id}</h3>
-                      <Badge variant={SEVERITY_BADGE[van.severity === 'critical' ? 'Critical' : van.severity === 'high' ? 'High' : van.severity === 'medium' ? 'Medium' : van.severity === 'low' ? 'Low' : 'Low'] || 'gray'} size="md">
-                        {SEVERITY_CONFIG[van.severity]?.label || 'Clean'}
+                      <Badge variant={(van.defectCount || 0) === 0 ? 'green' : 'gold'} size="md">
+                        {(van.defectCount || 0) === 0 ? 'Clean' : `${van.defectCount} defect${van.defectCount === 1 ? '' : 's'}`}
                       </Badge>
                       {van.grounded && <Badge variant="red" size="md">Grounded</Badge>}
                     </div>
@@ -311,7 +317,7 @@ export function VehicleReportCard({ van, onClose, onUpdateVan, userRole, onCreat
                 </div>
                 <div className="rounded-lg bg-navy-800/60 border border-navy-700/40 px-3 py-2">
                   <div className="text-[10px] text-navy-400 uppercase tracking-wide">Current defects</div>
-                  <div className={`text-lg font-bold ${SEVERITY_CONFIG[van.severity]?.text || 'text-accent-green'}`}>{van.defectCount}</div>
+                  <div className={`text-lg font-bold ${(van.defectCount || 0) === 0 ? 'text-accent-green' : 'text-accent-orange'}`}>{van.defectCount}</div>
                   <div className="text-[11px] text-navy-400">{van.defectCount === 0 ? 'Clean bill' : 'Active issues'}</div>
                 </div>
                 <div className="rounded-lg bg-navy-800/60 border border-navy-700/40 px-3 py-2">
@@ -403,9 +409,7 @@ export function VehicleReportCard({ van, onClose, onUpdateVan, userRole, onCreat
                               <div className="flex items-start justify-between gap-2 mb-2">
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                                    <span className="text-sm font-semibold text-white">{d.part}</span>
-                                    <Badge variant={SEVERITY_BADGE[d.severity]}>{d.severity}</Badge>
-                                    {d.hasPhoto && <Camera size={11} className="text-navy-400" />}
+                                    <span className="text-sm font-semibold text-white">{d.part}</span>{d.hasPhoto && <Camera size={11} className="text-navy-400" />}
                                   </div>
                                   <p className="text-xs text-navy-300 mb-1">{d.description}</p>
                                   <p className="text-[10px] text-navy-500">{d.reportedAt}</p>
@@ -494,8 +498,6 @@ const INSPECTION_SECTIONS = [
   { id: '5. In-Cab', label: '5. In-Cab' },
 ];
 
-const WO_SEVERITY_OPTIONS = ['Low', 'Medium', 'High', 'Critical'];
-const WO_SEVERITY_COLORS = { Low: 'blue', Medium: 'gold', High: 'orange', Critical: 'red' };
 
 function VendorCard({ vendor, selected, onSelect, neededServices }) {
   const matchedServices = neededServices?.length > 0
@@ -570,8 +572,7 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
   const [section, setSection] = useState(initialDefect?.section || '');
   const [part, setPart] = useState(initialDefect?.part || '');
   const [description, setDescription] = useState(initialDefect?.description || '');
-  const [severity, setSeverity] = useState(initialDefect?.severity || 'Medium');
-  const [isRush, setIsRush] = useState(initialDefect?.severity === 'Critical');
+  const [isRush, setIsRush] = useState(false);
   const [damagePhotos, setDamagePhotos] = useState([]);
   const [isPM, setIsPM] = useState(false);
   const [pmType, setPmType] = useState('Oil Change');
@@ -673,7 +674,6 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
         section,
         part,
         description,
-        severity,
         isRush,
         vendor,
         preferredDate,
@@ -911,27 +911,6 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                   </div>
                 )}
 
-                {/* Severity — hidden for PM mode */}
-                {!isPM && (
-                  <div>
-                    <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Severity</label>
-                    <div className="grid grid-cols-4 gap-1.5">
-                      {WO_SEVERITY_OPTIONS.map((s) => {
-                        const active = severity === s;
-                        const color = WO_SEVERITY_COLORS[s];
-                        return (
-                          <button key={s} onClick={() => { setSeverity(s); if (s === 'Critical') setIsRush(true); }}
-                            className={`px-2 py-2 rounded-lg text-xs font-semibold border transition-all cursor-pointer min-h-[44px] ${
-                              active
-                                ? `bg-accent-${color}/20 border-accent-${color}/50 text-accent-${color}`
-                                : 'bg-navy-800 border-navy-700 text-navy-300 hover:border-navy-600'
-                            }`}>{s}</button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
                 {/* Rush order toggle — hidden for PM mode */}
                 {!isPM && (
                   <label className="flex items-start gap-3 p-3 rounded-lg bg-navy-800/40 border border-navy-700/40 cursor-pointer hover:border-navy-600">
@@ -979,7 +958,6 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                   <div className="flex justify-between text-sm gap-3"><span className="text-navy-400">Plate</span><span className="text-white font-mono">{van?.plate}</span></div>
                   <div className="flex justify-between text-sm gap-3"><span className="text-navy-400">Section</span><span className="text-white">{section}</span></div>
                   {part && <div className="flex justify-between text-sm gap-3"><span className="text-navy-400">Part</span><span className="text-white">{part}</span></div>}
-                  <div className="flex justify-between text-sm gap-3"><span className="text-navy-400">Severity</span><Badge variant={WO_SEVERITY_COLORS[severity]} size="md">{severity}</Badge></div>
                   {isRush && <div className="flex justify-between text-sm gap-3"><span className="text-navy-400">Priority</span><Badge variant="red"><Flame size={9} className="inline mr-0.5" /> Rush Order</Badge></div>}
                   <div className="pt-2 border-t border-navy-700/40">
                     <div className="text-[11px] text-navy-400 mb-1">Description</div>
@@ -1019,8 +997,7 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                 {/* Auto-approval note */}
                 <div className="flex items-start gap-2 p-3 rounded-lg bg-accent-green/10 border border-accent-green/30 text-xs">
                   <Info size={12} className="text-accent-green mt-0.5 shrink-0" />
-                  <div className="text-navy-200">
-                    Matches your auto-approval rules for <strong className="text-white">{section}</strong> · <strong className="text-white">{severity}</strong>.
+                  <div className="text-navy-200"> Matches your auto-approval rules for {section}.
                     This WO will be <strong className="text-accent-green">processed automatically</strong> unless cost exceeds your cap.
                   </div>
                 </div>
@@ -1121,11 +1098,10 @@ export default function FleetSnapshot({ user, embedded = false }) {
   // Stats
   const stats = useMemo(() => {
     const total = vans.length;
-    const critical = vans.filter((v) => v.severity === 'critical').length;
     const withIssues = vans.filter((v) => v.defectCount > 0).length;
     const grounded = vans.filter((v) => v.grounded).length;
     const keysRecorded = total - grounded; // roughly
-    return { total, critical, withIssues, grounded, keysRecorded };
+    return { total, withIssues, grounded, keysRecorded };
   }, [vans]);
 
   const uniqueDsps = useMemo(() => {
@@ -1150,7 +1126,7 @@ export default function FleetSnapshot({ user, embedded = false }) {
       {!embedded && (
         <div className="mb-4 sm:mb-6">
           <h2 className="text-2xl font-bold text-white mb-1">QC DVIC</h2>
-          <p className="text-navy-400 text-sm">Heatmap view &mdash; defect severity at a glance, per vehicle</p>
+          <p className="text-navy-400 text-sm">Heatmap view &mdash; defects per vehicle at a glance</p>
         </div>
       )}
 
@@ -1169,7 +1145,7 @@ export default function FleetSnapshot({ user, embedded = false }) {
               <div className="text-xs text-navy-400">
                 <span className="text-white font-medium">{stats.total}</span> vehicles
                 {stats.withIssues > 0 && (<>&nbsp;·&nbsp;<span className="text-accent-orange font-medium">{stats.withIssues}</span> with issues</>)}
-                {stats.critical > 0 && (<>&nbsp;·&nbsp;<span className="text-accent-red font-medium">{stats.critical}</span> critical</>)}
+                
                 {stats.grounded > 0 && (<>&nbsp;·&nbsp;<span className="text-accent-red font-medium">{stats.grounded}</span> grounded</>)}
               </div>
             </div>
@@ -1245,7 +1221,6 @@ export default function FleetSnapshot({ user, embedded = false }) {
         /* Vendor sees grouped by DSP */
         <div className="space-y-4">
           {vansByDsp.map((group) => {
-            const groupCritical = group.vans.filter((v) => v.severity === 'critical').length;
             const groupIssues = group.vans.filter((v) => v.defectCount > 0).length;
             return (
               <motion.div key={group.dspId} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
@@ -1257,7 +1232,7 @@ export default function FleetSnapshot({ user, embedded = false }) {
                     <Badge variant="gray" size="md">{group.vans.length} vans</Badge>
                   </div>
                   <div className="flex items-center gap-2 text-[11px]">
-                    {groupCritical > 0 && <span className="text-accent-red font-semibold">{groupCritical} critical</span>}
+                    
                     {groupIssues > 0 && groupCritical !== groupIssues && <span className="text-accent-orange">{groupIssues} with issues</span>}
                     {groupIssues === 0 && <span className="text-accent-green">All clean</span>}
                   </div>

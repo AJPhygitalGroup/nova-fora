@@ -28,7 +28,6 @@ const FLAG_CONFIG = {
   subcontracted:  { label: 'Subcontracted',  variant: 'purple', icon: RefreshCw },
 };
 
-const SEVERITY_COLORS = { Low: 'blue', Medium: 'gold', High: 'orange', Critical: 'red' };
 
 // ============================================================
 // API → UI shape adapter
@@ -44,9 +43,6 @@ function mapApiToUi(api) {
   const notesArr = api.notes
     ? api.notes.split(/\n\n+/).map((s) => s.trim()).filter(Boolean)
     : [];
-  // UI severity is Title-cased ("Low" / "Medium" / ...); backend is lower.
-  const sevRaw = firstItem?.defectSeverity || 'medium';
-  const sev = sevRaw.charAt(0).toUpperCase() + sevRaw.slice(1);
   return {
     // Pass-through
     id: api.id,
@@ -95,7 +91,6 @@ function mapApiToUi(api) {
             (firstItem.repairNotes ? ` — ${firstItem.repairNotes}` : '')
           : firstItem.defectDescription)
       : null,
-    severity: sev,
     reportedBy: api.createdBy,
     notes: notesArr,
   };
@@ -142,7 +137,6 @@ function mapApiListToUi(apiList) {
       section: null,
       part: api.summary || `${api.itemCount} defect${api.itemCount === 1 ? '' : 's'}`,
       description: api.summary,
-      severity: 'Medium', // list view doesn't have severity inline; refined on expand
       reportedBy: api.createdBy,
       notes: notesArr,
     };
@@ -681,7 +675,6 @@ function WorkOrderCard({ wo, expanded, onToggle, userRole, onAction }) {
         </div>
         <div className="flex items-center justify-between text-xs text-navy-400">
           <div className="flex items-center gap-2 flex-wrap">
-            <Badge variant={SEVERITY_COLORS[wo.severity]}>{wo.severity}</Badge>
             {wo.assignedTechnician && (
               <span className="flex items-center gap-1 text-navy-300">
                 <User size={10} /> {wo.assignedTechnician}{isMyWO ? ' (you)' : ''}

@@ -86,12 +86,11 @@ export default function VehicleDetailPage({ vehicle, fleet, user, readOnly, onBa
   const mileageHistory = useMemo(() => buildMileageHistory(vehicle.fleetId, vehicle.mileage), [vehicle.fleetId, vehicle.mileage]);
 
   // Operational status
-  const opStatus = vehicle.grounded ? 'grounded' : vehicle.severity === 'critical' ? 'critical' : vehicle.severity === 'high' ? 'attention' : 'operational';
+  const opStatus = vehicle.grounded ? 'grounded' : (vehicle.defectCount || 0) > 0 ? 'attention' : 'operational';
   const opConfig = {
-    operational: { label: 'Operational',   color: 'text-accent-green',  dot: 'bg-accent-green',  icon: CheckCircle2 },
+    operational: { label: 'Operational',     color: 'text-accent-green',  dot: 'bg-accent-green',  icon: CheckCircle2 },
     attention:   { label: 'Needs attention', color: 'text-accent-orange', dot: 'bg-accent-orange', icon: AlertTriangle },
-    critical:    { label: 'Critical',       color: 'text-accent-red',    dot: 'bg-accent-red',    icon: AlertTriangle },
-    grounded:    { label: 'Grounded',       color: 'text-accent-red',    dot: 'bg-accent-red',    icon: Lock },
+    grounded:    { label: 'Grounded',        color: 'text-accent-red',    dot: 'bg-accent-red',    icon: Lock },
   }[opStatus];
   const OpIcon = opConfig.icon;
 

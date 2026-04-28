@@ -32,7 +32,6 @@ const daAwardStatus = {
   'DA-1007': true,
 };
 
-const severityColors = { Critical: 'red', High: 'orange', Medium: 'gold', Low: 'blue' };
 const defectStatusColors = { 'Rush Order': 'red', 'Scheduled': 'blue', 'Repair Ordered': 'green', 'Logged': 'gray' };
 
 // Detail data for each metric card
@@ -43,14 +42,14 @@ const cardDetails = {
     icon: Shield,
     summary: '8 defects reported across fleet — 1 is a rush order',
     items: [
-      { label: 'VAN-1042', title: 'Rear left tire — tread below 3/32"', meta: 'Marcus Johnson · 06:15 AM', status: 'Rush Order', severity: 'High' },
-      { label: 'VAN-1042', title: 'Brake light — passenger side out', meta: 'Marcus Johnson · 06:16 AM', status: 'Repair Ordered', severity: 'Medium' },
-      { label: 'VAN-2009', title: 'Minor scratch on driver door', meta: 'Ana Rodriguez · 06:05 AM', status: 'Scheduled', severity: 'Low' },
-      { label: 'VAN-5012', title: 'Grinding noise — front brakes', meta: 'Mia Thompson · 05:55 AM', status: 'Rush Order', severity: 'Critical' },
-      { label: 'VAN-3021', title: 'Coolant level low', meta: 'Destiny Brooks · 06:22 AM', status: 'Repair Ordered', severity: 'Medium' },
-      { label: 'VAN-1018', title: 'Crack spreading from chip — driver side', meta: 'Sarah Chen · 06:30 AM', status: 'Repair Ordered', severity: 'High' },
-      { label: 'VAN-5008', title: 'Passenger side mirror — loose housing', meta: 'David Kim · 06:10 AM', status: 'Logged', severity: 'Medium' },
-      { label: 'VAN-2015', title: 'Cargo door — stiff latch mechanism', meta: 'James Williams · 06:20 AM', status: 'Logged', severity: 'Low' },
+      { label: 'VAN-1042', title: 'Rear left tire — tread below 3/32"', meta: 'Marcus Johnson · 06:15 AM', status: 'Rush Order' },
+      { label: 'VAN-1042', title: 'Brake light — passenger side out', meta: 'Marcus Johnson · 06:16 AM', status: 'Repair Ordered' },
+      { label: 'VAN-2009', title: 'Minor scratch on driver door', meta: 'Ana Rodriguez · 06:05 AM', status: 'Scheduled' },
+      { label: 'VAN-5012', title: 'Grinding noise — front brakes', meta: 'Mia Thompson · 05:55 AM', status: 'Rush Order' },
+      { label: 'VAN-3021', title: 'Coolant level low', meta: 'Destiny Brooks · 06:22 AM', status: 'Repair Ordered' },
+      { label: 'VAN-1018', title: 'Crack spreading from chip — driver side', meta: 'Sarah Chen · 06:30 AM', status: 'Repair Ordered' },
+      { label: 'VAN-5008', title: 'Passenger side mirror — loose housing', meta: 'David Kim · 06:10 AM', status: 'Logged' },
+      { label: 'VAN-2015', title: 'Cargo door — stiff latch mechanism', meta: 'James Williams · 06:20 AM', status: 'Logged' },
     ],
   },
   immediate: {
@@ -59,16 +58,16 @@ const cardDetails = {
     icon: AlertTriangle,
     summary: '10 items pending approval to enroll in DVIC repair queue',
     items: [
-      { label: 'VAN-5012', title: 'Grinding noise — front brakes, feels spongy', meta: 'Critical · Mia Thompson',         status: 'Pending Approval', severity: 'Critical', section: '4. Back Side',      part: 'Brakes' },
-      { label: 'VAN-1042', title: 'Rear left tire — tread below 3/32"',         meta: 'High · Marcus Johnson',              status: 'Pending Approval', severity: 'High',     section: '4. Back Side',      part: 'Tire tread' },
-      { label: 'VAN-1018', title: 'Windshield crack spreading',                  meta: 'High · Sarah Chen',                  status: 'Pending Approval', severity: 'High',     section: '1. Front Side',     part: 'Windshield' },
-      { label: 'VAN-2027', title: 'ABS warning light active',                    meta: 'Critical · Tyler Nguyen',            status: 'Pending Approval', severity: 'Critical', section: '5. In-Cab',         part: 'Dashboard' },
-      { label: 'VAN-3044', title: 'Power steering fluid leak',                   meta: 'High · Kevin Park',                  status: 'Pending Approval', severity: 'High',     section: '1. Front Side',     part: 'Fluids' },
-      { label: 'VAN-4012', title: 'Rear brake pad wear indicator',               meta: 'Medium · Aaliyah Washington',        status: 'Pending Approval', severity: 'Medium',   section: '4. Back Side',      part: 'Brake pads' },
-      { label: 'VAN-5033', title: 'Headlight alignment out of spec',             meta: 'Medium · David Kim',                 status: 'Pending Approval', severity: 'Medium',   section: '1. Front Side',     part: 'Headlights' },
-      { label: 'VAN-1055', title: 'Wiper blades torn — driver side',             meta: 'Low · James Williams',               status: 'Pending Approval', severity: 'Low',      section: '1. Front Side',     part: 'Wiper blades' },
-      { label: 'VAN-2088', title: 'Seatbelt retractor slow',   meta: 'Medium · Sarah Chen',    status: 'Pending Approval', severity: 'Medium', section: '5. In-Cab',     part: 'Seat belts' },
-      { label: 'VAN-3099', title: 'Cargo light intermittent',  meta: 'Low · Destiny Brooks',   status: 'Pending Approval', severity: 'Low',    section: '4. Back Side',  part: 'Cargo light' },
+      { label: 'VAN-5012', title: 'Grinding noise — front brakes, feels spongy', meta: 'Mia Thompson',         status: 'Pending Approval', section: '4. Back Side',      part: 'Brakes' },
+      { label: 'VAN-1042', title: 'Rear left tire — tread below 3/32"',         meta: 'Marcus Johnson',              status: 'Pending Approval',     section: '4. Back Side',      part: 'Tire tread' },
+      { label: 'VAN-1018', title: 'Windshield crack spreading',                  meta: 'Sarah Chen',                  status: 'Pending Approval',     section: '1. Front Side',     part: 'Windshield' },
+      { label: 'VAN-2027', title: 'ABS warning light active',                    meta: 'Tyler Nguyen',            status: 'Pending Approval', section: '5. In-Cab',         part: 'Dashboard' },
+      { label: 'VAN-3044', title: 'Power steering fluid leak',                   meta: 'Kevin Park',                  status: 'Pending Approval',     section: '1. Front Side',     part: 'Fluids' },
+      { label: 'VAN-4012', title: 'Rear brake pad wear indicator',               meta: 'Aaliyah Washington',        status: 'Pending Approval',   section: '4. Back Side',      part: 'Brake pads' },
+      { label: 'VAN-5033', title: 'Headlight alignment out of spec',             meta: 'David Kim',                 status: 'Pending Approval',   section: '1. Front Side',     part: 'Headlights' },
+      { label: 'VAN-1055', title: 'Wiper blades torn — driver side',             meta: 'James Williams',               status: 'Pending Approval',      section: '1. Front Side',     part: 'Wiper blades' },
+      { label: 'VAN-2088', title: 'Seatbelt retractor slow',   meta: 'Sarah Chen',    status: 'Pending Approval', section: '5. In-Cab',     part: 'Seat belts' },
+      { label: 'VAN-3099', title: 'Cargo light intermittent',  meta: 'Destiny Brooks',   status: 'Pending Approval',    section: '4. Back Side',  part: 'Cargo light' },
     ],
   },
   inspected: {
@@ -77,20 +76,19 @@ const cardDetails = {
     icon: TrendingUp,
     summary: '23 inspected · 7 not inspected · 2 new to approve',
     // category → maps the inspecting vendor's specialty (AMR = Mechanical, Body = body work, etc.)
-    // severity → clean | low | medium | high | defective
     inspectedVans: [
-      { id: 'VAN-1042', vendor: 'ProFleet Auto Care',       tech: 'Carlos Mendez',  category: 'amr',       severity: 'high',      result: 'Flagged' },
-      { id: 'VAN-1018', vendor: 'ProFleet Auto Care',       tech: "Brian O'Connor", category: 'amr',       severity: 'clean',     result: 'Passed' },
-      { id: 'VAN-2009', vendor: 'Evergreen Body Works',     tech: 'Luis Ramirez',   category: 'body',      severity: 'low',       result: 'Passed' },
-      { id: 'VAN-2015', vendor: 'ProFleet Auto Care',       tech: 'Derek Hayes',    category: 'amr',       severity: 'clean',     result: 'Passed' },
-      { id: 'VAN-3021', vendor: 'ProFleet Auto Care',       tech: 'Jamal Foster',   category: 'amr',       severity: 'medium',    result: 'Passed' },
-      { id: 'VAN-3044', vendor: 'Evergreen Body Works',     tech: 'Marie Dubois',   category: 'body',      severity: 'low',       result: 'Passed' },
-      { id: 'VAN-4005', vendor: 'Discount Tire Commercial', tech: 'Alex Rivera',    category: 'tires',     severity: 'high',      result: 'Flagged' },
-      { id: 'VAN-4018', vendor: 'ProFleet Auto Care',       tech: 'Ivan Petrov',    category: 'amr',       severity: 'clean',     result: 'Passed' },
-      { id: 'VAN-5008', vendor: 'Spotless Mobile Detail',   tech: 'Jasmine Rhodes', category: 'detailing', severity: 'clean',     result: 'Passed' },
-      { id: 'VAN-5012', vendor: 'ProFleet Auto Care',       tech: 'Miguel Torres',  category: 'amr',       severity: 'defective', result: 'Flagged' },
-      { id: 'VAN-3077', vendor: 'Discount Tire Commercial', tech: 'Priya Shah',     category: 'tires',     severity: 'medium',    result: 'Passed' },
-      { id: 'VAN-2022', vendor: 'Spotless Mobile Detail',   tech: 'Nate Kim',       category: 'detailing', severity: 'clean',     result: 'Passed' },
+      { id: 'VAN-1042', vendor: 'ProFleet Auto Care',       tech: 'Carlos Mendez',  category: 'amr',      result: 'Flagged' },
+      { id: 'VAN-1018', vendor: 'ProFleet Auto Care',       tech: "Brian O'Connor", category: 'amr',     result: 'Passed' },
+      { id: 'VAN-2009', vendor: 'Evergreen Body Works',     tech: 'Luis Ramirez',   category: 'body',       result: 'Passed' },
+      { id: 'VAN-2015', vendor: 'ProFleet Auto Care',       tech: 'Derek Hayes',    category: 'amr',     result: 'Passed' },
+      { id: 'VAN-3021', vendor: 'ProFleet Auto Care',       tech: 'Jamal Foster',   category: 'amr',    result: 'Passed' },
+      { id: 'VAN-3044', vendor: 'Evergreen Body Works',     tech: 'Marie Dubois',   category: 'body',       result: 'Passed' },
+      { id: 'VAN-4005', vendor: 'Discount Tire Commercial', tech: 'Alex Rivera',    category: 'tires',      result: 'Flagged' },
+      { id: 'VAN-4018', vendor: 'ProFleet Auto Care',       tech: 'Ivan Petrov',    category: 'amr',     result: 'Passed' },
+      { id: 'VAN-5008', vendor: 'Spotless Mobile Detail',   tech: 'Jasmine Rhodes', category: 'detailing',     result: 'Passed' },
+      { id: 'VAN-5012', vendor: 'ProFleet Auto Care',       tech: 'Miguel Torres',  category: 'amr', result: 'Flagged' },
+      { id: 'VAN-3077', vendor: 'Discount Tire Commercial', tech: 'Priya Shah',     category: 'tires',    result: 'Passed' },
+      { id: 'VAN-2022', vendor: 'Spotless Mobile Detail',   tech: 'Nate Kim',       category: 'detailing',     result: 'Passed' },
     ],
     notInspectedVans: [
       { id: 'VAN-1099', reason: 'Missed — no DA assigned' },
@@ -115,8 +113,8 @@ const cardDetails = {
     //   'overnight' = expected to finish before dispatch time
     //   'shop'      = likely to exceed dispatch window
     scheduledItems: [
-      { fleetId: 'VAN-5012', scheduledAt: 'Tonight, Apr 15 · 22:00 – 02:00', vendor: 'AMR',          defect: 'Grinding noise — front brakes, feels spongy', severity: 'Critical', status: 'Rush Order', repairBucket: 'overnight' },
-      { fleetId: 'VAN-2009', scheduledAt: 'Tonight, Apr 15 · 20:00 – 23:00', vendor: 'Body Repairs', defect: 'Minor scratch on driver door',                severity: 'Low',      status: 'Scheduled',  repairBucket: 'shop' },
+      { fleetId: 'VAN-5012', scheduledAt: 'Tonight, Apr 15 · 22:00 – 02:00', vendor: 'AMR',          defect: 'Grinding noise — front brakes, feels spongy', status: 'Rush Order', repairBucket: 'overnight' },
+      { fleetId: 'VAN-2009', scheduledAt: 'Tonight, Apr 15 · 20:00 – 23:00', vendor: 'Body Repairs', defect: 'Minor scratch on driver door',      status: 'Scheduled',  repairBucket: 'shop' },
     ],
   },
 };
@@ -140,9 +138,7 @@ function ScheduledRepairItem({ item }) {
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-sm font-semibold text-white">{item.fleetId}</span>
-            <Badge variant={severityColors[item.severity]}>{item.severity}</Badge>
-            <Badge variant="gray">{item.vendor}</Badge>
+            <span className="text-sm font-semibold text-white">{item.fleetId}</span><Badge variant="gray">{item.vendor}</Badge>
           </div>
           <div className="flex items-center gap-1.5 text-xs text-navy-300">
             <Clock size={12} className="text-accent-blue" />
@@ -217,21 +213,11 @@ function ScheduledRepairItem({ item }) {
 }
 
 // ============ Inspected Detail — enhanced renderer for the 'inspected' card ============
-// Status is binary from the DSP's perspective: Clean or Defective. Granular
-// severity levels still drive row tint but the legend stays minimal.
-const INSPECTED_SEVERITY_LEGEND = [
+// Status is binary from the DSP's perspective: Clean or Defective.
+const INSPECTED_LEGEND = [
   { id: 'clean',     label: 'Clean',     color: 'text-accent-green', dot: 'bg-accent-green' },
   { id: 'defective', label: 'Defective', color: 'text-accent-red',   dot: 'bg-accent-red' },
 ];
-
-// Map the 5-level severity into the 2-state dot for row indicators
-const SEVERITY_TO_STATE = {
-  clean: 'clean',
-  low: 'clean',
-  medium: 'defective',
-  high: 'defective',
-  defective: 'defective',
-};
 
 const INSPECTOR_CATEGORIES = [
   { id: 'amr',       label: 'AMR',          description: 'Amazon Mechanical Repairs' },
@@ -240,12 +226,9 @@ const INSPECTOR_CATEGORIES = [
   { id: 'detailing', label: 'Detailing',    description: 'Cleaning / interior detail' },
 ];
 
-// Row backgrounds by severity / result
-const ROW_SEVERITY_STYLES = {
+// Row backgrounds by inspection result
+const ROW_RESULT_STYLES = {
   clean:     { bg: 'bg-accent-green/10 hover:bg-accent-green/15',   border: 'border-accent-green/30',  resultText: 'text-accent-green' },
-  low:       { bg: 'bg-accent-green/10 hover:bg-accent-green/15',   border: 'border-accent-green/30',  resultText: 'text-accent-green' },
-  medium:    { bg: 'bg-accent-gold/10 hover:bg-accent-gold/15',     border: 'border-accent-gold/30',   resultText: 'text-accent-gold' },
-  high:      { bg: 'bg-accent-orange/10 hover:bg-accent-orange/15', border: 'border-accent-orange/30', resultText: 'text-accent-orange' },
   defective: { bg: 'bg-accent-red/10 hover:bg-accent-red/15',       border: 'border-accent-red/40',    resultText: 'text-accent-red' },
 };
 
@@ -320,8 +303,8 @@ function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
   const now = new Date();
   const timeStr = now.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
   const total = inspected.length;
-  const withIssues = inspected.filter((v) => v.severity !== 'clean').length;
-  const critical = inspected.filter((v) => v.severity === 'defective' || v.severity === 'high').length;
+  const withIssues = inspected.filter((v) => v.result === 'Flagged').length;
+  const flaggedCount = inspected.filter((v) => v.result === 'Flagged').length;
   const incompleteCount = inspected.filter((v) => v.rawResult === 'incomplete').length;
   // Keys recorded — use real data if the parent passed it, else 0 (no mock fallback)
   const keysRecorded = data.keysRecordedReal ?? 0;
@@ -374,8 +357,7 @@ function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
         </div>
         <div className="text-[11px] text-navy-300">
           <span className="text-white font-semibold">{total}</span> vehicles &middot;{' '}
-          <span className="text-accent-orange font-semibold">{withIssues}</span> with issues &middot;{' '}
-          <span className="text-accent-red font-semibold">{critical}</span> critical
+          <span className="text-accent-orange font-semibold">{withIssues}</span> with issues
           {incompleteCount > 0 && (
             <>
               {' '}&middot;{' '}
@@ -385,10 +367,10 @@ function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
         </div>
       </div>
 
-      {/* Severity legend */}
+      {/* Result legend */}
       <div className="flex items-center gap-3 flex-wrap text-[11px]">
-        <span className="text-navy-500 uppercase tracking-wide font-semibold">Severity:</span>
-        {INSPECTED_SEVERITY_LEGEND.map((s) => (
+        <span className="text-navy-500 uppercase tracking-wide font-semibold">Status:</span>
+        {INSPECTED_LEGEND.map((s) => (
           <div key={s.id} className="flex items-center gap-1.5">
             <div className={`w-2.5 h-2.5 rounded-full ${s.dot}`} />
             <span className={s.color}>{s.label}</span>
@@ -432,22 +414,19 @@ function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
         </h4>
         <div className="space-y-1.5">
           {filteredInspected.map((v) => {
-            // Collapse granular severity into the 2-state (clean/defective) model used by the legend
-            const stateId = SEVERITY_TO_STATE[v.severity] || 'clean';
-            const sev = INSPECTED_SEVERITY_LEGEND.find((s) => s.id === stateId);
+            const flagged = v.result === 'Flagged';
+            const stateId = flagged ? 'defective' : 'clean';
+            const sev = INSPECTED_LEGEND.find((s) => s.id === stateId);
             const cat = INSPECTOR_CATEGORIES.find((c) => c.id === v.category);
-            const style = ROW_SEVERITY_STYLES[v.severity] || ROW_SEVERITY_STYLES.clean;
-            const flagged = v.result === 'Flagged' || v.severity === 'defective';
+            const style = ROW_RESULT_STYLES[stateId];
             // All rows are clickable now — clicking opens the Vehicle Report Card
             // where defects can be approved (→ Create WO) or rejected.
             const clickable = !!onOpenVehicleReport;
             // Use real defect count from API when present; fall back to a
-            // severity-based heuristic for legacy mock rows.
+            // count-based heuristic for legacy mock rows.
             const defectCount = typeof v.defectCount === 'number'
               ? v.defectCount
-              : v.severity === 'defective' ? 5
-              : v.severity === 'high' ? 3
-              : v.severity === 'medium' ? 2
+              : v.result === 'Flagged' ? 3 : v.result === 'Passed' ? 0
               : 0;
             const isIncomplete = v.rawResult === 'incomplete';
             return (
@@ -577,7 +556,7 @@ function ImmediateDetailRenderer({ items, onApprove, onReject }) {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span className="text-sm font-semibold text-white font-mono">{it.label}</span>
-                      {it.severity && <Badge variant={severityColors[it.severity]}>{it.severity}</Badge>}
+                      
                       {it.section && <Badge variant="gray">{it.section.split('. ')[1] || it.section}</Badge>}
                     </div>
                     <p className="text-sm text-navy-200">{it.title}</p>
@@ -689,11 +668,6 @@ function CardDetailModal({ cardKey, onClose, onOpenVehicleReport, onApproveDefec
   // This way the modal shows the same vans you just inspected via the wizard,
   // not the mock list.
   if (cardKey === 'inspected' && Array.isArray(liveInspected)) {
-    const RESULT_TO_SEVERITY = {
-      passed: 'clean',
-      conditional: 'medium',
-      flagged: 'high',
-    };
     const RESULT_TO_LABEL = {
       passed: 'Passed',
       conditional: 'Conditional',
@@ -730,7 +704,6 @@ function CardDetailModal({ cardKey, onClose, onOpenVehicleReport, onApproveDefec
         defectRejected: i.defectCountRejected ?? 0,
         result: RESULT_TO_LABEL[i.result] || i.result,
         rawResult: i.result,
-        severity: RESULT_TO_SEVERITY[i.result] || 'clean',
         keysReceived: i.keysReceived,
       })),
       // Real "not inspected" list: vans the tech flagged with a reason
@@ -804,7 +777,7 @@ function CardDetailModal({ cardKey, onClose, onOpenVehicleReport, onApproveDefec
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-sm font-semibold text-white">{it.label}</span>
-                        {it.severity && <Badge variant={severityColors[it.severity]}>{it.severity}</Badge>}
+                        
                       </div>
                       <p className="text-sm text-navy-200">{it.title}</p>
                       <p className="text-xs text-navy-400 mt-1">{it.meta}</p>
@@ -835,7 +808,6 @@ function CardDetailModal({ cardKey, onClose, onOpenVehicleReport, onApproveDefec
 }
 
 const CATEGORY_OPTIONS = ['Tires', 'Lights', 'Body', 'Brakes', 'Fluids', 'Windshield', 'Mirrors', 'Doors', 'Other'];
-const SEVERITY_OPTIONS = ['Low', 'Medium', 'High', 'Critical'];
 const STATUS_OPTIONS = ['Logged', 'Scheduled', 'Repair Ordered', 'Rush Order'];
 
 function CreateDefectModal({ onClose, onCreate }) {
@@ -844,7 +816,6 @@ function CreateDefectModal({ onClose, onCreate }) {
     van: '',
     reportedBy: '',
     category: '',
-    severity: 'Medium',
     desc: '',
     status: 'Logged',
     photo: false,
@@ -852,7 +823,7 @@ function CreateDefectModal({ onClose, onCreate }) {
   const [submitted, setSubmitted] = useState(false);
 
   const canNext1 = form.van.trim() && form.reportedBy.trim();
-  const canNext2 = form.category && form.severity && form.desc.trim();
+  const canNext2 = form.category && form.desc.trim();
 
   const handleSubmit = () => {
     onCreate({
@@ -860,7 +831,6 @@ function CreateDefectModal({ onClose, onCreate }) {
       da: form.reportedBy,
       van: form.van.toUpperCase().startsWith('VAN-') ? form.van.toUpperCase() : `VAN-${form.van}`,
       category: form.category,
-      severity: form.severity,
       desc: form.desc,
       reportedAt: new Date().toISOString(),
       status: form.status,
@@ -963,24 +933,6 @@ function CreateDefectModal({ onClose, onCreate }) {
                         {CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
                       </select>
                     </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-navy-300 mb-1.5">Severity *</label>
-                      <div className="grid grid-cols-2 gap-1">
-                        {SEVERITY_OPTIONS.map((s) => (
-                          <button
-                            key={s}
-                            onClick={() => setForm({ ...form, severity: s })}
-                            className={`px-2 py-1.5 rounded-md text-xs font-semibold border transition-colors cursor-pointer ${
-                              form.severity === s
-                                ? `bg-accent-${severityColors[s] === 'red' ? 'red' : severityColors[s] === 'orange' ? 'orange' : severityColors[s] === 'gold' ? 'gold' : 'blue'}/20 text-accent-${severityColors[s] === 'red' ? 'red' : severityColors[s] === 'orange' ? 'orange' : severityColors[s] === 'gold' ? 'gold' : 'blue'} border-accent-${severityColors[s] === 'red' ? 'red' : severityColors[s] === 'orange' ? 'orange' : severityColors[s] === 'gold' ? 'gold' : 'blue'}/50`
-                                : 'border-navy-700 text-navy-400 hover:text-white'
-                            }`}
-                          >
-                            {s}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-navy-300 mb-1.5">Description *</label>
@@ -1016,10 +968,6 @@ function CreateDefectModal({ onClose, onCreate }) {
                     <div className="flex justify-between text-sm">
                       <span className="text-navy-400">Driver:</span>
                       <span className="text-white font-semibold">{daList.find(d => d.id === form.reportedBy)?.name || '—'}</span>
-                    </div>
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="text-navy-400">Severity:</span>
-                      <Badge variant={severityColors[form.severity]} size="md">{form.severity}</Badge>
                     </div>
                     <div className="flex justify-between items-center text-sm">
                       <span className="text-navy-400">Category:</span>
@@ -1087,10 +1035,10 @@ function CreateDefectModal({ onClose, onCreate }) {
 
 // ============ QC Inspection Readiness — Daily Banner + Modal ============
 const INSPECTION_VEHICLES = [
-  { fleetId: 'VAN-5012', scheduledAt: 'Tonight, Apr 15 · 22:00 – 02:00', vendor: 'AMR', defect: 'Grinding noise — front brakes, feels spongy', severity: 'Critical', status: 'Rush Order' },
-  { fleetId: 'VAN-2009', scheduledAt: 'Tonight, Apr 15 · 20:00 – 23:00', vendor: 'Body Repairs', defect: 'Minor scratch on driver door', severity: 'Low', status: 'Scheduled' },
-  { fleetId: 'VAN-1042', scheduledAt: 'Tonight, Apr 15 · 21:00 – 23:30', vendor: 'AMR', defect: 'Rear left tire tread below 3/32"', severity: 'High', status: 'Scheduled' },
-  { fleetId: 'VAN-3021', scheduledAt: 'Tonight, Apr 15 · 19:30 – 21:00', vendor: 'AMR', defect: 'Coolant reservoir below min', severity: 'Medium', status: 'Scheduled' },
+  { fleetId: 'VAN-5012', scheduledAt: 'Tonight, Apr 15 · 22:00 – 02:00', vendor: 'AMR', defect: 'Grinding noise — front brakes, feels spongy', status: 'Rush Order' },
+  { fleetId: 'VAN-2009', scheduledAt: 'Tonight, Apr 15 · 20:00 – 23:00', vendor: 'Body Repairs', defect: 'Minor scratch on driver door', status: 'Scheduled' },
+  { fleetId: 'VAN-1042', scheduledAt: 'Tonight, Apr 15 · 21:00 – 23:30', vendor: 'AMR', defect: 'Rear left tire tread below 3/32"', status: 'Scheduled' },
+  { fleetId: 'VAN-3021', scheduledAt: 'Tonight, Apr 15 · 19:30 – 21:00', vendor: 'AMR', defect: 'Coolant reservoir below min', status: 'Scheduled' },
 ];
 
 const PREVIOUS_PENDING = [
@@ -1141,9 +1089,7 @@ function InspectionVehicleRow({ item }) {
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
-            <span className="text-sm font-semibold text-white">{item.fleetId}</span>
-            <Badge variant={severityColors[item.severity]}>{item.severity}</Badge>
-            <Badge variant="gray">{item.vendor}</Badge>
+            <span className="text-sm font-semibold text-white">{item.fleetId}</span><Badge variant="gray">{item.vendor}</Badge>
           </div>
           <div className="flex items-center gap-1.5 text-xs text-navy-300">
             <Clock size={12} className="text-accent-blue" />
@@ -1379,7 +1325,6 @@ const INSPECTION_FLEET = [
   { id: 'VAN-5012', model: '2023 Ford Transit 350',   dsp: 'Redmond Routes', dspId: 'DSP-4205', plate: 'WA-7R12-AZ', lastInspection: '2 days ago' },
 ];
 
-const SECTION_SEVERITY_OPTIONS = ['Low', 'Medium', 'High', 'Critical'];
 
 function InspectionSectionRow({ section, state, onStateChange }) {
   const isIssue = state?.status === 'issue';
@@ -1390,7 +1335,7 @@ function InspectionSectionRow({ section, state, onStateChange }) {
     const exists = current.find((d) => d.part === part);
     const next = exists
       ? current.filter((d) => d.part !== part)
-      : [...current, { part, severity: 'Medium', note: '' }];
+      : [...current, { part, note: '' }];
     onStateChange({ ...state, defects: next });
   };
 
@@ -1469,13 +1414,6 @@ function InspectionSectionRow({ section, state, onStateChange }) {
                     <div key={d.part} className="bg-navy-900/60 border border-navy-700/40 rounded-lg p-3">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-xs font-semibold text-white">{d.part}</span>
-                        <select
-                          value={d.severity}
-                          onChange={(e) => updateDefect(d.part, 'severity', e.target.value)}
-                          className="text-xs rounded-md px-2 py-1 bg-navy-800 border border-navy-700 text-white outline-none cursor-pointer"
-                        >
-                          {SECTION_SEVERITY_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-                        </select>
                       </div>
                       <input
                         type="text"
@@ -1816,7 +1754,7 @@ function StartInspectionModal({ user, onClose }) {
                         return (state?.defects || []).map((d) => (
                           <div key={`${secId}-${d.part}`} className="flex items-center justify-between text-xs py-1">
                             <span className="text-white">{sec?.name.split('. ')[1]} · {d.part}</span>
-                            <Badge variant={d.severity === 'Critical' ? 'red' : d.severity === 'High' ? 'orange' : d.severity === 'Medium' ? 'gold' : 'blue'}>{d.severity}</Badge>
+                            
                           </div>
                         ));
                       })}
@@ -2152,9 +2090,7 @@ function RepairHistoryModal({ repairedWOs, user, onClose }) {
                             <DetailBox label="Van" value={wo.vehicleId} />
                             <DetailBox label="Year/Model" value={`${wo.year} ${wo.make} ${wo.model}`} />
                             <DetailBox label="Plate" value={wo.plate} mono />
-                            <DetailBox label="RO Number" value={wo.roNumber} mono />
-                            <DetailBox label="Severity" badge={SEVERITY_COLORS[wo.severity]} badgeValue={wo.severity} />
-                            <DetailBox label="Mileage at completion" value={wo.lastMileage ? `${wo.lastMileage.toLocaleString()} mi` : '—'} />
+                            <DetailBox label="RO Number" value={wo.roNumber} mono /><DetailBox label="Mileage at completion" value={wo.lastMileage ? `${wo.lastMileage.toLocaleString()} mi` : '—'} />
                             <DetailBox label="Photos" value={wo.photos > 0 ? `${wo.photos} attached` : 'None'} />
                             <DetailBox label="FMC" value={wo.fmc} />
                           </div>
@@ -2193,7 +2129,6 @@ function RepairHistoryModal({ repairedWOs, user, onClose }) {
 }
 
 // Severity color helper (re-exports concept from WorkOrders)
-const SEVERITY_COLORS = { Low: 'blue', Medium: 'gold', High: 'orange', Critical: 'red' };
 
 function TimelineItem({ icon: Icon, color, label, time, detail }) {
   const colorClasses = {
@@ -2328,9 +2263,7 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onVi
             <tr className="text-navy-400 text-[10px] uppercase tracking-wide border-b border-navy-800">
               <th className="text-left px-4 py-2.5 font-semibold">Van</th>
               <th className="text-left px-4 py-2.5 font-semibold">Defect</th>
-              <th className="text-left px-4 py-2.5 font-semibold">Category</th>
-              <th className="text-left px-4 py-2.5 font-semibold">Severity</th>
-              <th className="text-left px-4 py-2.5 font-semibold">Reported by</th>
+              <th className="text-left px-4 py-2.5 font-semibold">Category</th><th className="text-left px-4 py-2.5 font-semibold">Reported by</th>
               <th className="text-left px-4 py-2.5 font-semibold">Status</th>
               <th className="text-right px-4 py-2.5 font-semibold">Actions</th>
             </tr>
@@ -2382,7 +2315,7 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onVi
                     </div>
                   </td>
                   <td className="px-4 py-2.5"><Badge variant="gray">{d.category}</Badge></td>
-                  <td className="px-4 py-2.5"><Badge variant={severityColors[d.severity]}>{d.severity}</Badge></td>
+                  <td className="px-4 py-2.5"></td>
                   <td className="px-4 py-2.5 text-[11px] text-navy-300">{da?.name || '—'}</td>
                   <td className="px-4 py-2.5"><Badge variant={defectStatusColors[d.status] || 'gray'}>{d.status}</Badge></td>
                   <td className="px-4 py-2.5">
@@ -2914,7 +2847,6 @@ export default function RealDVIC({ user }) {
                   section: item.section || '',
                   part: item.part || '',
                   description: item.title || '',
-                  severity: item.severity || 'Medium',
                 },
               });
             }}

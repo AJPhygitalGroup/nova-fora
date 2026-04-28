@@ -24,13 +24,6 @@ import {
   APIError,
 } from '../api/client';
 
-const SEVERITY_TINT = {
-  low: 'bg-accent-blue/15 border-accent-blue/40 text-accent-blue',
-  medium: 'bg-accent-gold/15 border-accent-gold/40 text-accent-gold',
-  high: 'bg-accent-orange/15 border-accent-orange/40 text-accent-orange',
-  critical: 'bg-accent-red/15 border-accent-red/40 text-accent-red',
-};
-
 export default function LiveInspectionReportCard({ inspection, user, onClose, onCreateWO }) {
   const [detail, setDetail] = useState(null);
   const [inspectionPhotos, setInspectionPhotos] = useState([]);
@@ -128,8 +121,6 @@ export default function LiveInspectionReportCard({ inspection, user, onClose, on
         section: defect.section,
         part: defect.part,
         description: defect.description,
-        severity:
-          defect.severity?.charAt(0).toUpperCase() + defect.severity?.slice(1),
       },
       defectId: defect.id,
     });
@@ -286,7 +277,6 @@ function formatDetailsSummary(details) {
 }
 
 function DefectRow({ defect, photos, action, canAct, onApprove, onReject }) {
-  const tint = SEVERITY_TINT[defect.severity] || SEVERITY_TINT.low;
   const isV2 = !!defect.isV2;
   const partHeader = isV2
     ? `${defect.partIcon || ''} ${defect.partLabel || defect.part}${defect.positionLabel ? ` (${defect.positionLabel})` : ''}`.trim()
@@ -313,9 +303,6 @@ function DefectRow({ defect, photos, action, canAct, onApprove, onReject }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             <span className="text-sm font-semibold text-white">{partHeader}</span>
-            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${tint} capitalize`}>
-              {defect.severity}
-            </span>
             <span className="text-[10px] text-navy-500 font-mono">{defect.id}</span>
           </div>
           <p className={`text-xs ${action === 'rejected' ? 'line-through text-navy-500' : 'text-navy-200'}`}>

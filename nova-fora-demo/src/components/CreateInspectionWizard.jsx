@@ -27,13 +27,6 @@ import {
 import PhotoUploader from './ui/PhotoUploader';
 import DefectWizard from './DefectWizard';
 
-const SEVERITY_TINT = {
-  low: 'bg-accent-blue/15 border-accent-blue/40 text-accent-blue',
-  medium: 'bg-accent-gold/15 border-accent-gold/40 text-accent-gold',
-  high: 'bg-accent-orange/15 border-accent-orange/40 text-accent-orange',
-  critical: 'bg-accent-red/15 border-accent-red/40 text-accent-red',
-};
-
 // (Legacy 11-section taxonomy + free-text severity picker were deprecated
 // in v2 of the defect schema — replaced by the catalog-driven DefectWizard.)
 
@@ -237,7 +230,6 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
         positionLabel: created.positionLabel,
         defectTypeLabel: created.defectTypeLabel,
         defectTypeIcon: created.defectTypeIcon,
-        severity: created.severity,
         // Backend mirror columns (used by photo uploader + reviews)
         section: created.section,
         description: created.description,
@@ -957,7 +949,6 @@ function Step5Defects({ inspectionId, defects, onOpenWizard, onRemoveDefect }) {
 }
 
 function V2DefectCard({ defect, onRemove }) {
-  const tint = SEVERITY_TINT[defect.severity] || SEVERITY_TINT.medium;
   const positionLine = defect.positionLabel ? ` (${defect.positionLabel})` : '';
   return (
     <div className="rounded-lg border border-navy-700 bg-navy-900/60 p-3">
@@ -968,9 +959,6 @@ function V2DefectCard({ defect, onRemove }) {
             <div className="flex items-center gap-2 mb-0.5 flex-wrap">
               <span className="text-sm font-semibold text-white">
                 {defect.partLabel || defect.part}{positionLine}
-              </span>
-              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${tint} capitalize`}>
-                {defect.severity}
               </span>
             </div>
             <p className="text-xs text-navy-300">
@@ -1066,12 +1054,6 @@ function Step6Review({ dsp, keysReceived, vehicle, odometer, defects, totalDefec
                       </span>
                       <span className="text-navy-500">·</span>
                       <span className="text-navy-300">{d.defectTypeLabel || ''}</span>
-                      <span className="text-navy-500">·</span>
-                      <span className={`capitalize ${
-                        d.severity === 'critical' ? 'text-accent-red' :
-                        d.severity === 'high' ? 'text-accent-orange' :
-                        d.severity === 'medium' ? 'text-accent-gold' : 'text-accent-blue'
-                      }`}>{d.severity}</span>
                     </li>
                   ))}
                 </ul>

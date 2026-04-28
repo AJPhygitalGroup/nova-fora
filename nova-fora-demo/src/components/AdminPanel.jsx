@@ -9,7 +9,7 @@ import {
   LifeBuoy, Gauge, MonitorSmartphone, ThermometerSun, HelpCircle, Zap as ZapIcon,
   Ban, CheckCheck, ExternalLink, UserCircle
 } from 'lucide-react';
-import { orgUsers, AVAILABLE_ROLES, rolesAssignableBy, preventiveMaintenanceJobs, pmIntervalsByVehicleType, VENDOR_SERVICES, DEFECT_CATEGORIES, SEVERITY_THRESHOLDS, fleetSnapshotVans, VENDOR_ASSIGNABLE_DSPS, dvicDefectCatalog, DVIC_TEMPLATES } from '../data/mockData';
+import { orgUsers, AVAILABLE_ROLES, rolesAssignableBy, preventiveMaintenanceJobs, pmIntervalsByVehicleType, VENDOR_SERVICES, DEFECT_CATEGORIES, fleetSnapshotVans, VENDOR_ASSIGNABLE_DSPS, dvicDefectCatalog, DVIC_TEMPLATES } from '../data/mockData';
 import Badge from './ui/Badge';
 
 const DEFECT_CATEGORY_ICONS = {
@@ -760,7 +760,7 @@ function OrganizationTab({ user }) {
           <input type="checkbox" checked={form.slackIntegration} onChange={() => setForm({ ...form, slackIntegration: !form.slackIntegration })} className="mt-1 w-5 h-5" />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1"><MessageSquare size={14} className="text-accent-green" /><span className="text-sm font-semibold text-white">Slack Integration</span></div>
-            <div className="text-[11px] text-navy-400">Mirror critical alerts (Rush Orders, Grounded Vehicles, Completions) into a Slack channel</div>
+            <div className="text-[11px] text-navy-400">Mirror priority alerts (Rush Orders, Grounded Vehicles, Completions) into a Slack channel</div>
             <AnimatePresence initial={false}>
               {form.slackIntegration && (
                 <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
@@ -1226,13 +1226,12 @@ function AddCustomDefectModal({ template, onSubmit, onClose }) {
 // Tab: Defect Rules — Auto-approval by category (DSP Owner only)
 // ============================================================
 function DefectRulesTab({ user }) {
-  // State: for each category, rule is { enabled: bool, threshold: 'none'|'low'|'low_medium'|'all', maxCost: number|null }
+  // State: for each category, rule is { enabled: bool, maxCost: number|null }
   const [rules, setRules] = useState(() => {
     const out = {};
     DEFECT_CATEGORIES.forEach((c) => {
       out[c.id] = {
         enabled: c.defaultOn,
-        threshold: c.defaultThreshold,
         maxCost: null,
       };
     });
@@ -1246,7 +1245,7 @@ function DefectRulesTab({ user }) {
     setRules({ ...rules, [catId]: { ...rules[catId], ...changes } });
   };
 
-  const autoApprovedCount = Object.values(rules).filter((r) => r.enabled && r.threshold !== 'none').length;
+  const autoApprovedCount = Object.values(rules).filter((r) => r.enabled).length;
   const totalCategories = DEFECT_CATEGORIES.length;
 
   // Quick presets — scoped to different vehicle-class cohorts
@@ -1256,14 +1255,14 @@ function DefectRulesTab({ user }) {
       if (preset === 'conservative') {
         // Branded ULCs only — Amazon-managed fleet, lowest-risk categories only
         const safe = ['wipers', 'emergency', 'fluids'].includes(c.id);
-        next[c.id] = { enabled: safe, threshold: safe ? 'low' : 'none', maxCost: null };
+        next[c.id] = { enabled: safe, maxCost: null };
       } else if (preset === 'balanced') {
         // All AMR — mechanical repair scope under the primary AMR vendor
-        next[c.id] = { enabled: c.defaultOn, threshold: c.defaultThreshold, maxCost: null };
+        next[c.id] = { enabled: c.defaultOn, maxCost: null };
       } else if (preset === 'comprehensive') {
         // Branded & Rentals — broadest auto-approval; only the heaviest body/glass jobs stay manual
         const major = ['body', 'windshield'].includes(c.id);
-        next[c.id] = { enabled: !major, threshold: major ? 'none' : 'low_medium', maxCost: null };
+        next[c.id] = { enabled: !major, maxCost: null };
       }
     });
     setRules(next);
@@ -1376,7 +1375,7 @@ function DefectRulesTab({ user }) {
       <div className="bg-navy-900/60 border border-navy-700/40 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-navy-800 bg-navy-950/40">
           <h4 className="text-sm font-semibold text-white">Category-by-category rules</h4>
-          <p className="text-[11px] text-navy-400">Toggle auto-approval + choose severity threshold per category</p>
+          <p className="text-[11px] text-navy-400">Toggle auto-approval per defect category</p>
         </div>
         <div className="divide-y divide-navy-800/60">
           {DEFECT_CATEGORIES.map((cat) => {
@@ -1394,7 +1393,7 @@ function DefectRulesTab({ user }) {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                         <span className="text-sm font-semibold text-white">{cat.label}</span>
-                        {rule.enabled && rule.threshold !== 'none' && (
+                        {rule.enabled && (
                           <Badge variant="green"><CheckCheck size={9} className="inline mr-0.5" /> Auto</Badge>
                         )}
                         {!rule.enabled && <Badge variant="gray">Manual</Badge>}
@@ -1405,7 +1404,7 @@ function DefectRulesTab({ user }) {
                   </div>
                   {/* Toggle switch */}
                   <button
-                    onClick={() => updateRule(cat.id, { enabled: !rule.enabled, threshold: !rule.enabled ? (cat.defaultThreshold === 'none' ? 'low' : cat.defaultThreshold) : 'none' })}
+                    onClick={() => updateRule(cat.id, { enabled: !rule.enabled })}
                     className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${
                       rule.enabled ? 'bg-accent-green' : 'bg-navy-700'
                     }`}
@@ -1417,35 +1416,6 @@ function DefectRulesTab({ user }) {
                   </button>
                 </div>
 
-                {/* Severity threshold + cost — only when enabled */}
-                <AnimatePresence>
-                  {rule.enabled && (
-                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-                      className="pl-12 overflow-hidden">
-                      <div className="flex items-center gap-1.5 flex-wrap pt-2">
-                        {SEVERITY_THRESHOLDS.filter((t) => t.id !== 'none').map((t) => {
-                          const active = rule.threshold === t.id;
-                          return (
-                            <button key={t.id} onClick={() => updateRule(cat.id, { threshold: t.id })}
-                              className={`px-3 py-1.5 rounded-full text-[11px] font-semibold border transition-all cursor-pointer ${
-                                active
-                                  ? 'bg-accent-green/20 border-accent-green/50 text-accent-green'
-                                  : 'bg-navy-800 border-navy-700 text-navy-300 hover:border-navy-600 hover:text-white'
-                              }`}
-                              title={t.description}
-                            >
-                              {active && <Check size={10} className="inline mr-0.5" />}
-                              {t.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <div className="mt-2 text-[10px] text-navy-400">
-                        {SEVERITY_THRESHOLDS.find((t) => t.id === rule.threshold)?.description}
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
               </div>
             );
           })}

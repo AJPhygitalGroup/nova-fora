@@ -21,7 +21,7 @@ const severityIcons = {
 
 function PaveScoreIndicator({ score }) {
   const color = score >= 80 ? '#ef4444' : score >= 50 ? '#f59e0b' : '#22c55e';
-  const label = score >= 80 ? 'Critical' : score >= 50 ? 'Moderate' : 'Minor';
+  const label = score >= 80 ? 'Severe' : score >= 50 ? 'Moderate' : 'Minor';
   return (
     <div className="flex items-center gap-2">
       <div className="w-24 h-2 rounded-full bg-navy-700 overflow-hidden">
@@ -484,7 +484,7 @@ export default function BodyRepairs() {
           </div>
           <ul className="space-y-2 text-xs text-navy-300">
             <li className="flex items-start gap-2"><Zap size={12} className="text-accent-purple mt-0.5 shrink-0" /> Instant photo-based damage scoring</li>
-            <li className="flex items-start gap-2"><Eye size={12} className="text-accent-purple mt-0.5 shrink-0" /> Identify critical vs cosmetic damage automatically</li>
+            <li className="flex items-start gap-2"><Eye size={12} className="text-accent-purple mt-0.5 shrink-0" /> Identify structural vs cosmetic damage automatically</li>
             <li className="flex items-start gap-2"><DollarSign size={12} className="text-accent-purple mt-0.5 shrink-0" /> Accurate repair estimates in seconds</li>
           </ul>
         </motion.div>

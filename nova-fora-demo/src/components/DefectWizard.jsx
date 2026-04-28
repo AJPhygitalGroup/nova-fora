@@ -5,9 +5,9 @@
  *   1. System  (13 tiles, emoji + label)
  *   2. Part    (filtered + grouped per system)
  *   3. Position (only if part requires)              ← auto-skip otherwise
- *   4. Defect type (filtered, with severity badges)
+ *   4. Defect type (filtered)
  *   5. Details (only if defect_type requires_details) ← auto-skip otherwise
- *   6. Review  (notes + severity override + commit)
+ *   6. Review  (notes + commit)
  *
  * Used inside CreateInspectionWizard step 5: when the tech taps '+ Add defect',
  * this opens on top. On commit, the resulting defect is added to the
@@ -23,13 +23,6 @@ import {
   ClipboardList, ChevronRight,
 } from 'lucide-react';
 import { catalog as catalogApi, inspections as inspectionsApi, APIError } from '../api/client';
-
-const SEVERITY_TINT = {
-  low: 'bg-accent-blue/15 border-accent-blue/40 text-accent-blue',
-  medium: 'bg-accent-gold/15 border-accent-gold/40 text-accent-gold',
-  high: 'bg-accent-orange/15 border-accent-orange/40 text-accent-orange',
-  critical: 'bg-accent-red/15 border-accent-red/40 text-accent-red',
-};
 
 // Subheading labels for display_group keys (per Notion spec §3 visual grouping)
 const GROUP_LABELS = {
@@ -67,7 +60,6 @@ export default function DefectWizard({ inspectionId, onCommitted, onCancel }) {
   const [defectType, setDefectType] = useState(null);
   const [details, setDetails] = useState({});
   const [notes, setNotes] = useState('');
-  const [severityOverride, setSeverityOverride] = useState(null); // null = use default
 
   // Catalog
   const [cat, setCat] = useState(null);
@@ -93,7 +85,6 @@ export default function DefectWizard({ inspectionId, onCommitted, onCancel }) {
   const positionRequired = part?.positionRequired;
   const hasPositions = (part?.validPositions?.length || 0) > 0;
   const requiresDetails = !!defectType?.requiresDetails;
-  const effectiveSeverity = severityOverride || defectType?.defaultSeverity || 'medium';
 
   // Step transitions
   const canNextStep = (s) => {
@@ -143,9 +134,6 @@ export default function DefectWizard({ inspectionId, onCommitted, onCancel }) {
       };
       if (position) body.position = position.id;
       if (notes.trim()) body.notes = notes.trim();
-      if (severityOverride && severityOverride !== defectType.defaultSeverity) {
-        body.severityOverride = severityOverride;
-      }
       const created = await inspectionsApi.addDefect(inspectionId, body);
       onCommitted?.({
         ...created,
@@ -155,7 +143,6 @@ export default function DefectWizard({ inspectionId, onCommitted, onCancel }) {
         positionLabel: position?.label,
         defectTypeLabel: defectType.label,
         defectTypeIcon: defectType.icon,
-        severity: effectiveSeverity,
       });
     } catch (err) {
       setSubmitError(err instanceof APIError ? err.detail : 'Submit failed');
@@ -247,9 +234,6 @@ export default function DefectWizard({ inspectionId, onCommitted, onCancel }) {
             details={details}
             notes={notes}
             onNotesChange={setNotes}
-            severityOverride={severityOverride}
-            onSeverityOverrideChange={setSeverityOverride}
-            effectiveSeverity={effectiveSeverity}
             submitError={submitError}
           />
         )}
@@ -479,7 +463,7 @@ function PositionTile({ pos, value, onChange, icon }) {
 }
 
 // ─────────────────────────────────────────────────────
-// Step 4 — Defect type picker (rows with severity badges)
+// Step 4 — Defect type picker
 // ─────────────────────────────────────────────────────
 function TypePicker({ part, value, onChange }) {
   const types = part.defectTypes || [];
@@ -487,7 +471,6 @@ function TypePicker({ part, value, onChange }) {
     <div className="space-y-1.5">
       {types.map((t) => {
         const selected = value?.id === t.id;
-        const tint = SEVERITY_TINT[t.defaultSeverity] || SEVERITY_TINT.medium;
         return (
           <button
             key={t.id}
@@ -505,9 +488,6 @@ function TypePicker({ part, value, onChange }) {
                 <div className="text-[10px] text-navy-400">Has follow-up details</div>
               )}
             </div>
-            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${tint} shrink-0 capitalize`}>
-              {t.defaultSeverity}
-            </span>
             {selected && <ChevronRight size={14} className="text-accent-blue shrink-0" />}
           </button>
         );
@@ -551,7 +531,7 @@ function DetailsForm({ part, defectType, value, onChange }) {
             })}
           </div>
           <p className="text-[11px] text-navy-500 mt-2">
-            DOT minimum: 4/32 for steer tires, 2/32 for others. Lower values escalate severity.
+            DOT minimum: 4/32 for steer tires, 2/32 for others.
           </p>
         </div>
       </div>
@@ -709,11 +689,9 @@ function validateDetails(defectType, details) {
 // Step 6 — Review + commit
 // ─────────────────────────────────────────────────────
 function ReviewStep({
-  part, position, defectType, details, notes, onNotesChange,
-  severityOverride, onSeverityOverrideChange, effectiveSeverity, submitError,
+  part, position, defectType, details, notes, onNotesChange, submitError,
 }) {
   const summary = humanSummary(part, position, defectType, details);
-  const tint = SEVERITY_TINT[effectiveSeverity] || SEVERITY_TINT.medium;
 
   return (
     <div className="space-y-4">
@@ -722,47 +700,11 @@ function ReviewStep({
         <div className="flex items-start gap-3">
           <span className="text-3xl shrink-0">{defectType?.icon}</span>
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <div className="mb-1 flex items-center gap-2 flex-wrap">
               <span className="text-base font-semibold text-white">{defectType?.label}</span>
-              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${tint} capitalize`}>
-                {effectiveSeverity}
-              </span>
             </div>
             <p className="text-sm text-navy-200">{summary}</p>
           </div>
-        </div>
-      </div>
-
-      {/* Severity override */}
-      <div>
-        <label className="text-[10px] uppercase tracking-wide text-navy-400 block mb-2">
-          Severity (default: {defectType?.defaultSeverity})
-        </label>
-        <div className="flex flex-wrap gap-1.5">
-          <button
-            onClick={() => onSeverityOverrideChange(null)}
-            className={`px-3 py-1.5 rounded-md border text-[11px] font-semibold cursor-pointer ${
-              severityOverride == null
-                ? 'bg-accent-blue/20 border-accent-blue/50 text-accent-blue'
-                : 'bg-navy-800 border-navy-700 text-navy-300 hover:text-white'
-            }`}
-          >
-            Default
-          </button>
-          {['low', 'medium', 'high', 'critical'].map((sev) => {
-            const selected = severityOverride === sev;
-            return (
-              <button
-                key={sev}
-                onClick={() => onSeverityOverrideChange(sev)}
-                className={`px-3 py-1.5 rounded-md border text-[11px] font-semibold cursor-pointer capitalize ${
-                  selected ? SEVERITY_TINT[sev] : 'bg-navy-800 border-navy-700 text-navy-300 hover:text-white'
-                }`}
-              >
-                {sev}
-              </button>
-            );
-          })}
         </div>
       </div>
 

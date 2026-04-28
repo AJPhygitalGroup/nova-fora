@@ -65,7 +65,7 @@ function enrichVehicle(v) {
 function fromApiVehicle(v) {
   // API returns (camelCase via snakeToCamel): id (VAN-XXXX), dspId, dsp,
   // fleetId, vin, plate, year, make, model, mileage, grounded, groundedReason,
-  // defectCount, severity, lastInspected, photos, isActive.
+  // defectCount, lastInspected, photos, isActive.
   const CLASS_DEFAULTS = ['Branded Cargo', 'Rental', 'Owned'];
   const FMC_DEFAULTS = ['Wheels', 'Element', 'Rented/Owned'];
   const seed = parseInt(String(v.id).replace(/\D/g, ''), 10) || 0;
@@ -89,7 +89,6 @@ function fromApiVehicle(v) {
     isActive: v.isActive ?? true,
     // Derived (stubbed until inspections are live)
     defectCount: v.defectCount ?? 0,
-    severity: v.severity || 'clean',
     lastInspected: v.lastInspected || 'Never',
     photos: v.photos ?? 0,
     inspector: v.inspector || '—',
@@ -730,12 +729,8 @@ function VehicleTable({ vans, isVendor, canEdit, onRowClick, onCopy, copiedId, o
             <td className="px-4 py-3"><Badge variant={v.vehicleClass === 'Rental' ? 'purple' : v.vehicleClass === 'Owned' ? 'blue' : 'gold'}>{v.vehicleClass}</Badge></td>
             <td className="px-4 py-3 text-sm text-navy-300">{v.fmc}</td>
             <td className="px-4 py-3">
-              {v.severity === 'clean' ? (
+              {v.defectCount === 0 ? (
                 <Badge variant="green"><CheckCircle2 size={9} className="inline mr-0.5" /> Clean</Badge>
-              ) : v.severity === 'critical' ? (
-                <Badge variant="red">{v.defectCount} defects</Badge>
-              ) : v.severity === 'high' ? (
-                <Badge variant="orange">{v.defectCount} defects</Badge>
               ) : (
                 <Badge variant="gold">{v.defectCount} {v.defectCount === 1 ? 'defect' : 'defects'}</Badge>
               )}
@@ -773,8 +768,9 @@ function VehicleCardMobile({ v, onClick, onCopy, copiedId, isVendor, showDsp, on
       <button onClick={onClick} className="w-full text-left">
         <div className="flex items-center justify-between mb-1 gap-2">
           <span className="text-sm font-semibold text-white">{v.fleetId}</span>
-          {v.severity === 'clean' ? <Badge variant="green"><CheckCircle2 size={9} className="inline mr-0.5" /> Clean</Badge>
-            : <Badge variant={v.severity === 'critical' ? 'red' : v.severity === 'high' ? 'orange' : 'gold'}>{v.defectCount} defect{v.defectCount > 1 ? 's' : ''}</Badge>}
+          {v.defectCount === 0
+            ? <Badge variant="green"><CheckCircle2 size={9} className="inline mr-0.5" /> Clean</Badge>
+            : <Badge variant="gold">{v.defectCount} defect{v.defectCount > 1 ? 's' : ''}</Badge>}
         </div>
         {showDsp && <div className="text-[11px] text-accent-blue font-medium mb-1">{v.dsp}</div>}
         <div className="text-xs text-white mb-0.5">{v.year} {v.make} {v.model}</div>
@@ -982,7 +978,6 @@ export default function MyVehicles({ user }) {
         dspId: user?.orgId || 'DSP-4201',
         dsp: user?.org || 'Unknown',
         defectCount: 0,
-        severity: 'clean',
         lastInspected: 'Never',
         inspector: '—',
         grounded: false,

@@ -9,12 +9,6 @@ import { defects as defectsApi, vehicles as vehiclesApi, APIError } from '../api
 // ─────────────────────────────────────────────────────
 // Transform API defect -> shape expected by TodaysDefectsTable
 // ─────────────────────────────────────────────────────
-const SEVERITY_TO_LABEL = {
-  critical: 'Critical',
-  high: 'High',
-  medium: 'Medium',
-  low: 'Low',
-};
 
 // Map API workflow status to the display label the existing component renders.
 const STATUS_TO_LABEL = {
@@ -70,7 +64,6 @@ function fromApiDefect(d) {
     // Legacy single-line fallback (kept for backward-compat with table rendering)
     desc: line2 || d.description || '',
     category: d.category || d.section || '—',
-    severity: SEVERITY_TO_LABEL[d.severity] || d.severity,
     status: STATUS_TO_LABEL[d.status] || d.status,
     da: d.reportedBy || '—',
     photo: (d.photoCount || 0) > 0,
@@ -78,7 +71,6 @@ function fromApiDefect(d) {
     isV2,
     // Raw fields for any debug / advanced UI
     _rawStatus: d.status,
-    _rawSeverity: d.severity,
     _fleetId: d.fleetId,
   };
 }
@@ -97,7 +89,6 @@ function fromApiVehicleForModal(v) {
     make: v.make,
     mileage: v.mileage || 0,
     defectCount: v.defectCount ?? 0,
-    severity: v.severity || 'clean',
     grounded: !!v.grounded,
   };
 }
@@ -172,7 +163,6 @@ export default function Defects({ user }) {
         section: d.category || '',
         part: d.category || '',
         description: d.desc,
-        severity: d.severity,
       },
       defectId: d.id,
     });
