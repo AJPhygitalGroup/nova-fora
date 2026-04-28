@@ -1,10 +1,11 @@
 import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Bell, X, CheckCheck, AlertTriangle, Flame, CheckCircle2, Clock, Wrench,
-  Lock, Briefcase, Inbox, MailOpen, Filter, PlayCircle
+  Bell, X, AlertTriangle, Flame, CheckCircle2, Clock, Wrench,
+  Lock, Briefcase, Inbox, MailOpen, PlayCircle, Gift
 } from 'lucide-react';
 import { notificationsSeed } from '../data/mockData';
+import Rewards from './Rewards';
 
 const NOTIF_ICONS = {
   wo_completed:     { Icon: CheckCircle2, label: 'Work order completed' },
@@ -43,6 +44,10 @@ function formatRelative(dateStr) {
 }
 
 export default function NotificationsPanel({ user, open, onClose }) {
+  // Top-level panel tab: vendor notifications | rewards
+  const [panelTab, setPanelTab] = useState('vendor');
+
+  // Vendor-side notifications (work orders + QC DVIC related)
   const [notifs, setNotifs] = useState(() => notificationsSeed.filter((n) => n.userId === user?.id));
   const [filter, setFilter] = useState('all'); // all | unread
 
@@ -74,109 +79,152 @@ export default function NotificationsPanel({ user, open, onClose }) {
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
             transition={{ type: 'spring', damping: 32, stiffness: 280 }}
-            className="fixed top-0 right-0 bottom-0 w-full sm:w-[420px] bg-navy-900 border-l border-navy-700 z-50 flex flex-col shadow-2xl">
+            className="fixed top-0 right-0 bottom-0 w-full sm:w-[460px] bg-navy-900 border-l border-navy-700 z-50 flex flex-col shadow-2xl">
 
             {/* Header */}
             <div className="px-4 sm:px-5 py-4 border-b border-navy-800 bg-navy-950/40">
               <div className="flex items-center justify-between gap-2 mb-3">
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-9 h-9 rounded-lg bg-accent-blue/15 border border-accent-blue/40 flex items-center justify-center shrink-0">
-                    <Bell size={16} className="text-accent-blue" />
+                  <div className={`w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 transition-colors ${
+                    panelTab === 'rewards'
+                      ? 'bg-accent-gold/15 border-accent-gold/40'
+                      : 'bg-accent-blue/15 border-accent-blue/40'
+                  }`}>
+                    {panelTab === 'rewards'
+                      ? <Gift size={16} className="text-accent-gold" />
+                      : <Bell size={16} className="text-accent-blue" />}
                   </div>
                   <div>
-                    <h3 className="text-base font-semibold text-white">Notifications</h3>
+                    <h3 className="text-base font-semibold text-white">
+                      {panelTab === 'rewards' ? 'Rewards' : 'Notifications'}
+                    </h3>
                     <p className="text-[11px] text-navy-400">
-                      {unreadCount > 0 ? <><span className="text-white font-semibold">{unreadCount}</span> unread of {notifs.length}</> : 'All caught up'}
+                      {panelTab === 'rewards'
+                        ? 'DA performance · DSP loyalty'
+                        : (unreadCount > 0
+                          ? <><span className="text-white font-semibold">{unreadCount}</span> unread of {notifs.length}</>
+                          : 'All caught up')}
                     </p>
                   </div>
                 </div>
                 <button onClick={onClose} className="text-navy-400 hover:text-white p-2 -mr-2"><X size={20} /></button>
               </div>
 
-              {/* Filters + bulk actions */}
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1 rounded-lg bg-navy-800 border border-navy-700 p-0.5">
-                  <button onClick={() => setFilter('all')}
-                    className={`px-3 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer ${filter === 'all' ? 'bg-navy-700 text-white' : 'text-navy-400 hover:text-white'}`}>
-                    All ({notifs.length})
-                  </button>
-                  <button onClick={() => setFilter('unread')}
-                    className={`px-3 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer ${filter === 'unread' ? 'bg-navy-700 text-white' : 'text-navy-400 hover:text-white'}`}>
-                    Unread ({unreadCount})
-                  </button>
-                </div>
-                {notifs.length > 0 && (
-                  <div className="flex items-center gap-1">
-                    {unreadCount > 0 && (
-                      <button onClick={markAllAsRead}
-                        className="text-[11px] text-accent-blue hover:underline font-medium px-2 py-1 cursor-pointer">
-                        Mark all read
-                      </button>
-                    )}
-                    <button onClick={dismissAll}
-                      className="text-[11px] text-accent-red hover:underline font-medium px-2 py-1 cursor-pointer">
-                      Clear all
+              {/* Top-level tabs: Vendor Notifications | Rewards */}
+              <div className="flex items-center gap-1 rounded-lg bg-navy-800 border border-navy-700 p-0.5 mb-3">
+                <button onClick={() => setPanelTab('vendor')}
+                  className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+                    panelTab === 'vendor' ? 'bg-navy-700 text-white' : 'text-navy-400 hover:text-white'
+                  }`}>
+                  <Bell size={12} />
+                  Vendor Notifications
+                  {unreadCount > 0 && (
+                    <span className="ml-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-accent-red text-white text-[10px] font-bold flex items-center justify-center">
+                      {unreadCount}
+                    </span>
+                  )}
+                </button>
+                <button onClick={() => setPanelTab('rewards')}
+                  className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+                    panelTab === 'rewards' ? 'bg-navy-700 text-white' : 'text-navy-400 hover:text-white'
+                  }`}>
+                  <Gift size={12} />
+                  Rewards
+                </button>
+              </div>
+
+              {/* Filters + bulk actions — only on vendor notifications tab */}
+              {panelTab === 'vendor' && (
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1 rounded-lg bg-navy-800 border border-navy-700 p-0.5">
+                    <button onClick={() => setFilter('all')}
+                      className={`px-3 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer ${filter === 'all' ? 'bg-navy-700 text-white' : 'text-navy-400 hover:text-white'}`}>
+                      All ({notifs.length})
+                    </button>
+                    <button onClick={() => setFilter('unread')}
+                      className={`px-3 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer ${filter === 'unread' ? 'bg-navy-700 text-white' : 'text-navy-400 hover:text-white'}`}>
+                      Unread ({unreadCount})
                     </button>
                   </div>
-                )}
-              </div>
+                  {notifs.length > 0 && (
+                    <div className="flex items-center gap-1">
+                      {unreadCount > 0 && (
+                        <button onClick={markAllAsRead}
+                          className="text-[11px] text-accent-blue hover:underline font-medium px-2 py-1 cursor-pointer">
+                          Mark all read
+                        </button>
+                      )}
+                      <button onClick={dismissAll}
+                        className="text-[11px] text-accent-red hover:underline font-medium px-2 py-1 cursor-pointer">
+                        Clear all
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
-            {/* List */}
+            {/* Body */}
             <div className="flex-1 overflow-y-auto">
-              {visible.length === 0 ? (
-                <div className="text-center py-20 px-6">
-                  <Inbox size={40} className="text-navy-600 mx-auto mb-3" />
-                  <h4 className="text-sm font-semibold text-white mb-1">
-                    {filter === 'unread' ? 'No unread notifications' : 'You\'re all caught up'}
-                  </h4>
-                  <p className="text-xs text-navy-400">
-                    {filter === 'unread' ? 'Switch to "All" to see previous notifications' : 'New events will appear here'}
-                  </p>
-                </div>
+              {panelTab === 'vendor' ? (
+                visible.length === 0 ? (
+                  <div className="text-center py-20 px-6">
+                    <Inbox size={40} className="text-navy-600 mx-auto mb-3" />
+                    <h4 className="text-sm font-semibold text-white mb-1">
+                      {filter === 'unread' ? 'No unread notifications' : 'You\'re all caught up'}
+                    </h4>
+                    <p className="text-xs text-navy-400">
+                      {filter === 'unread' ? 'Switch to "All" to see previous notifications' : 'New events will appear here'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-navy-800/60">
+                    {visible.map((n) => {
+                      const meta = NOTIF_ICONS[n.type] || { Icon: Bell, label: 'Notification' };
+                      const Icon = meta.Icon;
+                      const colorClass = COLOR_CLASSES[n.iconColor] || COLOR_CLASSES['accent-blue'];
+                      return (
+                        <motion.div
+                          key={n.id}
+                          layout
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          onClick={() => !n.read && markAsRead(n.id)}
+                          className={`relative px-4 sm:px-5 py-3 transition-colors cursor-pointer ${
+                            n.read ? 'hover:bg-navy-800/30' : 'bg-navy-800/20 hover:bg-navy-800/50'
+                          }`}>
+                          {!n.read && <div className="absolute left-1 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-accent-blue" />}
+                          <div className="flex items-start gap-3">
+                            <div className={`w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 ${colorClass}`}>
+                              <Icon size={14} />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className={`text-sm font-semibold mb-0.5 ${n.read ? 'text-navy-300' : 'text-white'}`}>
+                                {n.title}
+                              </div>
+                              <p className={`text-xs ${n.read ? 'text-navy-500' : 'text-navy-300'} line-clamp-2`}>
+                                {n.message}
+                              </p>
+                              <div className="flex items-center gap-2 mt-1.5 text-[10px] text-navy-500">
+                                <span>{formatRelative(n.createdAt)}</span>
+                                {n.relatedId && <><span>·</span><span className="font-mono text-accent-blue">{n.relatedId}</span></>}
+                              </div>
+                            </div>
+                          </div>
+                        </motion.div>
+                      );
+                    })}
+                  </div>
+                )
               ) : (
-                <div className="divide-y divide-navy-800/60">
-                  {visible.map((n) => {
-                    const meta = NOTIF_ICONS[n.type] || { Icon: Bell, label: 'Notification' };
-                    const Icon = meta.Icon;
-                    const colorClass = COLOR_CLASSES[n.iconColor] || COLOR_CLASSES['accent-blue'];
-                    return (
-                      <motion.div
-                        key={n.id}
-                        layout
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        onClick={() => !n.read && markAsRead(n.id)}
-                        className={`relative px-4 sm:px-5 py-3 transition-colors cursor-pointer ${
-                          n.read ? 'hover:bg-navy-800/30' : 'bg-navy-800/20 hover:bg-navy-800/50'
-                        }`}>
-                        {!n.read && <div className="absolute left-1 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-accent-blue" />}
-                        <div className="flex items-start gap-3">
-                          <div className={`w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 ${colorClass}`}>
-                            <Icon size={14} />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className={`text-sm font-semibold mb-0.5 ${n.read ? 'text-navy-300' : 'text-white'}`}>
-                              {n.title}
-                            </div>
-                            <p className={`text-xs ${n.read ? 'text-navy-500' : 'text-navy-300'} line-clamp-2`}>
-                              {n.message}
-                            </p>
-                            <div className="flex items-center gap-2 mt-1.5 text-[10px] text-navy-500">
-                              <span>{formatRelative(n.createdAt)}</span>
-                              {n.relatedId && <><span>·</span><span className="font-mono text-accent-blue">{n.relatedId}</span></>}
-                            </div>
-                          </div>
-                        </div>
-                      </motion.div>
-                    );
-                  })}
+                <div className="px-4 sm:px-5 py-4">
+                  <Rewards user={user} embedded />
                 </div>
               )}
             </div>
 
             {/* Footer */}
-            {notifs.length > 0 && (
+            {panelTab === 'vendor' && notifs.length > 0 && (
               <div className="px-4 sm:px-5 py-3 border-t border-navy-800 bg-navy-950/40 text-center">
                 <span className="text-[11px] text-navy-400">
                   Nova Fora delivers notifications in real time via WebSocket

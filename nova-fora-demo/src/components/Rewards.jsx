@@ -27,7 +27,7 @@ const daAwardStatus = {
   'DA-1010': true,
 };
 
-export default function Rewards({ user }) {
+export default function Rewards({ user, embedded = false }) {
   const [tab, setTab] = useState('da');
 
   const totalCashAwarded = daList.reduce((sum, d) => sum + d.cashEarned, 0);
@@ -35,18 +35,22 @@ export default function Rewards({ user }) {
   const tier3Count = daList.filter((d) => d.tier === 3).length;
   const pendingAwards = daList.filter((d) => daAwardStatus[d.id] === false).length;
 
+  // When `embedded` is true the component renders inside the notifications
+  // panel (narrower column, no page header, smaller stat tiles).
   return (
     <div>
-      <div className="mb-4 sm:mb-6">
-        <div className="flex items-center gap-2 mb-1">
-          <Gift size={20} className="text-accent-gold" />
-          <h2 className="text-2xl font-bold text-white">Rewards</h2>
+      {!embedded && (
+        <div className="mb-4 sm:mb-6">
+          <div className="flex items-center gap-2 mb-1">
+            <Gift size={20} className="text-accent-gold" />
+            <h2 className="text-2xl font-bold text-white">Rewards</h2>
+          </div>
+          <p className="text-navy-400 text-sm">DA performance incentives &middot; DSP loyalty program</p>
         </div>
-        <p className="text-navy-400 text-sm">DA performance incentives &middot; DSP loyalty program</p>
-      </div>
+      )}
 
       {/* Top stats band */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+      <div className={`grid gap-3 mb-4 ${embedded ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-4'}`}>
         <StatTile label="Top-tier DAs" value={tier3Count} subtitle={`${daList.length} total`} icon={Trophy} color="accent-purple" />
         <StatTile label="Cash awarded" value={`$${totalCashAwarded.toLocaleString()}`} subtitle="This month" icon={TrendingUp} color="accent-green" />
         <StatTile label="Vendor Bucks" value={`$${totalBucksEarned.toLocaleString()}`} subtitle="Earned total" icon={Award} color="accent-gold" />
@@ -69,7 +73,7 @@ export default function Rewards({ user }) {
               <Icon size={14} />
               {t.label}
               {active && (
-                <motion.div layoutId="rewardsTabIndicator"
+                <motion.div layoutId={embedded ? 'rewardsTabIndicatorEmbedded' : 'rewardsTabIndicator'}
                   className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-accent-gold to-accent-orange"
                   transition={{ type: 'spring', stiffness: 380, damping: 30 }} />
               )}
@@ -80,7 +84,7 @@ export default function Rewards({ user }) {
 
       <AnimatePresence mode="wait">
         <motion.div key={tab} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.2 }}>
-          {tab === 'da' && <DaRewardsSection />}
+          {tab === 'da' && <DaRewardsSection embedded={embedded} />}
           {tab === 'dsp' && <DspRewardsSection />}
         </motion.div>
       </AnimatePresence>
@@ -111,11 +115,11 @@ function StatTile({ label, value, subtitle, icon: Icon, color }) {
 // ============================================================
 // DA Rewards — leaderboard
 // ============================================================
-function DaRewardsSection() {
+function DaRewardsSection({ embedded = false }) {
   return (
     <div className="space-y-4">
       {/* Tier breakdown card */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className={`grid gap-3 ${embedded ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-3'}`}>
         {Object.entries(tierConfig).map(([tier, cfg]) => {
           const count = daList.filter((d) => d.tier === Number(tier)).length;
           return (
@@ -151,9 +155,9 @@ function DaRewardsSection() {
                 <th className="text-left px-4 sm:px-5 py-3 font-medium">Driver</th>
                 <th className="text-center px-4 sm:px-5 py-3 font-medium">Tier</th>
                 <th className="text-right px-4 sm:px-5 py-3 font-medium">Defects</th>
-                <th className="text-right px-4 sm:px-5 py-3 font-medium hidden sm:table-cell">Streak</th>
+                <th className={`text-right px-4 sm:px-5 py-3 font-medium ${embedded ? 'hidden' : 'hidden sm:table-cell'}`}>Streak</th>
                 <th className="text-right px-4 sm:px-5 py-3 font-medium">Cash</th>
-                <th className="text-right px-4 sm:px-5 py-3 font-medium hidden sm:table-cell">Bucks</th>
+                <th className={`text-right px-4 sm:px-5 py-3 font-medium ${embedded ? 'hidden' : 'hidden sm:table-cell'}`}>Bucks</th>
                 <th className="text-center px-4 sm:px-5 py-3 font-medium">Award</th>
               </tr>
             </thead>
@@ -177,14 +181,14 @@ function DaRewardsSection() {
                       <Badge variant={da.tier === 3 ? 'purple' : da.tier === 2 ? 'gold' : 'blue'}>{cfg.label}</Badge>
                     </td>
                     <td className="px-4 sm:px-5 py-3 text-right text-white font-semibold">{da.totalDefects}</td>
-                    <td className="px-4 sm:px-5 py-3 text-right hidden sm:table-cell">
+                    <td className={`px-4 sm:px-5 py-3 text-right ${embedded ? 'hidden' : 'hidden sm:table-cell'}`}>
                       <span className="flex items-center justify-end gap-1">
                         <Flame size={12} className={da.streak >= 20 ? 'text-accent-orange' : 'text-navy-500'} />
                         <span className={`font-semibold ${da.streak >= 20 ? 'text-accent-orange' : 'text-navy-300'}`}>{da.streak}d</span>
                       </span>
                     </td>
                     <td className="px-4 sm:px-5 py-3 text-right text-accent-green font-semibold">${da.cashEarned.toLocaleString()}</td>
-                    <td className="px-4 sm:px-5 py-3 text-right text-accent-purple font-semibold hidden sm:table-cell">${da.vendorBucks.toLocaleString()}</td>
+                    <td className={`px-4 sm:px-5 py-3 text-right text-accent-purple font-semibold ${embedded ? 'hidden' : 'hidden sm:table-cell'}`}>${da.vendorBucks.toLocaleString()}</td>
                     <td className="px-4 sm:px-5 py-3 text-center">
                       {awarded ? (
                         <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-accent-green/10 border border-accent-green/30" title="Awarded">
