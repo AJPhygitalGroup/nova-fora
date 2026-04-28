@@ -11,6 +11,8 @@ from app.models.defect_catalog import DefectPart as P
 from app.models.defect_catalog import DefectPosition as Pos
 from app.models.defect_catalog import DefectSystem as S
 from app.models.defect_catalog import DefectType as T
+from app.models.defect_catalog import DvicSection as DS
+from app.models.defect_catalog import AssetType as AT
 
 
 # ─────────────────────────────────────────────────────
@@ -120,6 +122,28 @@ PART_LABELS: dict[P, dict[str, str]] = {
     P.REGISTRATION_STICKER: {"label": "Registration sticker", "icon": "🏷️"},
     # under_vehicle
     P.UNDERCARRIAGE_OBJECT: {"label": "Undercarriage object", "icon": "🔍"},
+    # ── DVIC additions (Apr 2026 PDFs) ──
+    P.SUSPENSION: {"label": "Suspension", "icon": "🔧"},
+    P.UNDERBODY_OBJECT: {"label": "Underbody object", "icon": "🪝"},
+    P.FLUID_LEAK: {"label": "Fluid leak", "icon": "💦"},
+    P.HOOD_LATCH: {"label": "Hood latch", "icon": "🔒"},
+    P.LIFT_GATE: {"label": "Lift gate", "icon": "🚪"},
+    P.BACKUP_CAMERA: {"label": "Backup camera", "icon": "📹"},
+    P.SIDE_VIEW_CAMERA: {"label": "Side view camera", "icon": "📹"},
+    P.CARGO_STEP: {"label": "Cargo step", "icon": "🪜"},
+    P.FUEL_CAP: {"label": "Fuel cap", "icon": "⛽"},
+    P.MUD_FLAP: {"label": "Mud flap", "icon": "🟫"},
+    P.BATTERY_COVER: {"label": "Battery cover", "icon": "🔋"},
+    P.AMAZON_DOT_DECAL: {"label": "Amazon DOT decal", "icon": "📋"},
+    P.PRIME_DECAL: {"label": "Prime decal", "icon": "📦"},
+    P.INSURANCE_DOC: {"label": "Insurance document", "icon": "📄"},
+    P.REGISTRATION_DOC: {"label": "Registration document", "icon": "📄"},
+    P.SHELF: {"label": "Shelf", "icon": "📚"},
+    P.SPARE_FUSE: {"label": "Spare fuses", "icon": "🔌"},
+    P.REFLECTIVE_TRIANGLE: {"label": "Reflective triangle", "icon": "🔺"},
+    P.AIR_PRESSURE_GAUGE: {"label": "Air pressure gauge", "icon": "💨"},
+    P.VEHICLE_INTERIOR: {"label": "Vehicle interior", "icon": "🚐"},
+    P.DEVICE_ON_WINDSHIELD: {"label": "Device on windshield", "icon": "📱"},
 }
 
 
@@ -195,6 +219,32 @@ TYPE_LABELS: dict[T, dict[str, str]] = {
     T.HAS_LOOSE_OBJECTS: {"label": "Has loose objects", "icon": "📦"},
     # mount / bracket
     T.MOUNT_DAMAGED: {"label": "Mount damaged", "icon": "🔩"},
+    # ── DVIC additions (Apr 2026 PDFs) ──
+    T.LEANING: {"label": "Leaning", "icon": "🪜"},
+    T.HAS_OBJECTS_UNDERNEATH: {"label": "Has objects underneath", "icon": "🪝"},
+    T.ACTIVE_LEAK_ON_GROUND: {"label": "Active leak on ground", "icon": "💦"},
+    T.ITEMS_LOOSE_OR_HELD_WITH_TAPE: {"label": "Loose / held with tape", "icon": "🧷"},
+    T.EXCESSIVELY_DIRTY: {"label": "Excessively dirty", "icon": "🟫"},
+    T.NOT_VISIBLE: {"label": "Not visible", "icon": "👁️‍🗨️"},
+    T.HAS_ODOR: {"label": "Has odor", "icon": "👃"},
+    T.HAS_TRASH_OR_GRIME: {"label": "Trash or grime", "icon": "🗑️"},
+    T.HAS_SPILLED_LIQUID: {"label": "Spilled liquid", "icon": "💦"},
+    T.SQUEAKING: {"label": "Squeaking", "icon": "🔊"},
+    T.GRINDING: {"label": "Grinding", "icon": "⚙️"},
+    T.LEAKING_AIR: {"label": "Leaking air", "icon": "💨"},
+    T.WEAK: {"label": "Weak", "icon": "📉"},
+    T.STIFF: {"label": "Stiff", "icon": "🪨"},
+    T.NEEDS_ALIGNMENT: {"label": "Needs alignment", "icon": "📐"},
+    T.READS_OVER_120_PSI: {"label": "Reads over 120 PSI", "icon": "🔥"},
+    T.DEVICE_MOUNTED: {"label": "Device mounted", "icon": "📱"},
+    T.OBSTRUCTED: {"label": "Obstructed", "icon": "🚫"},
+    T.NOT_IN_GREEN_ZONE: {"label": "Not in green zone", "icon": "🔴"},
+    T.NOT_MOUNTED: {"label": "Not mounted", "icon": "🚫"},
+    T.BATTERY_COVER_MISSING: {"label": "Battery cover missing", "icon": "🔋"},
+    T.BOLTS_MISSING: {"label": "Bolts missing", "icon": "🔩"},
+    T.CRACKED_OR_HOLE: {"label": "Cracked / hole", "icon": "💥"},
+    T.CANNOT_BE_ADJUSTED: {"label": "Cannot be adjusted", "icon": "🔧"},
+    T.EXPOSED_INTERIOR: {"label": "Exposed interior (metal/spring/cushion)", "icon": "🪡"},
     # catchall
     T.OTHER_DAMAGE: {"label": "Other damage", "icon": "❓"},
 }
@@ -216,4 +266,68 @@ POSITION_LABELS: dict[Pos, dict[str, str]] = {
     Pos.PASSENGER: {"label": "Passenger", "icon": "🚺"},
     Pos.UPPER: {"label": "Upper", "icon": "⬆️"},
     Pos.LOWER: {"label": "Lower", "icon": "⬇️"},
+}
+
+
+# ─────────────────────────────────────────────────────
+# DVIC physical sections (6) — drives the new wizard's first tile picker
+# ─────────────────────────────────────────────────────
+DVIC_SECTION_LABELS: dict[DS, dict[str, str]] = {
+    DS.GENERAL: {
+        "label": "General",
+        "icon": "📋",
+        "description": "Documentation, cleanliness, safety accessories",
+    },
+    DS.FRONT_SIDE: {
+        "label": "Front Side",
+        "icon": "🔦",
+        "description": "Headlights, hazard light, front suspension, hood",
+    },
+    DS.BACK_SIDE: {
+        "label": "Back Side",
+        "icon": "🔴",
+        "description": "Tail lights, license plate light, lift gate, rear body",
+    },
+    DS.DRIVER_SIDE: {
+        "label": "Driver Side",
+        "icon": "⬅️",
+        "description": "Driver-side tires, mirror, body, decals, mud flap",
+    },
+    DS.PASSENGER_SIDE: {
+        "label": "Passenger Side",
+        "icon": "➡️",
+        "description": "Passenger-side tires, mirror, body, decals, mud flap",
+    },
+    DS.IN_CAB: {
+        "label": "In Cab",
+        "icon": "💺",
+        "description": "Wipers, brakes, HVAC, steering, dash, interior doors, windshield",
+    },
+}
+
+
+# ─────────────────────────────────────────────────────
+# Asset types — vehicle classifications driving template selection
+# ─────────────────────────────────────────────────────
+ASSET_TYPE_LABELS: dict[AT, dict[str, str]] = {
+    AT.EXTRA_LARGE_CARGO_VAN: {
+        "label": "Extra Large Cargo Van",
+        "icon": "🚐",
+        "description": "Ford Transit 350, Mercedes Sprinter 3500 — non-DOT",
+    },
+    AT.LARGE_CARGO_VAN: {
+        "label": "Large Cargo Van",
+        "icon": "🚐",
+        "description": "Ford Transit 250, Ram ProMaster 1500 — non-DOT",
+    },
+    AT.STEP_VAN_MEDIUM: {
+        "label": "Step Van (Medium)",
+        "icon": "🚚",
+        "description": "Box truck — DOT regulated, 4/32 front tread, fuel cap, decals",
+    },
+    AT.STEP_VAN_LARGE: {
+        "label": "Step Van (Large)",
+        "icon": "🚛",
+        "description": "Large box truck — DOT regulated + battery cover check",
+    },
 }

@@ -6,6 +6,8 @@ Business rules:
   - `vin` is globally unique (even across DSPs).
   - `mileage` is the last-known odometer reading — updated when a Work Order
     completion reports a new value, or when an inspection's odometer OCR fires.
+  - `asset_type` selects which DVIC template (Cargo vs DOT) the inspector
+    sees. Defaults to extra_large_cargo_van for backfill.
   - Derived fields (defect_count, severity, last_inspected) are computed at
     read-time by JOINs against inspections/defects, NOT stored here.
 
@@ -13,10 +15,12 @@ Frontend compat: `id_str` returns "VAN-XXXX" (see src/data/mockData.js shape).
 """
 from datetime import datetime
 
+import sqlalchemy as sa
 from sqlalchemy import Column, DateTime
 from sqlmodel import Field, SQLModel
 
 from app.models.base import timestamp_column, utc_now
+from app.models.defect_catalog import AssetType
 
 
 class Vehicle(SQLModel, table=True):
@@ -38,6 +42,26 @@ class Vehicle(SQLModel, table=True):
     year: int = Field(nullable=False)
     make: str = Field(max_length=50, nullable=False)    # "Mercedes"
     model: str = Field(max_length=100, nullable=False)  # "Sprinter 2500"
+
+    # Asset classification — drives which DVIC template the inspector loads.
+    # DOT step vans get extra checks (documentation, fuel cap, mud flaps,
+    # Amazon DOT decal, air pressure gauge, etc.). Defaults to cargo for
+    # backfill; existing rows get extra_large_cargo_van via migration.
+    asset_type: AssetType = Field(
+        default=AssetType.EXTRA_LARGE_CARGO_VAN,
+        sa_column=Column(
+            "asset_type",
+            sa.Enum(
+                AssetType,
+                native_enum=False,
+                length=30,
+                values_callable=lambda e: [m.value for m in e],
+            ),
+            nullable=False,
+            index=True,
+            server_default="extra_large_cargo_van",
+        ),
+    )
 
     # Current state
     mileage: int = Field(default=0, nullable=False)

@@ -5,6 +5,7 @@ Adding a new table = add an import line below + run `alembic revision --autogene
 """
 from app.models.base import timestamp_column, utc_now
 from app.models.defect_catalog import (
+    AssetType,
     DefectDetailsSchema,
     DefectPart,
     DefectPartSystem,
@@ -13,6 +14,8 @@ from app.models.defect_catalog import (
     DefectSeverityOverride,
     DefectSystem,
     DefectType,
+    DvicSection,
+    DvicTemplateItem,
 )
 from app.models.inspection import (
     DefectSeverity,
@@ -35,6 +38,7 @@ from app.models.work_order import (
 )
 
 __all__ = [
+    "AssetType",
     "DefectDetailsSchema",
     "DefectPart",
     "DefectPartSystem",
@@ -45,6 +49,8 @@ __all__ = [
     "DefectStatus",
     "DefectSystem",
     "DefectType",
+    "DvicSection",
+    "DvicTemplateItem",
     "Inspection",
     "InspectionResult",
     "InspectionStatus",
