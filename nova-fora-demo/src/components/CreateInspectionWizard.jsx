@@ -25,7 +25,7 @@ import {
   APIError,
 } from '../api/client';
 import PhotoUploader from './ui/PhotoUploader';
-import DefectWizard from './DefectWizard';
+import DvicWizard from './DvicWizard';
 
 // (Legacy 11-section taxonomy + free-text severity picker were deprecated
 // in v2 of the defect schema — replaced by the catalog-driven DefectWizard.)
@@ -491,10 +491,12 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
           />
         )}
 
-        {/* DefectWizard overlay — opens above the inspection wizard */}
+        {/* DvicWizard overlay — opens above the inspection wizard.
+            Section-first picker driven by /dvic-template?asset_type=X. */}
         {showDefectWizard && (
-          <DefectWizard
+          <DvicWizard
             inspectionId={inspectionId}
+            assetType={vehicle?.assetType || 'extra_large_cargo_van'}
             onCommitted={handleDefectCommitted}
             onCancel={() => setShowDefectWizard(false)}
           />

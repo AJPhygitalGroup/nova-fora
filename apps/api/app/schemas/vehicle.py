@@ -28,6 +28,7 @@ class VehicleResponse(BaseModel):
     grounded: bool
     grounded_reason: str | None = None
     grounded_at: datetime | None = None
+    asset_type: str = "extra_large_cargo_van"  # drives DVIC template selection
 
     # Derived from inspections / defects (stubbed until Semana 3 PR 2)
     defect_count: int = 0
@@ -55,6 +56,10 @@ class VehicleResponse(BaseModel):
             grounded=v.grounded,
             grounded_reason=v.grounded_reason,
             grounded_at=v.grounded_at,
+            asset_type=(
+                v.asset_type.value if hasattr(v.asset_type, "value")
+                else str(v.asset_type)
+            ),
             is_active=v.is_active,
         )
 

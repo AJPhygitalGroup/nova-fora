@@ -426,6 +426,41 @@ export const catalog = {
 };
 
 // ─────────────────────────────────────────────────────
+// DVIC Template — drives the new section-first inspector wizard
+// ─────────────────────────────────────────────────────
+const _dvicTemplateCache = new Map();  // key=assetType → Promise
+
+export const dvicTemplate = {
+  /**
+   * GET /dvic-template?asset_type=X — fetched once per asset_type per session.
+   * Backend caches 5min on its side; we add an extra in-memory cache so the
+   * wizard doesn't re-fetch when the user reopens it for the same vehicle.
+   */
+  load(assetType) {
+    if (!assetType) {
+      return Promise.reject(new Error('asset_type is required'));
+    }
+    if (_dvicTemplateCache.has(assetType)) {
+      return _dvicTemplateCache.get(assetType);
+    }
+    const promise = apiFetch(
+      `/dvic-template?asset_type=${encodeURIComponent(assetType)}`
+    ).catch((err) => {
+      _dvicTemplateCache.delete(assetType);  // allow retry on failure
+      throw err;
+    });
+    _dvicTemplateCache.set(assetType, promise);
+    return promise;
+  },
+
+  /** Force refetch for a specific asset_type (or all if not given). */
+  invalidate(assetType) {
+    if (assetType) _dvicTemplateCache.delete(assetType);
+    else _dvicTemplateCache.clear();
+  },
+};
+
+// ─────────────────────────────────────────────────────
 // Directory (orgs + users) — small lookups for pickers
 // ─────────────────────────────────────────────────────
 export const directory = {
