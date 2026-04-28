@@ -2579,12 +2579,7 @@ export default function RealDVIC({ user }) {
                 <div className="text-2xl font-bold text-white mb-1">
                   {todayCount} <span className="text-navy-400 font-normal text-xl">of {fleetTotal}</span>
                 </div>
-                <div className="text-sm text-navy-400">Vans Inspected in Recent QC DVIC</div>
-                {todayIncompleteCount > 0 && (
-                  <div className="text-[11px] text-accent-red mt-1">
-                    {todayIncompleteCount} not inspectable
-                  </div>
-                )}
+                <div className="text-sm text-navy-400">Vans Inspected</div>
               </div>
               <div className="mt-auto pt-2 text-center text-[11px] text-navy-400">
                 Next inspection <span className="text-white font-medium">{nextInspectionDate}</span>
