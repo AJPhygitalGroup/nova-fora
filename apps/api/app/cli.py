@@ -6,6 +6,8 @@ Available commands:
   seed-inspections       Seed 8 inspections for those vehicles.
   seed-defect-catalog    Seed defect_part_system, defect_part_validity,
                           defect_details_schema reference tables (v2 spec).
+  seed-dvic-template     Seed dvic_template_item rows (transcribed from
+                          Amazon DVIC Cargo + DOT PDFs, Apr 2026).
   reset-password <email> <new_password>   Admin override for lost passwords.
 """
 import asyncio
@@ -451,6 +453,73 @@ async def cmd_seed_defect_catalog() -> None:
         print(f"   details_schema  — {ds_count} new, {len(seed['details_schema']) - ds_count} updated")
 
 
+async def cmd_seed_dvic_template() -> None:
+    """Idempotent UPSERT of dvic_template_item from the Amazon DVIC PDFs.
+
+    Dedup key: (asset_types_csv, section, part_enum, defect_type_enum, position).
+    Re-running after a PDF revision updates description/severity/etc.
+    """
+    from app.models.defect_catalog import DvicTemplateItem
+    from app.seed_dvic_template import get_dvic_template_seed
+
+    rows = get_dvic_template_seed()
+
+    async with AsyncSessionLocal() as session:
+        new_count, updated_count = 0, 0
+        for r in rows:
+            position_val = r["position"].value if r["position"] is not None else None
+            existing = (
+                await session.execute(
+                    select(DvicTemplateItem)
+                    .where(DvicTemplateItem.asset_types_csv == r["asset_types_csv"])
+                    .where(DvicTemplateItem.section == r["section"])
+                    .where(DvicTemplateItem.part_enum == r["part_enum"])
+                    .where(DvicTemplateItem.defect_type_enum == r["defect_type_enum"])
+                    .where(
+                        DvicTemplateItem.position == position_val
+                        if position_val is not None
+                        else DvicTemplateItem.position.is_(None)
+                    )
+                )
+            ).scalar_one_or_none()
+
+            if existing is None:
+                session.add(
+                    DvicTemplateItem(
+                        asset_types_csv=r["asset_types_csv"],
+                        section=r["section"],
+                        part_category=r["part_category"],
+                        part_enum=r["part_enum"],
+                        defect_type_enum=r["defect_type_enum"],
+                        position=r["position"],
+                        position_options_csv=r["position_options_csv"],
+                        sub_positions=r["sub_positions"],
+                        default_severity=r["default_severity"],
+                        description=r["description"],
+                        details_schema=r["details_schema"],
+                        ordering=r["ordering"],
+                        is_active=True,
+                    )
+                )
+                new_count += 1
+            else:
+                existing.part_category = r["part_category"]
+                existing.position_options_csv = r["position_options_csv"]
+                existing.sub_positions = r["sub_positions"]
+                existing.default_severity = r["default_severity"]
+                existing.description = r["description"]
+                existing.details_schema = r["details_schema"]
+                existing.ordering = r["ordering"]
+                existing.is_active = True
+                session.add(existing)
+                updated_count += 1
+
+        await session.commit()
+        print("✅ DVIC template seed:")
+        print(f"   {new_count} new rows, {updated_count} updated")
+        print(f"   Total: {len(rows)}")
+
+
 async def cmd_reset_password(email: str, new_password: str) -> None:
     async with AsyncSessionLocal() as session:
         user = (
@@ -478,6 +547,8 @@ def main() -> None:
         asyncio.run(cmd_seed_inspections())
     elif cmd == "seed-defect-catalog":
         asyncio.run(cmd_seed_defect_catalog())
+    elif cmd == "seed-dvic-template":
+        asyncio.run(cmd_seed_dvic_template())
     elif cmd == "reset-password":
         if len(sys.argv) != 4:
             print("Usage: python -m app.cli reset-password <email> <new_password>")
