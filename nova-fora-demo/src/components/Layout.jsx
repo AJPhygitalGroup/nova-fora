@@ -357,19 +357,17 @@ export default function Layout({ user, onSwitchRole, onLogout, onImpersonate, im
         </AnimatePresence>
       </header>
 
-      {/* Page Content */}
+      {/* Page Content
+          NOTE: Removed the framer-motion wrapper here — it was getting
+          stuck at opacity 0 when the Dashboard dropdown fired two state
+          updates simultaneously (setActiveTab + setDashboardOpen), which
+          confused framer-motion v12's enter handshake on the keyed motion.div.
+          Each child component (RealDVIC, BodyRepairs, etc.) does its own
+          enter animations internally, so we don't lose the polish. */}
       <main className="flex-1 max-w-[1400px] w-full mx-auto px-3 sm:px-6 py-4 sm:py-6">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={`${user.id}-${activeTab}`}
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -12 }}
-            transition={{ duration: 0.25 }}
-          >
-            <ActiveComponent user={user} onImpersonate={onImpersonate} />
-          </motion.div>
-        </AnimatePresence>
+        <div key={`${user.id}-${activeTab}`}>
+          <ActiveComponent user={user} onImpersonate={onImpersonate} />
+        </div>
       </main>
 
       {/* Footer */}

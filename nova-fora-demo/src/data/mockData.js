@@ -588,13 +588,15 @@ export const dspRewards = [
 ];
 
 // Body Repairs Portal data
+// `severity` here is the BODY DAMAGE scale (Minor / Moderate / Major / Severe),
+// not the defect-severity scale we removed. Keeps BodyRepairs.jsx happy.
 export const bodyRepairOrders = [
-  { id: 'BR-7001', van: 'VAN-1042', dsp: 'DSP-4201', damage: 'Rear quarter panel dent + paint', paveEstimate: 1850, groupDiscount: 12, pooledDsps: ['DSP-4201', 'DSP-4202'], status: 'Estimate Ready', photos: 3, paveScore: 72 },
-  { id: 'BR-7002', van: 'VAN-2009', dsp: 'DSP-4202', damage: 'Front bumper — crack & respray', paveEstimate: 680, groupDiscount: 8, pooledDsps: ['DSP-4202'], status: 'In Repair', photos: 2, paveScore: 35 },
-  { id: 'BR-7003', van: 'VAN-3044', dsp: 'DSP-4203', damage: 'Sliding door track replacement', paveEstimate: 2400, groupDiscount: 15, pooledDsps: ['DSP-4203', 'DSP-4204', 'DSP-4201'], status: 'Pending Approval', photos: 5, paveScore: 88 },
-  { id: 'BR-7004', van: 'VAN-5012', dsp: 'DSP-4205', damage: 'Roof dent — hail damage', paveEstimate: 450, groupDiscount: 18, pooledDsps: ['DSP-4205', 'DSP-4201', 'DSP-4202', 'DSP-4203'], status: 'Estimate Ready', photos: 4, paveScore: 28 },
-  { id: 'BR-7005', van: 'VAN-4005', dsp: 'DSP-4204', damage: 'Rear door — full replacement', paveEstimate: 3200, groupDiscount: 20, pooledDsps: ['DSP-4204', 'DSP-4203'], status: 'Pending Approval', photos: 6, paveScore: 95 },
-  { id: 'BR-7006', van: 'VAN-1033', dsp: 'DSP-4201', damage: 'Side mirror housing + paint', paveEstimate: 320, groupDiscount: 0, pooledDsps: ['DSP-4201'], status: 'Completed', photos: 2, paveScore: 15 },
+  { id: 'BR-7001', van: 'VAN-1042', dsp: 'DSP-4201', damage: 'Rear quarter panel dent + paint', severity: 'Moderate', paveEstimate: 1850, groupDiscount: 12, pooledDsps: ['DSP-4201', 'DSP-4202'], status: 'Estimate Ready', photos: 3, paveScore: 72 },
+  { id: 'BR-7002', van: 'VAN-2009', dsp: 'DSP-4202', damage: 'Front bumper — crack & respray', severity: 'Minor', paveEstimate: 680, groupDiscount: 8, pooledDsps: ['DSP-4202'], status: 'In Repair', photos: 2, paveScore: 35 },
+  { id: 'BR-7003', van: 'VAN-3044', dsp: 'DSP-4203', damage: 'Sliding door track replacement', severity: 'Major', paveEstimate: 2400, groupDiscount: 15, pooledDsps: ['DSP-4203', 'DSP-4204', 'DSP-4201'], status: 'Pending Approval', photos: 5, paveScore: 88 },
+  { id: 'BR-7004', van: 'VAN-5012', dsp: 'DSP-4205', damage: 'Roof dent — hail damage', severity: 'Minor', paveEstimate: 450, groupDiscount: 18, pooledDsps: ['DSP-4205', 'DSP-4201', 'DSP-4202', 'DSP-4203'], status: 'Estimate Ready', photos: 4, paveScore: 28 },
+  { id: 'BR-7005', van: 'VAN-4005', dsp: 'DSP-4204', damage: 'Rear door — full replacement', severity: 'Severe', paveEstimate: 3200, groupDiscount: 20, pooledDsps: ['DSP-4204', 'DSP-4203'], status: 'Pending Approval', photos: 6, paveScore: 95 },
+  { id: 'BR-7006', van: 'VAN-1033', dsp: 'DSP-4201', damage: 'Side mirror housing + paint', severity: 'Minor', paveEstimate: 320, groupDiscount: 0, pooledDsps: ['DSP-4201'], status: 'Completed', photos: 2, paveScore: 15 },
 ];
 
 export const groupDiscountTiers = [
