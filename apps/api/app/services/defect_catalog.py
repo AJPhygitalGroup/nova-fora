@@ -77,16 +77,14 @@ async def build_catalog(session: AsyncSession) -> CatalogResponse:
             id=ds.defect_type,
             label=labels["label"],
             icon=labels["icon"],
-            default_severity=ds.default_severity,
             details_schema=ds.json_schema or {},
             requires_details=bool(ds.json_schema),
         )
         types_by_part.setdefault(ds.part, []).append(type_info)
 
-    # Stable ordering inside each part: critical → high → medium → low
-    SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    # Alphabetical ordering inside each part
     for part_id, ts in types_by_part.items():
-        ts.sort(key=lambda t: (SEVERITY_ORDER.get(t.default_severity, 5), t.label))
+        ts.sort(key=lambda t: t.label)
 
     # Build PartInfo list — only parts with at least one defect type are surfaced
     parts: list[PartInfo] = []
@@ -156,17 +154,18 @@ async def validate_v2_defect(
     position: DefectPosition | None,
     defect_type: Any,  # DefectType — typing relaxed to support enum-or-string
     details: dict,
-) -> str:
-    """Validate a v2 defect against catalog rules. Returns the resolved
-    default severity (caller may override per-row).
+) -> None:
+    """Validate a v2 defect against catalog rules.
 
     Checks:
       1. (part, defect_type) exists in defect_details_schema (allow-list).
       2. Position obeys defect_part_validity rules.
       3. (Future) details JSON validates against the schema.
          For now we only check required keys exist when schema declares them.
+
+    Raises CatalogValidationError on any failure.
     """
-    # 1. Lookup the (part, defect_type) row → also gives us default severity
+    # 1. Lookup the (part, defect_type) row in the allow-list
     type_value = defect_type.value if hasattr(defect_type, "value") else str(defect_type)
     part_value = part.value if hasattr(part, "value") else str(part)
 
@@ -216,5 +215,3 @@ async def validate_v2_defect(
             raise CatalogValidationError(
                 f"details.{key} is required for ('{part_value}', '{type_value}')"
             )
-
-    return schema_row.default_severity

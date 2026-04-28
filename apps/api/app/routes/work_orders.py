@@ -258,7 +258,6 @@ async def _build_item_response(
     out.defect_section = drsp.section
     out.defect_part = drsp.part
     out.defect_description = drsp.description
-    out.defect_severity = drsp.severity.value if hasattr(drsp.severity, "value") else str(drsp.severity)
     out.defect_status = drsp.status.value if hasattr(drsp.status, "value") else str(drsp.status)
     out.defect_is_v2 = drsp.is_v2
     out.defect_part_label = drsp.part_label
@@ -335,14 +334,10 @@ async def _build_wo_response(
 
 
 def _build_summary(items: list[WorkOrderItemResponse]) -> str | None:
-    """One-line summary for list view: prioritize highest severity."""
+    """One-line summary for list view: first item's part + type + count."""
     if not items:
         return None
-    sev_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-    items_sorted = sorted(
-        items, key=lambda x: sev_order.get((x.defect_severity or "low").lower(), 9)
-    )
-    top = items_sorted[0]
+    top = items[0]
     label = top.defect_part_label or top.defect_part or "Defect"
     if top.defect_type_label:
         label = f"{label} — {top.defect_type_label}"

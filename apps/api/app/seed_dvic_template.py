@@ -122,7 +122,6 @@ def row(
     position: Pos | None = None,
     position_options: list[Pos] | None = None,
     sub_positions: list[dict] | None = None,
-    severity: str = "medium",
     description: str,
     details_schema: dict | None = None,
     ordering: int = 0,
@@ -136,7 +135,6 @@ def row(
         "position": position,
         "position_options_csv": ",".join(p.value for p in (position_options or [])),
         "sub_positions": sub_positions,
-        "default_severity": severity,
         "description": description,
         "details_schema": details_schema,
         "ordering": ordering,
@@ -166,14 +164,12 @@ _add(
     row(
         DOT, DS.GENERAL, "Vehicle Documentation",
         P.INSURANCE_DOC, T.MISSING,
-        severity="high",
         description="Insurance information, registration, short haul exemption, or "
                     "certification of lease is missing, damaged, illegible, or expired",
     ),
     row(
         DOT, DS.GENERAL, "Vehicle Documentation",
         P.INSPECTION_STICKER, T.EXPIRED,
-        severity="critical",
         description="DOT/CA BIT/State Inspection sticker is missing, damaged, "
                     "illegible, or expired",
         details_schema=SCHEMA_EXPIRATION_DATE,
@@ -185,20 +181,17 @@ _add(
     row(
         ALL_ASSETS, DS.GENERAL, "Vehicle Cleanliness",
         P.VEHICLE_INTERIOR, T.HAS_SPILLED_LIQUID,
-        severity="high",
         description="Interior of vehicle has loose objects/spilled liquid that "
                     "could compromise safely driving the vehicle",
     ),
     row(
         ALL_ASSETS, DS.GENERAL, "Vehicle Cleanliness",
         P.VEHICLE_INTERIOR, T.HAS_TRASH_OR_GRIME,
-        severity="low",
         description="Interior has trash or excessive grime/dust present",
     ),
     row(
         ALL_ASSETS, DS.GENERAL, "Vehicle Cleanliness",
         P.VEHICLE_INTERIOR, T.HAS_ODOR,
-        severity="low",
         description="Interior has odor",
     ),
 )
@@ -208,13 +201,11 @@ _add(
     row(
         DOT, DS.GENERAL, "Safety accessories",
         P.SPARE_FUSE, T.MISSING,
-        severity="medium",
         description="Spare fuses or reflective triangles are missing",
     ),
     row(
         DOT, DS.GENERAL, "Safety accessories",
         P.FIRE_EXTINGUISHER, T.NOT_IN_GREEN_ZONE,
-        severity="high",
         description="Fire extinguisher is missing, not mounted, mounted with a tape, "
                     "zip-tie or similar, or the dial/needle is not in the green zone",
     ),
@@ -228,14 +219,12 @@ _add(
     row(
         ALL_ASSETS, DS.FRONT_SIDE, "Suspension & underbody shield",
         P.SUSPENSION, T.LEANING,
-        severity="critical",
         description="Noticeable leaning of vehicle (when parked)",
     ),
     row(
         ALL_ASSETS, DS.FRONT_SIDE, "Suspension & underbody shield",
         P.UNDERBODY_OBJECT, T.HAS_OBJECTS_UNDERNEATH,
         position=Pos.FRONT,
-        severity="high",
         description="Loose or hanging objects underneath",
     ),
 )
@@ -247,21 +236,18 @@ _add(
         P.HEADLIGHT, T.NOT_WORKING,
         position_options=[Pos.DRIVER_SIDE, Pos.PASSENGER_SIDE],
         sub_positions=SUB_BEAM,
-        severity="high",
         description="Headlight is not working",
     ),
     row(
         ALL_ASSETS, DS.FRONT_SIDE, "Lights and light covers",
         P.HAZARD_LIGHT, T.NOT_WORKING,
         position=Pos.FRONT,
-        severity="high",
         description="Hazard light is not working",
     ),
     row(
         ALL_ASSETS, DS.FRONT_SIDE, "Lights and light covers",
         P.HEADLIGHT, T.CRACKED_OR_HOLE,
         position_options=[Pos.DRIVER_SIDE, Pos.PASSENGER_SIDE],
-        severity="medium",
         description="Any lights or light covers are cracked (leaving hole or void), "
                     "missing, or not working properly",
     ),
@@ -272,7 +258,6 @@ _add(
     row(
         DOT, DS.FRONT_SIDE, "Body and doors",
         P.HOOD_LATCH, T.ITEMS_LOOSE_OR_HELD_WITH_TAPE,
-        severity="high",
         description="Items attached to the body of the vehicle (for example: bumpers "
                     "and hood latches) are missing, damaged, loose, unsecure, hanging, "
                     "or held with a zip-tie, tape, or similar",
@@ -286,14 +271,12 @@ _add(
     row(
         ALL_ASSETS, DS.BACK_SIDE, "License plates/tags",
         P.LICENSE_PLATE, T.DAMAGED,
-        severity="high",
         description="License plates/temp tags are damaged, missing, illegible, or expired",
     ),
     row(
         ALL_ASSETS, DS.BACK_SIDE, "Suspension & underbody shield",
         P.UNDERBODY_OBJECT, T.HAS_OBJECTS_UNDERNEATH,
         position=Pos.REAR,
-        severity="high",
         description="Loose or hanging objects underneath",
     ),
 )
@@ -303,28 +286,24 @@ _add(
     row(
         ALL_ASSETS, DS.BACK_SIDE, "Lights and light covers",
         P.LICENSE_PLATE_LIGHT, T.NOT_WORKING,
-        severity="medium",
         description="License plate light is not working",
     ),
     row(
         ALL_ASSETS, DS.BACK_SIDE, "Lights and light covers",
         P.TAIL_LIGHT, T.NOT_WORKING,
         position_options=[Pos.DRIVER_SIDE, Pos.PASSENGER_SIDE],
-        severity="high",
         description="Tail light is not working",
     ),
     row(
         ALL_ASSETS, DS.BACK_SIDE, "Lights and light covers",
         P.HAZARD_LIGHT, T.NOT_WORKING,
         position=Pos.REAR,
-        severity="high",
         description="Hazard light is not working",
     ),
     row(
         ALL_ASSETS, DS.BACK_SIDE, "Lights and light covers",
         P.TAIL_LIGHT, T.CRACKED_OR_HOLE,
         position_options=[Pos.DRIVER_SIDE, Pos.PASSENGER_SIDE],
-        severity="medium",
         description="Any lights or light covers are cracked (leaving hole or void), "
                     "missing, or not working properly",
     ),
@@ -336,7 +315,6 @@ _add(
         CARGO, DS.BACK_SIDE, "Body and doors",
         P.BUMPER, T.ITEMS_LOOSE_OR_HELD_WITH_TAPE,
         position=Pos.REAR,
-        severity="medium",
         description="Items attached to the body of the vehicle (for example: bumper, "
                     "back-up camera, or rear step) are missing, damaged, loose, "
                     "unsecure, hanging, or held with a zip-tie, tape, or similar",
@@ -345,7 +323,6 @@ _add(
         DOT, DS.BACK_SIDE, "Body and doors",
         P.LIFT_GATE, T.ITEMS_LOOSE_OR_HELD_WITH_TAPE,
         position=Pos.REAR,
-        severity="high",
         description="Items attached to the body of the vehicle (for example: bumper, "
                     "back-up camera, lift gate, or rear step) are missing, damaged, "
                     "loose, unsecure, hanging, or held with a zip-tie, tape, or similar",
@@ -363,7 +340,6 @@ _add(
         ALL_ASSETS, DS.DRIVER_SIDE, "Front tire, wheel and rim",
         P.WHEEL_NUT, T.DAMAGED,
         position=Pos.DRIVER_FRONT,
-        severity="high",
         description="Wheel, wheel nuts, rim, or mounting equipment is damaged, "
                     "cracked, loose, missing, or broken",
     ),
@@ -372,7 +348,6 @@ _add(
         P.TIRE, T.LOW_TREAD,
         position=Pos.DRIVER_FRONT,
         sub_positions=SUB_TREAD_LOC,
-        severity="high",
         description="Tire has insufficient tread (Less than 2/32 or 1.6mm) on inner "
                     "most, middle, or outer most tread",
         details_schema=SCHEMA_TREAD_DEPTH_2_32,
@@ -382,7 +357,6 @@ _add(
         P.TIRE, T.LOW_TREAD,
         position=Pos.DRIVER_FRONT,
         sub_positions=SUB_TREAD_LOC,
-        severity="critical",
         description="Tire has insufficient tread (Less than 4/32 or 3.2mm) on inner "
                     "most, middle, or outer most tread",
         details_schema=SCHEMA_TREAD_DEPTH_2_32,
@@ -391,7 +365,6 @@ _add(
         ALL_ASSETS, DS.DRIVER_SIDE, "Front tire, wheel and rim",
         P.TIRE, T.SIDEWALL_DAMAGE,
         position=Pos.DRIVER_FRONT,
-        severity="high",
         description="Tire has objects, cuts, dents, swells, leaks, appears flat, or "
                     "exposed wire on surface",
     ),
@@ -403,14 +376,12 @@ _add(
         ALL_ASSETS, DS.DRIVER_SIDE, "Suspension & underbody shield",
         P.FLUID_LEAK, T.ACTIVE_LEAK_ON_GROUND,
         position=Pos.DRIVER_SIDE,
-        severity="critical",
         description="Active non-clear fluid leaking on the ground",
     ),
     row(
         ALL_ASSETS, DS.DRIVER_SIDE, "Suspension & underbody shield",
         P.UNDERBODY_OBJECT, T.HAS_OBJECTS_UNDERNEATH,
         position=Pos.DRIVER_SIDE,
-        severity="high",
         description="Loose or hanging objects underneath",
     ),
 )
@@ -420,7 +391,6 @@ _add(
     row(
         DOT, DS.DRIVER_SIDE, "Charging port and fluids",
         P.FUEL_CAP, T.MISSING,
-        severity="high",
         description="Fuel cap is missing or broken",
     ),
 )
@@ -431,7 +401,6 @@ _add(
         ALL_ASSETS, DS.DRIVER_SIDE, "Lights and light covers",
         P.MARKER_LIGHT, T.CRACKED_OR_HOLE,
         position=Pos.DRIVER_SIDE,
-        severity="medium",
         description="Any lights or light covers are cracked (leaving hole or void), "
                     "missing, or not working properly",
     ),
@@ -443,21 +412,18 @@ _add(
         ALL_ASSETS, DS.DRIVER_SIDE, "Side mirrors",
         P.SIDE_MIRROR, T.CANNOT_BE_ADJUSTED,
         position=Pos.DRIVER_SIDE,
-        severity="medium",
         description="Side mirrors cannot be adjusted",
     ),
     row(
         ALL_ASSETS, DS.DRIVER_SIDE, "Side mirrors",
         P.SIDE_MIRROR, T.CRACKED,
         position=Pos.DRIVER_SIDE,
-        severity="medium",
         description="Side mirror glass or window glass is cracked, damaged, or missing",
     ),
     row(
         ALL_ASSETS, DS.DRIVER_SIDE, "Side mirrors",
         P.SIDE_MIRROR, T.ITEMS_LOOSE_OR_HELD_WITH_TAPE,
         position=Pos.DRIVER_SIDE,
-        severity="medium",
         description="Side mirrors are loose, hanging, unsecured, or held up with a "
                     "zip-tie, tape, or similar",
     ),
@@ -469,7 +435,6 @@ _add(
         CARGO, DS.DRIVER_SIDE, "Body and doors",
         P.SIDE_VIEW_CAMERA, T.ITEMS_LOOSE_OR_HELD_WITH_TAPE,
         position=Pos.DRIVER_SIDE,
-        severity="medium",
         description="Items attached to the body of the vehicle (for example: side view "
                     "camera or cargo steps) are missing, damaged, loose, unsecure, "
                     "hanging, or held with a zip-tie, tape, or similar",
@@ -482,7 +447,6 @@ _add(
         DOT, DS.DRIVER_SIDE, "Body and doors",
         P.SIDE_VIEW_CAMERA, T.ITEMS_LOOSE_OR_HELD_WITH_TAPE,
         position=Pos.DRIVER_SIDE,
-        severity="medium",
         description="Items attached to the body of the vehicle (for example: side view "
                     "camera or cargo steps) are missing, damaged, loose, unsecure, "
                     "hanging, or held with a zip-tie, tape, or similar",
@@ -491,7 +455,6 @@ _add(
         DOT, DS.DRIVER_SIDE, "Body and doors",
         P.AMAZON_DOT_DECAL, T.NOT_VISIBLE,
         position=Pos.DRIVER_SIDE,
-        severity="medium",
         description="Amazon DOT decal (USDOT2881058) is damaged, missing, excessively "
                     "dirty, or not visible, or any existing DOT decals on rental "
                     "vehicles are not covered and visible",
@@ -500,7 +463,6 @@ _add(
         DOT_LARGE_ONLY, DS.DRIVER_SIDE, "Body and doors",
         P.BATTERY_COVER, T.BATTERY_COVER_MISSING,
         position=Pos.DRIVER_SIDE,
-        severity="medium",
         description="Battery is properly installed with cover present, securely "
                     "latched or fastened, and no bolts missing (Box Trucks only)",
     ),
@@ -508,7 +470,6 @@ _add(
         DOT, DS.DRIVER_SIDE, "Body and doors",
         P.PRIME_DECAL, T.NOT_VISIBLE,
         position=Pos.DRIVER_SIDE,
-        severity="low",
         description="Prime decal is damaged, missing, excessively dirty, or not visible",
     ),
 )
@@ -519,7 +480,6 @@ _add(
         ALL_ASSETS, DS.DRIVER_SIDE, "Back tire, wheel and rim",
         P.WHEEL_NUT, T.DAMAGED,
         position=Pos.DRIVER_REAR,
-        severity="high",
         description="Wheel, wheel nuts, rim, or mounting equipment is damaged, "
                     "cracked, loose, missing, or broken",
     ),
@@ -527,7 +487,6 @@ _add(
         DOT, DS.DRIVER_SIDE, "Back tire, wheel and rim",
         P.MUD_FLAP, T.ITEMS_LOOSE_OR_HELD_WITH_TAPE,
         position=Pos.DRIVER_REAR,
-        severity="medium",
         description="Mud Flap is damaged, missing, unsecured or held up with a "
                     "zip-tie, tape or similar",
     ),
@@ -536,7 +495,6 @@ _add(
         P.TIRE, T.LOW_TREAD,
         position=Pos.DRIVER_REAR,
         sub_positions=SUB_TREAD_LOC,
-        severity="high",
         description="Tire has insufficient tread (Less than 2/32 or 1.6mm) on inner "
                     "most, middle, or outer most tread",
         details_schema=SCHEMA_TREAD_DEPTH_2_32,
@@ -545,7 +503,6 @@ _add(
         ALL_ASSETS, DS.DRIVER_SIDE, "Back tire, wheel and rim",
         P.TIRE, T.SIDEWALL_DAMAGE,
         position=Pos.DRIVER_REAR,
-        severity="high",
         description="Tire has objects, cuts, dents, swells, leaks, appears flat, or "
                     "exposed wire on surface",
     ),
@@ -561,7 +518,6 @@ _add(
         ALL_ASSETS, DS.PASSENGER_SIDE, "Front tire, wheel and rim",
         P.WHEEL_NUT, T.DAMAGED,
         position=Pos.PASSENGER_FRONT,
-        severity="high",
         description="Wheel, wheel nuts, rim, or mounting equipment is damaged, "
                     "cracked, loose, missing, or broken",
     ),
@@ -570,7 +526,6 @@ _add(
         P.TIRE, T.LOW_TREAD,
         position=Pos.PASSENGER_FRONT,
         sub_positions=SUB_TREAD_LOC,
-        severity="high",
         description="Tire has insufficient tread (Less than 2/32 or 1.6mm) on inner "
                     "most, middle, or outer most tread",
         details_schema=SCHEMA_TREAD_DEPTH_2_32,
@@ -580,7 +535,6 @@ _add(
         P.TIRE, T.LOW_TREAD,
         position=Pos.PASSENGER_FRONT,
         sub_positions=SUB_TREAD_LOC,
-        severity="critical",
         description="Tire has insufficient tread (Less than 4/32 or 3.2mm) on inner "
                     "most, middle, or outer most tread",
         details_schema=SCHEMA_TREAD_DEPTH_2_32,
@@ -589,7 +543,6 @@ _add(
         ALL_ASSETS, DS.PASSENGER_SIDE, "Front tire, wheel and rim",
         P.TIRE, T.SIDEWALL_DAMAGE,
         position=Pos.PASSENGER_FRONT,
-        severity="high",
         description="Tire has objects, cuts, dents, swells, leaks, appears flat, or "
                     "exposed wire on surface",
     ),
@@ -598,7 +551,6 @@ _add(
         ALL_ASSETS, DS.PASSENGER_SIDE, "Suspension & underbody shield",
         P.UNDERBODY_OBJECT, T.HAS_OBJECTS_UNDERNEATH,
         position=Pos.PASSENGER_SIDE,
-        severity="high",
         description="Loose or hanging objects underneath",
     ),
     # Lights
@@ -606,7 +558,6 @@ _add(
         ALL_ASSETS, DS.PASSENGER_SIDE, "Lights and light covers",
         P.MARKER_LIGHT, T.CRACKED_OR_HOLE,
         position=Pos.PASSENGER_SIDE,
-        severity="medium",
         description="Any lights or light covers are cracked (leaving hole or void), "
                     "missing, or not working properly",
     ),
@@ -615,21 +566,18 @@ _add(
         ALL_ASSETS, DS.PASSENGER_SIDE, "Side mirrors",
         P.SIDE_MIRROR, T.CANNOT_BE_ADJUSTED,
         position=Pos.PASSENGER_SIDE,
-        severity="medium",
         description="Side mirrors cannot be adjusted",
     ),
     row(
         ALL_ASSETS, DS.PASSENGER_SIDE, "Side mirrors",
         P.SIDE_MIRROR, T.CRACKED,
         position=Pos.PASSENGER_SIDE,
-        severity="medium",
         description="Side mirror glass or window glass is cracked, damaged, or missing",
     ),
     row(
         ALL_ASSETS, DS.PASSENGER_SIDE, "Side mirrors",
         P.SIDE_MIRROR, T.ITEMS_LOOSE_OR_HELD_WITH_TAPE,
         position=Pos.PASSENGER_SIDE,
-        severity="medium",
         description="Side mirrors are loose, hanging, unsecured, or held up with a "
                     "zip-tie, tape, or similar",
     ),
@@ -638,7 +586,6 @@ _add(
         CARGO, DS.PASSENGER_SIDE, "Body and doors",
         P.SIDE_VIEW_CAMERA, T.ITEMS_LOOSE_OR_HELD_WITH_TAPE,
         position=Pos.PASSENGER_SIDE,
-        severity="medium",
         description="Items attached to the body of the vehicle (for example: side view "
                     "camera or cargo steps) are missing, damaged, loose, unsecure, "
                     "hanging, or held with a zip-tie, tape, or similar",
@@ -648,7 +595,6 @@ _add(
         DOT, DS.PASSENGER_SIDE, "Body and doors",
         P.SIDE_VIEW_CAMERA, T.ITEMS_LOOSE_OR_HELD_WITH_TAPE,
         position=Pos.PASSENGER_SIDE,
-        severity="medium",
         description="Items attached to the body of the vehicle (for example: side view "
                     "camera or cargo steps) are missing, damaged, loose, unsecure, "
                     "hanging, or held with a zip-tie, tape, or similar",
@@ -657,7 +603,6 @@ _add(
         DOT, DS.PASSENGER_SIDE, "Body and doors",
         P.AMAZON_DOT_DECAL, T.NOT_VISIBLE,
         position=Pos.PASSENGER_SIDE,
-        severity="medium",
         description="Amazon DOT decal (USDOT2881058) is damaged, missing, excessively "
                     "dirty, or not visible, or any existing DOT decals on rental "
                     "vehicles are not covered and visible",
@@ -666,7 +611,6 @@ _add(
         DOT, DS.PASSENGER_SIDE, "Body and doors",
         P.PRIME_DECAL, T.NOT_VISIBLE,
         position=Pos.PASSENGER_SIDE,
-        severity="low",
         description="Prime decal is damaged, missing, excessively dirty, or not visible",
     ),
     # Back tire
@@ -674,7 +618,6 @@ _add(
         ALL_ASSETS, DS.PASSENGER_SIDE, "Back tire, wheel and rim",
         P.WHEEL_NUT, T.DAMAGED,
         position=Pos.PASSENGER_REAR,
-        severity="high",
         description="Wheel, wheel nuts, rim, or mounting equipment is damaged, "
                     "cracked, loose, missing, or broken",
     ),
@@ -682,7 +625,6 @@ _add(
         DOT, DS.PASSENGER_SIDE, "Back tire, wheel and rim",
         P.MUD_FLAP, T.ITEMS_LOOSE_OR_HELD_WITH_TAPE,
         position=Pos.PASSENGER_REAR,
-        severity="medium",
         description="Mud Flap is damaged, missing, unsecured or held up with a "
                     "zip-tie, tape or similar",
     ),
@@ -691,7 +633,6 @@ _add(
         P.TIRE, T.LOW_TREAD,
         position=Pos.PASSENGER_REAR,
         sub_positions=SUB_TREAD_LOC,
-        severity="high",
         description="Tire has insufficient tread (Less than 2/32 or 1.6mm) on inner "
                     "most, middle, or outer most tread",
         details_schema=SCHEMA_TREAD_DEPTH_2_32,
@@ -700,7 +641,6 @@ _add(
         ALL_ASSETS, DS.PASSENGER_SIDE, "Back tire, wheel and rim",
         P.TIRE, T.SIDEWALL_DAMAGE,
         position=Pos.PASSENGER_REAR,
-        severity="high",
         description="Tire has objects, cuts, dents, swells, leaks, appears flat, or "
                     "exposed wire on surface",
     ),
@@ -715,13 +655,11 @@ _add(
     row(
         ALL_ASSETS, DS.IN_CAB, "Wipers",
         P.WIPER_BLADE, T.NOT_WORKING,
-        severity="medium",
         description="Wiper blades are missing, damaged, or not working",
     ),
     row(
         ALL_ASSETS, DS.IN_CAB, "Wipers",
         P.WASHER_SYSTEM, T.NOT_WORKING,
-        severity="medium",
         description="Windshield washer system is not working and/or wiper fluid "
                     "reservoir is empty",
     ),
@@ -732,7 +670,6 @@ _add(
     row(
         ALL_ASSETS, DS.IN_CAB, "Driver Seat",
         P.DRIVER_SEAT, T.EXPOSED_INTERIOR,
-        severity="medium",
         description="Seat integrity is compromised (for example: cannot be adjusted, "
                     "has exposed metal, wire, spring, or missing, torn, loose cushioning)",
     ),
@@ -743,32 +680,27 @@ _add(
     row(
         ALL_ASSETS, DS.IN_CAB, "Brakes",
         P.SERVICE_BRAKE, T.SQUEAKING,
-        severity="medium",
         description="Foot brake is squeaking, loose, weak, or stiff",
     ),
     row(
         DOT, DS.IN_CAB, "Brakes",
         P.AIR_PRESSURE_GAUGE, T.READS_OVER_120_PSI,
-        severity="critical",
         description="Air pressure gauge reads more than 120 PSI",
         details_schema=SCHEMA_AIR_PSI,
     ),
     row(
         ALL_ASSETS, DS.IN_CAB, "Brakes",
         P.SERVICE_BRAKE, T.GRINDING,
-        severity="critical",
         description="Foot brake is grinding, vibrates, leaking air, or not working",
     ),
     row(
         ALL_ASSETS, DS.IN_CAB, "Brakes",
         P.PARKING_BRAKE, T.WEAK,
-        severity="medium",
         description="Parking brake is loose, weak, or stiff",
     ),
     row(
         ALL_ASSETS, DS.IN_CAB, "Brakes",
         P.PARKING_BRAKE, T.NOT_WORKING,
-        severity="critical",
         description="Parking brake is not working",
     ),
 )
@@ -778,13 +710,11 @@ _add(
     row(
         ALL_ASSETS, DS.IN_CAB, "HVAC systems",
         P.DEFROSTER, T.NOT_WORKING,
-        severity="high",
         description="Defroster/heater is not working",
     ),
     row(
         ALL_ASSETS, DS.IN_CAB, "HVAC systems",
         P.AC, T.NO_COLD_AIR,
-        severity="medium",
         description="AC is not blowing cold air",
     ),
 )
@@ -794,27 +724,23 @@ _add(
     row(
         ALL_ASSETS, DS.IN_CAB, "Steering, seatbelt, horn, and alarm",
         P.HORN, T.NOT_WORKING,
-        severity="high",
         description="Horn, backup alarm, or seatbelt alarm is not working",
     ),
     row(
         ALL_ASSETS, DS.IN_CAB, "Steering, seatbelt, horn, and alarm",
         P.SEATBELT, T.MISSING,
         sub_positions=SUB_SEATBELT_PART,
-        severity="critical",
         description="Seatbelt: anchor, buckle, casing, or belt is missing, torn, "
                     "frayed, or not working",
     ),
     row(
         ALL_ASSETS, DS.IN_CAB, "Steering, seatbelt, horn, and alarm",
         P.STEERING_WHEEL, T.VIBRATION,
-        severity="high",
         description="Steering wheel has excessive vibration",
     ),
     row(
         ALL_ASSETS, DS.IN_CAB, "Steering, seatbelt, horn, and alarm",
         P.STEERING_WHEEL, T.NEEDS_ALIGNMENT,
-        severity="high",
         description="Steering wheel is stiff, loose, or needs alignment",
     ),
 )
@@ -825,27 +751,23 @@ _add(
         ALL_ASSETS, DS.IN_CAB, "Lights and light covers",
         P.TURN_SIGNAL, T.NOT_WORKING,
         position_options=[Pos.DRIVER_SIDE, Pos.PASSENGER_SIDE, Pos.FRONT, Pos.REAR],
-        severity="high",
         description="Turn signal is not working",
     ),
     row(
         ALL_ASSETS, DS.IN_CAB, "Lights and light covers",
         P.WARNING_LAMP, T.NOT_WORKING,
-        severity="medium",
         description="Dashboard light is not working",
     ),
     row(
         ALL_ASSETS, DS.IN_CAB, "Lights and light covers",
         P.WARNING_LAMP, T.ON_OR_FLASHING,
         sub_positions=SUB_WARNING_LAMPS,
-        severity="high",
         description="Any red warning lights/lamps are on or flashing",
         details_schema=SCHEMA_WARNING_LAMP,
     ),
     row(
         ALL_ASSETS, DS.IN_CAB, "Lights and light covers",
         P.HAZARD_LIGHT, T.NOT_WORKING,
-        severity="high",
         description="Hazard light is not working",
     ),
 )
@@ -855,13 +777,11 @@ _add(
     row(
         ALL_ASSETS, DS.IN_CAB, "Body and doors",
         P.BULKHEAD_DOOR, T.WONT_OPEN,
-        severity="medium",
         description="Interior sliding door (bulkhead doors) cannot open or close",
     ),
     row(
         ALL_ASSETS, DS.IN_CAB, "Body and doors",
         P.SHELF, T.ITEMS_LOOSE_OR_HELD_WITH_TAPE,
-        severity="medium",
         description="Items attached to the body of the vehicle (for example: shelves, "
                     "floor panels) are missing, damaged, loose, unsecure, hanging, or "
                     "held with a zip-tie, tape, or similar",
@@ -870,7 +790,6 @@ _add(
         ALL_ASSETS, DS.IN_CAB, "Body and doors",
         P.EXTERIOR_DOOR, T.WONT_OPEN,
         sub_positions=SUB_DOOR,
-        severity="high",
         description="One or more exterior doors (driver, passenger, cargo, or back "
                     "door) cannot open, close, lock, or unlock properly from the "
                     "inside of the vehicle",
@@ -882,7 +801,6 @@ _add(
     row(
         ALL_ASSETS, DS.IN_CAB, "Safety accessories",
         P.DELIVERY_DEVICE_CRADLE, T.ITEMS_LOOSE_OR_HELD_WITH_TAPE,
-        severity="low",
         description="Delivery device cradle is damaged, missing, or is mounted with "
                     "a tape, zip-tie or similar",
     ),
@@ -893,13 +811,11 @@ _add(
     row(
         ALL_ASSETS, DS.IN_CAB, "Camera/monitor",
         P.NETRADYNE_CAMERA, T.HANGING,
-        severity="medium",
         description="Netradyne camera is hanging/disconnected from bracket",
     ),
     row(
         ALL_ASSETS, DS.IN_CAB, "Camera/monitor",
         P.CAMERA_MONITOR, T.OBSTRUCTED,
-        severity="medium",
         description="Rear or side camera monitor is missing, broken, unsecure, "
                     "obstructed, or not working",
     ),
@@ -910,14 +826,12 @@ _add(
     row(
         ALL_ASSETS, DS.IN_CAB, "Windshield",
         P.WINDSHIELD, T.CRACKED,
-        severity="high",
         description="Any crack, chip, stars on the windshield >1/2 inch (excluding "
                     "1 inch boarder of windshield)",
     ),
     row(
         ALL_ASSETS, DS.IN_CAB, "Windshield",
         P.DEVICE_ON_WINDSHIELD, T.DEVICE_MOUNTED,
-        severity="medium",
         description="Device/Accessory is mounted on the windshield",
     ),
 )

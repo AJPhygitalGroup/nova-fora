@@ -19,7 +19,6 @@ from app.auth.hashing import hash_password
 from app.db import AsyncSessionLocal
 from app.models.base import utc_now
 from app.models.inspection import (
-    DefectSeverity,
     Inspection,
     InspectionResult,
     OdometerSource,
@@ -222,11 +221,11 @@ from datetime import datetime, timezone
 
 INSPECTION_SEED_RIBRELL = [
     # (fleet_id, mileage, utc_submitted_at, defects[])
-    # Each defect: (section, part, desc, severity, category)
+    # Each defect: (section, part, desc, category)
     (
         "PR013", 86209, "2026-04-15T07:15:23Z",
         [
-            ("2. Driver Side", "Rear bumper", "Minor scrape on rear bumper", DefectSeverity.LOW, "Body"),
+            ("2. Driver Side", "Rear bumper", "Minor scrape on rear bumper", "Body"),
         ],
     ),
     (
@@ -236,14 +235,14 @@ INSPECTION_SEED_RIBRELL = [
     (
         "PR016", 95073, "2026-04-15T07:17:10Z",
         [
-            ("1. Front Side", "Windshield", "Chip near driver vision area — spreading", DefectSeverity.HIGH, "Glass"),
-            ("3. Passenger Side", "Side mirror", "Mirror glass cracked", DefectSeverity.MEDIUM, "Body"),
+            ("1. Front Side", "Windshield", "Chip near driver vision area — spreading", "Glass"),
+            ("3. Passenger Side", "Side mirror", "Mirror glass cracked", "Body"),
         ],
     ),
     (
         "PR005", 83646, "2026-04-15T07:23:20Z",
         [
-            ("4. Rear", "Brake lights", "Left brake light intermittent", DefectSeverity.MEDIUM, "Lighting"),
+            ("4. Rear", "Brake lights", "Left brake light intermittent", "Lighting"),
         ],
     ),
     (
@@ -253,7 +252,7 @@ INSPECTION_SEED_RIBRELL = [
     (
         "PR026", 0, "2026-04-15T07:31:17Z",
         [
-            ("6. Brakes", "Rear brake pads", "Grinding sound on hard stops", DefectSeverity.CRITICAL, "Brakes"),
+            ("6. Brakes", "Rear brake pads", "Grinding sound on hard stops", "Brakes"),
         ],
     ),
     (
@@ -263,8 +262,8 @@ INSPECTION_SEED_RIBRELL = [
     (
         "PR006", 99597, "2026-04-15T07:41:35Z",
         [
-            ("7. Tires", "Front left tire", "Tread at 3/32 — due for replacement", DefectSeverity.HIGH, "Tires"),
-            ("5. In-Cab", "Seatbelt", "Retractor sticks", DefectSeverity.LOW, "Safety"),
+            ("7. Tires", "Front left tire", "Tread at 3/32 — due for replacement", "Tires"),
+            ("5. In-Cab", "Seatbelt", "Retractor sticks", "Safety"),
         ],
     ),
 ]
@@ -319,13 +318,8 @@ async def cmd_seed_inspections() -> None:
                 skipped += 1
                 continue
 
-            # Derive result
-            if not defects:
-                result = InspectionResult.PASSED
-            else:
-                has_critical = any(d[3] == DefectSeverity.CRITICAL for d in defects)
-                has_high = any(d[3] == DefectSeverity.HIGH for d in defects)
-                result = InspectionResult.FLAGGED if (has_critical or has_high) else InspectionResult.CONDITIONAL
+            # Derive result — any defects → FLAGGED
+            result = InspectionResult.PASSED if not defects else InspectionResult.FLAGGED
 
             insp = Inspection(
                 vehicle_id=vehicle.id,
@@ -340,13 +334,12 @@ async def cmd_seed_inspections() -> None:
             session.add(insp)
             await session.flush()
 
-            for (section, part, desc, severity, category) in defects:
+            for (section, part, desc, category) in defects:
                 rd = ReportedDefect(
                     inspection_id=insp.id,
                     section=section,
                     part=part,
                     description=desc,
-                    severity=severity,
                     category=category,
                 )
                 session.add(rd)
@@ -426,7 +419,7 @@ async def cmd_seed_defect_catalog() -> None:
 
         # ── details_schema ──
         ds_count = 0
-        for part, defect_type, json_schema, default_severity in seed["details_schema"]:
+        for part, defect_type, json_schema in seed["details_schema"]:
             row = (
                 await session.execute(
                     select(DefectDetailsSchema)
@@ -438,12 +431,10 @@ async def cmd_seed_defect_catalog() -> None:
                 session.add(DefectDetailsSchema(
                     part=part, defect_type=defect_type,
                     json_schema=json_schema,
-                    default_severity=default_severity,
                 ))
                 ds_count += 1
             else:
                 row.json_schema = json_schema
-                row.default_severity = default_severity
                 session.add(row)
 
         await session.commit()
@@ -494,7 +485,6 @@ async def cmd_seed_dvic_template() -> None:
                         position=r["position"],
                         position_options_csv=r["position_options_csv"],
                         sub_positions=r["sub_positions"],
-                        default_severity=r["default_severity"],
                         description=r["description"],
                         details_schema=r["details_schema"],
                         ordering=r["ordering"],
@@ -506,7 +496,6 @@ async def cmd_seed_dvic_template() -> None:
                 existing.part_category = r["part_category"]
                 existing.position_options_csv = r["position_options_csv"]
                 existing.sub_positions = r["sub_positions"]
-                existing.default_severity = r["default_severity"]
                 existing.description = r["description"]
                 existing.details_schema = r["details_schema"]
                 existing.ordering = r["ordering"]

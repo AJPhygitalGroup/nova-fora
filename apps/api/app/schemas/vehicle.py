@@ -1,8 +1,8 @@
 """Vehicle request/response schemas — matches nova-fora-demo/src/data/mockData.js.
 
-Derived fields (defect_count, severity, last_inspected, photos) are set to
-defaults here. Later, when inspections/defects are live, the endpoint will
-JOIN with those tables and populate these fields from real data.
+Derived fields (defect_count, last_inspected, photos) are set to defaults
+here. Later, when inspections/defects are live, the endpoint will JOIN
+with those tables and populate these fields from real data.
 """
 from datetime import datetime
 
@@ -31,7 +31,6 @@ class VehicleResponse(BaseModel):
 
     # Derived from inspections / defects (stubbed until Semana 3 PR 2)
     defect_count: int = 0
-    severity: str = "clean"   # clean | low | medium | high | critical
     last_inspected: str | None = None  # "Today, 6:15 AM" or ISO timestamp
     photos: int = 0
     inspector: str | None = None

@@ -11,14 +11,12 @@ from app.models.defect_catalog import (
     DefectPartSystem,
     DefectPartValidity,
     DefectPosition,
-    DefectSeverityOverride,
     DefectSystem,
     DefectType,
     DvicSection,
     DvicTemplateItem,
 )
 from app.models.inspection import (
-    DefectSeverity,
     DefectStatus,
     Inspection,
     InspectionResult,
@@ -44,8 +42,6 @@ __all__ = [
     "DefectPartSystem",
     "DefectPartValidity",
     "DefectPosition",
-    "DefectSeverity",
-    "DefectSeverityOverride",
     "DefectStatus",
     "DefectSystem",
     "DefectType",

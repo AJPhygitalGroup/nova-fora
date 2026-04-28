@@ -4,7 +4,6 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.inspection import (
-    DefectSeverity,
     DefectStatus,
     Inspection,
     InspectionResult,
@@ -22,8 +21,7 @@ class DefectCreate(BaseModel):
     schemas during the transition. New clients should use v2 fields.
 
     Validation order at the route layer:
-      - If `part_v2` is set → treat as v2: validate against catalog,
-        derive severity from catalog (overridable via severity_override).
+      - If `part_v2` is set → treat as v2: validate against catalog.
       - Else if legacy fields are set → store as legacy free-text rows.
     """
 
@@ -35,16 +33,12 @@ class DefectCreate(BaseModel):
     position: str | None = Field(default=None, max_length=30)
     defect_type_v2: str | None = Field(default=None, max_length=40)
     details: dict = Field(default_factory=dict)
-    severity_override: str | None = Field(
-        default=None, pattern=r"^(low|medium|high|critical)$"
-    )
     notes: str | None = Field(default=None, max_length=2000)
 
     # ── legacy fields (transition only) ──
     section: str | None = Field(default=None, max_length=100)
     part: str | None = Field(default=None, max_length=100)
     description: str | None = Field(default=None, max_length=2000)
-    severity: DefectSeverity | None = None
     category: str | None = Field(default=None, max_length=100)
 
     model_config = ConfigDict(extra="forbid")
@@ -68,7 +62,6 @@ class DefectResponse(BaseModel):
     part: str
     description: str
     category: str | None = None
-    severity: DefectSeverity
     status: DefectStatus
     photo_count: int
     created_at: datetime
@@ -143,7 +136,6 @@ class DefectResponse(BaseModel):
             part=d.part,
             description=d.description,
             category=d.category,
-            severity=d.severity,
             status=d.status,
             photo_count=d.photo_count,
             created_at=d.created_at,

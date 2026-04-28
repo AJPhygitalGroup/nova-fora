@@ -18,7 +18,6 @@ from app.auth.dependencies import get_current_user
 from app.db import get_session
 from app.models.base import utc_now
 from app.models.inspection import (
-    DefectSeverity,
     DefectStatus,
     Inspection,
     ReportedDefect,
@@ -46,7 +45,6 @@ router = APIRouter(prefix="/defects", tags=["defects"])
 async def list_defects(
     dsp_id: int | None = Query(default=None),
     status_: DefectStatus | None = Query(default=None, alias="status"),
-    severity: DefectSeverity | None = Query(default=None),
     vehicle_id: str | None = Query(default=None, description="Int or VAN-XXXX"),
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
@@ -81,10 +79,6 @@ async def list_defects(
     if status_ is not None:
         base_query = base_query.where(ReportedDefect.status == status_.value)
         count_query = count_query.where(ReportedDefect.status == status_.value)
-    if severity is not None:
-        base_query = base_query.where(ReportedDefect.severity == severity.value)
-        count_query = count_query.where(ReportedDefect.severity == severity.value)
-
     if vehicle_id is not None:
         from app.routes.vehicles import _parse_vehicle_id
         vid = _parse_vehicle_id(vehicle_id)

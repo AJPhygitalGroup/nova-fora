@@ -201,16 +201,18 @@ PART_VALIDITY_ROWS.extend((p, [], False, True) for p in NO_POSITION_PARTS)
 
 # ─────────────────────────────────────────────────────
 # defect_details_schema seed (truncated subset — full set in DB)
-# Each tuple: (part, defect_type, json_schema_dict, default_severity)
+# Each tuple: (part, defect_type, json_schema_dict)
 # ─────────────────────────────────────────────────────
 EMPTY_SCHEMA: dict = {}
 
-# Compact helper: "(part, [types], default_sev)" → expand to rows
-def _flat(part, types, default_sev="medium", schema=None):
+# Compact helper: expand a part + list of types → rows.
+# Severity-related arguments are accepted but ignored (kept for backward compat
+# with the existing call sites until they're rewritten).
+def _flat(part, types, default_sev=None, schema=None):
     out = []
     s = schema if schema is not None else EMPTY_SCHEMA
     for t in types:
-        out.append((part, t, s, default_sev))
+        out.append((part, t, s))
     return out
 
 
@@ -220,7 +222,7 @@ DETAILS_SCHEMA_ROWS = []
 DETAILS_SCHEMA_ROWS.extend(_flat(P.TIRE, [
     T.FLAT, T.SIDEWALL_DAMAGE, T.OBJECT_EMBEDDED, T.EXPOSED_WIRE, T.BULGE,
     T.LEAKING, T.MISSING,
-], default_sev="critical"))
+]))
 DETAILS_SCHEMA_ROWS.append((
     P.TIRE, T.LOW_TREAD,
     {
@@ -229,15 +231,14 @@ DETAILS_SCHEMA_ROWS.append((
         "properties": {"tread_depth_32nds": {"type": "integer", "minimum": 0, "maximum": 10}},
         "additionalProperties": False,
     },
-    "high",
 ))
 
 # rim, wheel_nut, mounting_equipment
-DETAILS_SCHEMA_ROWS.extend(_flat(P.RIM, [T.DAMAGED, T.CRACKED, T.BENT, T.RUSTED], "high"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.WHEEL_NUT, [T.MISSING, T.LOOSE, T.DAMAGED, T.RUSTED], "critical"))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.RIM, [T.DAMAGED, T.CRACKED, T.BENT, T.RUSTED]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.WHEEL_NUT, [T.MISSING, T.LOOSE, T.DAMAGED, T.RUSTED]))
 DETAILS_SCHEMA_ROWS.extend(_flat(P.MOUNTING_EQUIPMENT, [
     T.STUD_BROKEN, T.HUB_CAP_MISSING, T.LOOSE, T.DAMAGED, T.OTHER_DAMAGE,
-], "high"))
+]))
 
 # Lights — most accept not_working, missing, damaged
 LIGHT_PARTS = [
@@ -247,7 +248,7 @@ LIGHT_PARTS = [
 ]
 for part in LIGHT_PARTS:
     DETAILS_SCHEMA_ROWS.extend(_flat(
-        part, [T.NOT_WORKING, T.INTERMITTENT, T.FLICKERING, T.MISSING, T.DAMAGED, T.CRACKED, T.COVER_CRACKED, T.COVER_MISSING], "medium"
+        part, [T.NOT_WORKING, T.INTERMITTENT, T.FLICKERING, T.MISSING, T.DAMAGED, T.CRACKED, T.COVER_CRACKED, T.COVER_MISSING]
     ))
 
 # Windshield + wipers
@@ -259,23 +260,22 @@ DETAILS_SCHEMA_ROWS.append((
         "properties": {"in_drivers_line_of_sight": {"type": "boolean"}},
         "additionalProperties": False,
     },
-    "high",
 ))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.WINDSHIELD, [T.ZIP_TIED_OR_TAPED, T.OTHER_DAMAGE], "medium"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.WIPER_BLADE, [T.NOT_WORKING, T.TORN, T.MISSING, T.DAMAGED], "medium"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.WASHER_SYSTEM, [T.NOT_WORKING, T.LEAKING, T.EMPTY], "low"))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.WINDSHIELD, [T.ZIP_TIED_OR_TAPED, T.OTHER_DAMAGE]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.WIPER_BLADE, [T.NOT_WORKING, T.TORN, T.MISSING, T.DAMAGED]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.WASHER_SYSTEM, [T.NOT_WORKING, T.LEAKING, T.EMPTY]))
 
 # Mirrors
 DETAILS_SCHEMA_ROWS.extend(_flat(P.SIDE_MIRROR, [
     T.CRACKED, T.BROKEN, T.MISSING, T.DAMAGED, T.LOOSE, T.MISALIGNED,
-], "medium"))
+]))
 
 # Body & steps
 BODY_PARTS = [P.BUMPER, P.FENDER, P.HOOD, P.SIDE_PANEL, P.FLOOR_PANEL, P.SIDE_STEP, P.REAR_STEP]
 for part in BODY_PARTS:
     DETAILS_SCHEMA_ROWS.extend(_flat(part, [
         T.DAMAGED, T.CRACKED, T.BROKEN, T.BENT, T.MISSING, T.LOOSE, T.HANGING, T.RUSTED,
-    ], "medium"))
+    ]))
 
 # Doors & windows
 DOOR_PARTS = [P.EXTERIOR_DOOR, P.SLIDING_SIDE_DOOR, P.BULKHEAD_DOOR, P.REAR_CARGO_DOOR, P.ROLL_UP_DOOR]
@@ -283,20 +283,20 @@ for part in DOOR_PARTS:
     DETAILS_SCHEMA_ROWS.extend(_flat(part, [
         T.WONT_OPEN, T.WONT_CLOSE, T.WONT_LOCK, T.WONT_UNLOCK, T.WONT_LATCH,
         T.STUCK, T.OFF_TRACK, T.DAMAGED, T.MISALIGNED,
-    ], "high"))
+    ]))
 DETAILS_SCHEMA_ROWS.extend(_flat(P.WINDOW, [
     T.CRACKED, T.BROKEN, T.WONT_OPEN, T.WONT_CLOSE, T.STUCK,
-], "medium"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.DOOR_HARDWARE, [T.DAMAGED, T.MISSING, T.LOOSE, T.NEEDS_GREASE], "low"))
+]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.DOOR_HARDWARE, [T.DAMAGED, T.MISSING, T.LOOSE, T.NEEDS_GREASE]))
 
 # Interior
-DETAILS_SCHEMA_ROWS.extend(_flat(P.DRIVER_SEAT, [T.DAMAGED, T.TORN, T.LOOSE, T.STUCK, T.MOUNT_DAMAGED], "medium"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.PASSENGER_SEAT, [T.DAMAGED, T.TORN, T.LOOSE, T.STUCK, T.MOUNT_DAMAGED], "low"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.SEATBELT, [T.NOT_WORKING, T.WONT_RETRACT, T.FRAYED, T.DAMAGED, T.MISSING], "critical"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.SEATBELT_BUCKLE, [T.NOT_WORKING, T.WONT_LATCH, T.DAMAGED, T.MISSING], "critical"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.SUN_VISOR, [T.DAMAGED, T.MISSING, T.LOOSE, T.BROKEN], "low"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.INTERIOR_CLEANLINESS, [T.DIRTY], "low"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.INTERIOR_LOOSE_OBJECTS, [T.HAS_LOOSE_OBJECTS], "low"))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.DRIVER_SEAT, [T.DAMAGED, T.TORN, T.LOOSE, T.STUCK, T.MOUNT_DAMAGED]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.PASSENGER_SEAT, [T.DAMAGED, T.TORN, T.LOOSE, T.STUCK, T.MOUNT_DAMAGED]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.SEATBELT, [T.NOT_WORKING, T.WONT_RETRACT, T.FRAYED, T.DAMAGED, T.MISSING]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.SEATBELT_BUCKLE, [T.NOT_WORKING, T.WONT_LATCH, T.DAMAGED, T.MISSING]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.SUN_VISOR, [T.DAMAGED, T.MISSING, T.LOOSE, T.BROKEN]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.INTERIOR_CLEANLINESS, [T.DIRTY]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.INTERIOR_LOOSE_OBJECTS, [T.HAS_LOOSE_OBJECTS]))
 
 # Fire extinguisher (compliance dual-listed)
 DETAILS_SCHEMA_ROWS.append((
@@ -306,31 +306,30 @@ DETAILS_SCHEMA_ROWS.append((
         "properties": {"expiration_date": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"}},
         "additionalProperties": False,
     },
-    "high",
 ))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.FIRE_EXTINGUISHER, [T.MISSING, T.DAMAGED, T.UNSECURED], "critical"))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.FIRE_EXTINGUISHER, [T.MISSING, T.DAMAGED, T.UNSECURED]))
 
 # Brakes & steering
-DETAILS_SCHEMA_ROWS.extend(_flat(P.PARKING_BRAKE, [T.NOT_WORKING, T.NEEDS_ADJUSTMENT, T.STUCK], "critical"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.SERVICE_BRAKE, [T.NOT_WORKING, T.NEEDS_DIAGNOSTIC, T.NOISE, T.PULLS_LEFT, T.PULLS_RIGHT], "critical"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.STEERING_WHEEL, [T.VIBRATION, T.PULLS_LEFT, T.PULLS_RIGHT, T.NOISE, T.OFF_CENTER], "high"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.ALIGNMENT, [T.PULLS_LEFT, T.PULLS_RIGHT, T.OFF_CENTER, T.NEEDS_ADJUSTMENT], "medium"))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.PARKING_BRAKE, [T.NOT_WORKING, T.NEEDS_ADJUSTMENT, T.STUCK]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.SERVICE_BRAKE, [T.NOT_WORKING, T.NEEDS_DIAGNOSTIC, T.NOISE, T.PULLS_LEFT, T.PULLS_RIGHT]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.STEERING_WHEEL, [T.VIBRATION, T.PULLS_LEFT, T.PULLS_RIGHT, T.NOISE, T.OFF_CENTER]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.ALIGNMENT, [T.PULLS_LEFT, T.PULLS_RIGHT, T.OFF_CENTER, T.NEEDS_ADJUSTMENT]))
 
 # HVAC
-DETAILS_SCHEMA_ROWS.extend(_flat(P.AC, [T.NO_COLD_AIR, T.NOT_WORKING, T.INTERMITTENT, T.NOISE], "medium"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.HEATER, [T.NO_HEAT, T.NOT_WORKING, T.INTERMITTENT], "medium"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.DEFROSTER, [T.NOT_WORKING, T.INTERMITTENT], "high"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.CABIN_FAN, [T.NOT_WORKING, T.NOISE, T.INTERMITTENT], "low"))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.AC, [T.NO_COLD_AIR, T.NOT_WORKING, T.INTERMITTENT, T.NOISE]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.HEATER, [T.NO_HEAT, T.NOT_WORKING, T.INTERMITTENT]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.DEFROSTER, [T.NOT_WORKING, T.INTERMITTENT]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.CABIN_FAN, [T.NOT_WORKING, T.NOISE, T.INTERMITTENT]))
 
 # Cameras & electronics
 CAMERA_PARTS = [P.NETRADYNE_CAMERA, P.REAR_CAMERA, P.SIDE_CAMERA]
 for part in CAMERA_PARTS:
     DETAILS_SCHEMA_ROWS.extend(_flat(part, [
         T.NOT_WORKING, T.HANGING, T.DISCONNECTED, T.LOOSE, T.DAMAGED, T.MISSING,
-    ], "medium"))
+    ]))
 DETAILS_SCHEMA_ROWS.extend(_flat(P.CAMERA_MONITOR, [
     T.NOT_WORKING, T.MISSING, T.BROKEN, T.UNSECURED, T.DAMAGED,
-], "high"))
+]))
 
 # Warning lamp — structured details
 DETAILS_SCHEMA_ROWS.append((
@@ -352,22 +351,21 @@ DETAILS_SCHEMA_ROWS.append((
         },
         "additionalProperties": False,
     },
-    "high",
 ))
 
-DETAILS_SCHEMA_ROWS.extend(_flat(P.HORN, [T.NOT_WORKING, T.INTERMITTENT], "medium"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.BACKUP_ALARM, [T.NOT_WORKING, T.INTERMITTENT], "medium"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.SEATBELT_ALARM, [T.NOT_WORKING, T.INTERMITTENT], "low"))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.HORN, [T.NOT_WORKING, T.INTERMITTENT]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.BACKUP_ALARM, [T.NOT_WORKING, T.INTERMITTENT]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.SEATBELT_ALARM, [T.NOT_WORKING, T.INTERMITTENT]))
 
-DETAILS_SCHEMA_ROWS.extend(_flat(P.USB_PORT, [T.NOT_WORKING, T.LOOSE, T.DAMAGED], "low"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.PHONE_CHARGER, [T.NOT_WORKING, T.LOOSE, T.DAMAGED, T.MISSING], "low"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.DELIVERY_DEVICE_CRADLE, [T.MISSING, T.DAMAGED, T.LOOSE, T.MOUNT_DAMAGED], "low"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.PHONE_CRADLE, [T.MISSING, T.DAMAGED, T.LOOSE, T.MOUNT_DAMAGED], "low"))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.USB_PORT, [T.NOT_WORKING, T.LOOSE, T.DAMAGED]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.PHONE_CHARGER, [T.NOT_WORKING, T.LOOSE, T.DAMAGED, T.MISSING]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.DELIVERY_DEVICE_CRADLE, [T.MISSING, T.DAMAGED, T.LOOSE, T.MOUNT_DAMAGED]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.PHONE_CRADLE, [T.MISSING, T.DAMAGED, T.LOOSE, T.MOUNT_DAMAGED]))
 
 # Fluids
 FLUID_PARTS = [P.COOLANT, P.BRAKE_FLUID, P.POWER_STEERING_FLUID, P.DEF_FLUID, P.ENGINE_OIL, P.GEAR_OIL]
 for part in FLUID_PARTS:
-    DETAILS_SCHEMA_ROWS.extend(_flat(part, [T.LOW_FLUID, T.EMPTY, T.LEAKING], "high"))
+    DETAILS_SCHEMA_ROWS.extend(_flat(part, [T.LOW_FLUID, T.EMPTY, T.LEAKING]))
 
 # Compliance — expirations have structured details
 DETAILS_SCHEMA_ROWS.append((
@@ -377,7 +375,6 @@ DETAILS_SCHEMA_ROWS.append((
         "properties": {"expiration_month": {"type": "string", "pattern": r"^\d{4}-\d{2}$"}},
         "additionalProperties": False,
     },
-    "critical",
 ))
 DETAILS_SCHEMA_ROWS.append((
     P.REGISTRATION_STICKER, T.EXPIRED,
@@ -386,7 +383,6 @@ DETAILS_SCHEMA_ROWS.append((
         "properties": {"expiration_month": {"type": "string", "pattern": r"^\d{4}-\d{2}$"}},
         "additionalProperties": False,
     },
-    "critical",
 ))
 DETAILS_SCHEMA_ROWS.append((
     P.LICENSE_PLATE, T.EXPIRED,
@@ -395,14 +391,13 @@ DETAILS_SCHEMA_ROWS.append((
         "properties": {"expiration_date": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"}},
         "additionalProperties": False,
     },
-    "high",
 ))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.LICENSE_PLATE, [T.MISSING, T.ILLEGIBLE, T.WRONG_VEHICLE], "high"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.INSPECTION_STICKER, [T.MISSING, T.ILLEGIBLE], "high"))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.REGISTRATION_STICKER, [T.MISSING, T.ILLEGIBLE], "high"))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.LICENSE_PLATE, [T.MISSING, T.ILLEGIBLE, T.WRONG_VEHICLE]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.INSPECTION_STICKER, [T.MISSING, T.ILLEGIBLE]))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.REGISTRATION_STICKER, [T.MISSING, T.ILLEGIBLE]))
 
 # Under vehicle
-DETAILS_SCHEMA_ROWS.extend(_flat(P.UNDERCARRIAGE_OBJECT, [T.OTHER_DAMAGE], "medium"))
+DETAILS_SCHEMA_ROWS.extend(_flat(P.UNDERCARRIAGE_OBJECT, [T.OTHER_DAMAGE]))
 
 
 def get_seed_data():

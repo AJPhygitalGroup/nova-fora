@@ -37,7 +37,6 @@ class DefectTypeInfo(BaseModel):
     id: DefectType
     label: str
     icon: str
-    default_severity: str
     # JSON Schema (draft-07) dict. Empty {} means no follow-up form.
     details_schema: dict = Field(default_factory=dict)
     requires_details: bool
@@ -89,7 +88,7 @@ class DefectCreateV2(BaseModel):
     Required: part + defect_type (validated against catalog).
     Conditional: position required for some parts (validated server-side).
     Optional: details (validated against (part, defect_type) JSON Schema),
-              notes (free text), severity_override.
+              notes (free text).
     """
 
     part: DefectPart
@@ -97,11 +96,6 @@ class DefectCreateV2(BaseModel):
     defect_type: DefectType
     details: dict = Field(default_factory=dict)
     notes: str | None = Field(default=None, max_length=2000)
-    severity_override: str | None = Field(
-        default=None,
-        pattern=r"^(low|medium|high|critical)$",
-        description="Override the default severity from the catalog.",
-    )
 
     model_config = ConfigDict(extra="forbid")
 
@@ -118,8 +112,6 @@ class DefectV2Detail(BaseModel):
     defect_type: DefectType
     defect_type_label: str
     details: dict
-    severity: str  # derived (default + override)
-    severity_source: str  # 'default' | 'override'
     notes: str | None = None
     photo_count: int
     status: str

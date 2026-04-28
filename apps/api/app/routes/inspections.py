@@ -10,7 +10,6 @@ from app.db import get_session
 from app.models.base import utc_now
 from app.models.defect_catalog import DefectPart, DefectPosition, DefectType
 from app.models.inspection import (
-    DefectSeverity,
     Inspection,
     InspectionResult,
     InspectionStatus,
@@ -53,8 +52,7 @@ async def _create_defect_row(
     inspector_id: int,
 ) -> ReportedDefect:
     """Creates a ReportedDefect row from either v2 catalog data or legacy
-    free-text fields. Validates v2 inputs against the catalog before insert
-    and derives the severity from the catalog (overridable per row).
+    free-text fields. Validates v2 inputs against the catalog before insert.
 
     Raises CatalogValidationError on v2 validation failures (caller maps to 400).
     """
@@ -73,10 +71,9 @@ async def _create_defect_row(
             except ValueError as e:
                 raise CatalogValidationError(f"unknown position: {body.position}") from e
 
-        default_severity = await validate_v2_defect(
+        await validate_v2_defect(
             session, part_enum, pos_enum, type_enum, body.details
         )
-        severity_resolved = body.severity_override or default_severity
 
         rd = ReportedDefect(
             inspection_id=inspection_id,
@@ -88,7 +85,6 @@ async def _create_defect_row(
                 or _human_summary(part_enum, pos_enum, type_enum, body.details)
             ),
             category=None,
-            severity=DefectSeverity(severity_resolved),
             # v2 columns (canonical)
             part_enum=part_enum.value,
             position=pos_enum.value if pos_enum else None,
@@ -101,10 +97,10 @@ async def _create_defect_row(
         return rd
 
     # ── Legacy path ──
-    if not (body.part and body.description and body.severity):
+    if not (body.part and body.description):
         raise CatalogValidationError(
             "must provide either v2 fields (part_v2 + defect_type_v2) or "
-            "legacy fields (section + part + description + severity)"
+            "legacy fields (section + part + description)"
         )
     return ReportedDefect(
         inspection_id=inspection_id,
@@ -112,7 +108,6 @@ async def _create_defect_row(
         part=body.part,
         description=body.description,
         category=body.category,
-        severity=body.severity,
         # No v2 fields populated → row is legacy
         reported_by_id=inspector_id,
         reported_at=now,
@@ -158,32 +153,20 @@ def _human_summary(
 router = APIRouter(prefix="/inspections", tags=["inspections"])
 
 
-# Severity rank used to compute an inspection's result from its defects
-_SEVERITY_RANK = {
-    DefectSeverity.LOW: 1,
-    DefectSeverity.MEDIUM: 2,
-    DefectSeverity.HIGH: 3,
-    DefectSeverity.CRITICAL: 4,
-}
-
-
 def _compute_result(defects: list) -> InspectionResult:
     """Derive inspection result from its defects.
 
     No defects → PASSED.
-    ≥ CRITICAL or ≥ 3 HIGH → FLAGGED.
-    Otherwise → CONDITIONAL.
+    Any defects → FLAGGED.
+
+    The previous severity-based 3-state ladder (PASSED / FLAGGED / CONDITIONAL)
+    was simplified to binary after severity was removed from the model.
+    INCOMPLETE remains a separate state set explicitly when the inspector
+    bails before finishing (incomplete_reason populated).
     """
     if not defects:
         return InspectionResult.PASSED
-    max_sev = max(_SEVERITY_RANK[d.severity] for d in defects)
-    critical_count = sum(1 for d in defects if d.severity == DefectSeverity.CRITICAL)
-    high_count = sum(1 for d in defects if d.severity == DefectSeverity.HIGH)
-    if critical_count >= 1 or high_count >= 3:
-        return InspectionResult.FLAGGED
-    if max_sev >= _SEVERITY_RANK[DefectSeverity.HIGH]:
-        return InspectionResult.FLAGGED
-    return InspectionResult.CONDITIONAL
+    return InspectionResult.FLAGGED
 
 
 def _parse_inspection_id(raw: str) -> int:

@@ -396,29 +396,6 @@ class DefectDetailsSchema(SQLModel, table=True):
         default_factory=dict,
         sa_column=Column("json_schema", sa.JSON, nullable=False, server_default="{}"),
     )
-    # Default severity for this combo (low/medium/high/critical).
-    # Per-defect override stored on reported_defects.severity_override.
-    default_severity: str = Field(default="medium", max_length=20)
-
-
-class DefectSeverityOverride(SQLModel, table=True):
-    """Optional per-defect severity override.
-
-    When set, supersedes the default_severity from defect_details_schema.
-    Lets DSP admin or vendor admin upgrade/downgrade a defect's urgency
-    based on context (e.g. windshield crack outside line of sight = low,
-    inside = critical regardless of part-level default).
-    """
-
-    __tablename__ = "defect_severity_override"
-
-    defect_id: int = Field(foreign_key="reported_defects.id", primary_key=True)
-    severity: str = Field(max_length=20, nullable=False)
-    reason: str | None = Field(default=None, max_length=500)
-    set_by_id: int | None = Field(default=None, foreign_key="users.id")
-    created_at: __import__("datetime").datetime = Field(
-        default_factory=utc_now, sa_column=timestamp_column("created_at")
-    )
 
 
 # ─────────────────────────────────────────────────────
@@ -498,11 +475,6 @@ class DvicTemplateItem(SQLModel, table=True):
         sa_column=Column("sub_positions", sa.JSON, nullable=True),
         description="Inline picker dimensions beyond physical position (beam type, "
                     "tread location, seatbelt component, brake symptom, etc.). Null if none.",
-    )
-
-    default_severity: str = Field(
-        default="medium", max_length=20, nullable=False,
-        description="low|medium|high|critical — applied unless override at report time.",
     )
 
     # Exact PDF text — shown in the wizard UI

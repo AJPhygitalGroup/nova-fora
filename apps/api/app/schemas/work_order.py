@@ -36,7 +36,6 @@ class WorkOrderItemResponse(BaseModel):
     defect_section: str | None = None
     defect_part: str | None = None
     defect_description: str | None = None
-    defect_severity: str | None = None
     defect_status: str | None = None
     defect_is_v2: bool = False
     defect_part_label: str | None = None

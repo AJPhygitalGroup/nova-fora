@@ -52,13 +52,6 @@ class OdometerSource(str, Enum):
     DERIVED = "derived"    # pulled from last Work Order
 
 
-class DefectSeverity(str, Enum):
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    CRITICAL = "critical"
-
-
 class DefectStatus(str, Enum):
     PENDING = "pending"              # fresh — DSP hasn't reviewed yet
     ACKNOWLEDGED = "acknowledged"    # DSP saw + accepted
@@ -190,20 +183,6 @@ class ReportedDefect(SQLModel, table=True):
     description: str = Field(max_length=2000, nullable=False)
     category: str | None = Field(default=None, max_length=100)
     # e.g. "Glass", "Lighting", "Brakes" — used later to match vendor catalogs
-
-    severity: DefectSeverity = Field(
-        sa_column=Column(
-            "severity",
-            sa.Enum(
-                DefectSeverity,
-                native_enum=False,
-                length=20,
-                values_callable=lambda e: [m.value for m in e],
-            ),
-            nullable=False,
-            index=True,
-        )
-    )
 
     status: DefectStatus = Field(
         default=DefectStatus.PENDING,
