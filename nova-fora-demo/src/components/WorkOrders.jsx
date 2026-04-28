@@ -585,7 +585,7 @@ function LogJobModal({ onClose, onSubmit }) {
               <div>
                 <label className="text-xs font-semibold text-navy-300 mb-1.5 block">DSP *</label>
                 <input value={form.dsp} onChange={(e) => setForm({ ...form, dsp: e.target.value })}
-                  placeholder="Ribrell 21"
+                  placeholder="Safety First LLC"
                   className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-purple" />
               </div>
               <div>

@@ -1304,7 +1304,7 @@ function InspectionReadinessModal({ onClose }) {
 // ============ Start New Inspection — Vendor/Technician workflow ============
 // DSPs assigned to this inspector (assignment is managed from Admin panel)
 const ASSIGNED_DSPS = [
-  { id: 'DSP-4201', name: 'Ribrell 21',       code: 'RBR', station: 'DSE4', vanCount: 42, address: '13420 NE 20th St, Bellevue WA' },
+  { id: 'DSP-4201', name: 'Safety First LLC',       code: 'RBR', station: 'DSE4', vanCount: 42, address: '13420 NE 20th St, Bellevue WA' },
   { id: 'DSP-4202', name: 'Ceiba Routes',     code: 'CBR', station: 'DSE4', vanCount: 38, address: '8015 Martin Way E, Lacey WA' },
   { id: 'DSP-4203', name: 'TOTL Logistics',   code: 'TTL', station: 'DWA6', vanCount: 51, address: '2200 Alaskan Way, Seattle WA' },
   { id: 'DSP-4204', name: 'Summit Express',   code: 'SEX', station: 'DWA6', vanCount: 29, address: '5005 Union Bay Pl NE, Seattle WA' },
@@ -1312,9 +1312,9 @@ const ASSIGNED_DSPS = [
 ];
 
 const INSPECTION_FLEET = [
-  { id: 'VAN-1042', model: '2022 Ford Transit 250',   dsp: 'Ribrell 21',     dspId: 'DSP-4201', plate: 'WA-8F42-AZ', lastInspection: '2 days ago' },
-  { id: 'VAN-1018', model: '2021 Mercedes Sprinter',  dsp: 'Ribrell 21',     dspId: 'DSP-4201', plate: 'WA-3K18-AZ', lastInspection: '4 hours ago' },
-  { id: 'VAN-1033', model: '2023 Ford Transit 250',   dsp: 'Ribrell 21',     dspId: 'DSP-4201', plate: 'WA-1K33-AZ', lastInspection: 'Yesterday' },
+  { id: 'VAN-1042', model: '2022 Ford Transit 250',   dsp: 'Safety First LLC',     dspId: 'DSP-4201', plate: 'WA-8F42-AZ', lastInspection: '2 days ago' },
+  { id: 'VAN-1018', model: '2021 Mercedes Sprinter',  dsp: 'Safety First LLC',     dspId: 'DSP-4201', plate: 'WA-3K18-AZ', lastInspection: '4 hours ago' },
+  { id: 'VAN-1033', model: '2023 Ford Transit 250',   dsp: 'Safety First LLC',     dspId: 'DSP-4201', plate: 'WA-1K33-AZ', lastInspection: 'Yesterday' },
   { id: 'VAN-2009', model: '2022 Ford Transit 250',   dsp: 'Ceiba Routes',   dspId: 'DSP-4202', plate: 'WA-2P09-AZ', lastInspection: 'Yesterday' },
   { id: 'VAN-2015', model: '2023 Ram ProMaster 2500', dsp: 'Ceiba Routes',   dspId: 'DSP-4202', plate: 'WA-2G15-AZ', lastInspection: '3 days ago' },
   { id: 'VAN-2022', model: '2022 Mercedes Sprinter',  dsp: 'Ceiba Routes',   dspId: 'DSP-4202', plate: 'WA-2M22-AZ', lastInspection: '5 hours ago' },
