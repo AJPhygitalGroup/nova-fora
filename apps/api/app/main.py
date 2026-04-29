@@ -8,6 +8,7 @@ from app.routes import (
     auth,
     defect_catalog,
     defects,
+    defects_v2,
     directory,
     dvic_template,
     health,
@@ -81,6 +82,7 @@ app.include_router(auth.router)
 app.include_router(vehicles.router)
 app.include_router(inspections.router)
 app.include_router(defects.router)
+app.include_router(defects_v2.router)
 app.include_router(defect_catalog.router)
 app.include_router(dvic_template.router)
 app.include_router(work_orders.router)
