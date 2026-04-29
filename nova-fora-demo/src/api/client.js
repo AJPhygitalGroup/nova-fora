@@ -413,9 +413,11 @@ export const defectsV2 = {
     es.onmessage = (e) => {
       if (!onDefect || !e.data) return;
       try {
-        const envelope = JSON.parse(e.data);
-        // Server envelope: { dsp_id, defect: <DefectV2Response> }
-        if (envelope?.defect) onDefect(keysToCamel(envelope.defect));
+        // Server unwraps the Redis envelope and emits the bare defect — see
+        // routes/defects_v2.py event_generator. Wire payload is a snake_case
+        // DefectV2Response; flip it to camelCase to match the rest of the app.
+        const defect = JSON.parse(e.data);
+        if (defect && defect.id) onDefect(keysToCamel(defect));
       } catch {
         // malformed payload — skip
       }
