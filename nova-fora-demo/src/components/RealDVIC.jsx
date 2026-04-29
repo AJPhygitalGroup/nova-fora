@@ -2263,7 +2263,8 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onVi
             <tr className="text-navy-400 text-[10px] uppercase tracking-wide border-b border-navy-800">
               <th className="text-left px-4 py-2.5 font-semibold">Van</th>
               <th className="text-left px-4 py-2.5 font-semibold">Defect</th>
-              <th className="text-left px-4 py-2.5 font-semibold">Category</th><th className="text-left px-4 py-2.5 font-semibold">Reported by</th>
+              <th className="text-left px-4 py-2.5 font-semibold">Category</th>
+              <th className="text-left px-4 py-2.5 font-semibold">Reported by</th>
               <th className="text-left px-4 py-2.5 font-semibold">Status</th>
               <th className="text-right px-4 py-2.5 font-semibold">Actions</th>
             </tr>
@@ -2315,7 +2316,6 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onVi
                     </div>
                   </td>
                   <td className="px-4 py-2.5"><Badge variant="gray">{d.category}</Badge></td>
-                  <td className="px-4 py-2.5"></td>
                   <td className="px-4 py-2.5 text-[11px] text-navy-300">{da?.name || '—'}</td>
                   <td className="px-4 py-2.5"><Badge variant={defectStatusColors[d.status] || 'gray'}>{d.status}</Badge></td>
                   <td className="px-4 py-2.5">
