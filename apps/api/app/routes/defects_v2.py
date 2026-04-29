@@ -8,15 +8,20 @@ legacy code.
 
 See the Notion 'Defect Data Schema' spec for the full contract.
 """
+import json
 from datetime import date, datetime, time, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlmodel import func, select
 
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import (
+    get_current_user,
+    get_current_user_from_query_token,
+)
 from app.db import get_session
 from app.models.base import utc_now
 from app.models.defect import Defect, DefectSource
@@ -33,6 +38,10 @@ from app.schemas.defect import (
 from app.services.defect_validation import (
     DefectValidationError,
     validate_defect_write,
+)
+from app.services.pubsub import (
+    publish_defect_created,
+    subscribe_defect_created,
 )
 
 router = APIRouter(prefix="/defects/v2", tags=["defects-v2"])
@@ -172,7 +181,7 @@ async def create_defect_v2(
             select(Organization).where(Organization.id == vehicle.dsp_id)
         )
     ).scalar_one_or_none()
-    return DefectV2Response.from_defect(
+    response = DefectV2Response.from_defect(
         defect,
         vehicle=vehicle,
         inspection_id_str=(
@@ -181,6 +190,16 @@ async def create_defect_v2(
         reporter=current,
         org=org,
     )
+
+    # Best-effort SSE fan-out. Failures (e.g. Redis down) are logged but
+    # never raise — the row is committed; missing a live event is a UX
+    # nuisance, not a data integrity issue.
+    await publish_defect_created({
+        "dsp_id": vehicle.dsp_id,
+        "defect": response.model_dump(mode="json"),
+    })
+
+    return response
 
 
 @router.get("", response_model=DefectV2ListResponse)
@@ -262,6 +281,55 @@ async def list_defects_v2(
     ]
     return DefectV2ListResponse(
         items=items, total=total, page=page, per_page=per_page
+    )
+
+
+@router.get(
+    "/events",
+    summary="SSE stream of newly-created defects",
+    response_class=StreamingResponse,
+)
+async def stream_defect_events(
+    current: User = Depends(get_current_user_from_query_token),
+):
+    """Server-Sent Events stream of `defect.created` events.
+
+    Auth: pass the JWT access token as a `?token=...` query param (browser
+    EventSource cannot set custom headers).
+
+    Role scoping: dsp_owner only receives defects whose vehicle belongs to
+    their org. Everyone else (technician / vendor_admin / site_admin)
+    receives all defects.
+
+    Heartbeats are emitted every 15s so reverse proxies (Easypanel /
+    Traefik) don't kill an idle connection. The client should silently
+    ignore comment lines starting with `:`.
+    """
+    async def event_generator():
+        # Initial comment lets the client know the connection is live.
+        yield ": connected\n\n"
+        async for envelope in subscribe_defect_created():
+            if envelope.get("_heartbeat"):
+                yield ": heartbeat\n\n"
+                continue
+            # Tenant filter — dsp_owner only sees defects on their fleet.
+            if (
+                current.role == UserRole.DSP_OWNER
+                and envelope.get("dsp_id") != current.organization_id
+            ):
+                continue
+            defect = envelope.get("defect") or {}
+            yield f"data: {json.dumps(defect, default=str)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # Hint to nginx (and equivalent Traefik middleware) not to buffer.
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

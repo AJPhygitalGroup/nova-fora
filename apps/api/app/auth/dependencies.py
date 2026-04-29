@@ -1,5 +1,11 @@
-"""FastAPI dependencies for auth — `get_current_user`, role guards."""
-from fastapi import Depends, HTTPException, status
+"""FastAPI dependencies for auth — `get_current_user`, role guards.
+
+Includes a separate `get_current_user_from_query_token` dependency for
+EventSource / SSE clients, which can't send custom headers in the browser
+and must pass the JWT as a query param. Use it ONLY on long-lived event
+streams; the standard Bearer header path is correct everywhere else.
+"""
+from fastapi import Depends, HTTPException, Query, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -55,6 +61,41 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"user status is {user.status.value}",
+        )
+    return user
+
+
+async def get_current_user_from_query_token(
+    token: str = Query(..., description="JWT access token (SSE only — header-less clients)"),
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    """Same contract as `get_current_user`, but reads the access token from
+    `?token=...` instead of the Authorization header.
+
+    Use on SSE endpoints only — browser EventSource cannot set headers.
+    Tokens in query strings have a slightly worse exposure profile (server
+    access logs, browser history); mitigated by short-lived access tokens.
+    """
+    try:
+        payload = decode_token(token, expected_type=TokenType.ACCESS)
+    except TokenError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)
+        ) from e
+    try:
+        user_id = int(payload["sub"])
+    except (ValueError, KeyError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token subject"
+        ) from None
+    user = (
+        await session.execute(select(User).where(User.id == user_id))
+    ).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "user not found")
+    if user.status != UserStatus.ACTIVE:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, f"user status is {user.status.value}"
         )
     return user
 

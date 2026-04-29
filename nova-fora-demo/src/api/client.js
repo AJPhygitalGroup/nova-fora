@@ -364,6 +364,70 @@ export const defects = {
 };
 
 // ─────────────────────────────────────────────────────
+// Defects v2 — new spec-aligned table (POST /defects/v2 + SSE stream)
+// ─────────────────────────────────────────────────────
+export const defectsV2 = {
+  /**
+   * GET /defects/v2 — list with role scoping + filters.
+   * params: { dspId?, vehicleId?, source?, dateFrom?, dateTo?, page?, perPage? }
+   */
+  list(params = {}) {
+    const q = new URLSearchParams();
+    const paramMap = {
+      dspId: 'dsp_id',
+      vehicleId: 'vehicle_id',
+      dateFrom: 'date_from',
+      dateTo: 'date_to',
+      perPage: 'per_page',
+    };
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined || v === null || v === '') continue;
+      q.set(paramMap[k] || k, String(v));
+    }
+    const qs = q.toString();
+    return apiFetch(`/defects/v2${qs ? '?' + qs : ''}`);
+  },
+
+  /**
+   * Subscribe to defect.created events via SSE.
+   * EventSource can't send Authorization headers in browsers, so the access
+   * token is passed as `?token=...` (server validates via
+   * `get_current_user_from_query_token`). The stream is server-side
+   * role-scoped — dsp_owners only see their own org's defects.
+   *
+   * @param {object} cb
+   * @param {(defect: object) => void} cb.onDefect — called with camelCase defect
+   * @param {(err: Event) => void} [cb.onError]
+   * @param {() => void} [cb.onOpen]
+   * @returns {() => void} cleanup — call on unmount to close the connection
+   */
+  subscribe({ onDefect, onError, onOpen } = {}) {
+    const token = getAccessToken();
+    if (!token) {
+      // No token → no stream. Return a no-op cleanup so callers don't crash.
+      return () => {};
+    }
+    const url = `${BASE_URL}/defects/v2/events?token=${encodeURIComponent(token)}`;
+    const es = new EventSource(url);
+    if (onOpen) es.onopen = onOpen;
+    es.onmessage = (e) => {
+      if (!onDefect || !e.data) return;
+      try {
+        const envelope = JSON.parse(e.data);
+        // Server envelope: { dsp_id, defect: <DefectV2Response> }
+        if (envelope?.defect) onDefect(keysToCamel(envelope.defect));
+      } catch {
+        // malformed payload — skip
+      }
+    };
+    if (onError) es.onerror = onError;
+    return () => {
+      try { es.close(); } catch { /* noop */ }
+    };
+  },
+};
+
+// ─────────────────────────────────────────────────────
 // Defect catalog — fetched once per session and cached in module scope.
 // ─────────────────────────────────────────────────────
 let _catalogPromise = null;
