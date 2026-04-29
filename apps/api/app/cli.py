@@ -8,6 +8,8 @@ Available commands:
                           defect_details_schema reference tables (v2 spec).
   seed-dvic-template     Seed dvic_template_item rows (transcribed from
                           Amazon DVIC Cargo + DOT PDFs, Apr 2026).
+  backfill-defects       Copy v2-tagged rows from reported_defects → defects
+                          (idempotent). Run after the 20260428_1500 migration.
   reset-password <email> <new_password>   Admin override for lost passwords.
 """
 import asyncio
@@ -509,6 +511,101 @@ async def cmd_seed_dvic_template() -> None:
         print(f"   Total: {len(rows)}")
 
 
+async def cmd_backfill_defects() -> None:
+    """Copy v2-tagged rows from reported_defects → defects (idempotent).
+
+    Selection: any ReportedDefect with both `part_enum` and `defect_type_enum`
+    populated. These were already authored against the v2 catalog; the legacy
+    free-text columns on the row are ignored.
+
+    Mapping:
+      vehicle_id      ← inspection.vehicle_id (always present)
+      inspection_id   ← reported_defect.inspection_id
+      source          ← 'inspection' (all backfilled rows came from one)
+      part            ← reported_defect.part_enum
+      position        ← reported_defect.position
+      defect_type     ← reported_defect.defect_type_enum
+      details         ← reported_defect.details or {}
+      notes           ← reported_defect.notes
+      reported_by_id  ← reported_defect.reported_by_id ?? inspection.inspector_id
+      reported_at     ← reported_defect.reported_at ?? reported_defect.created_at
+
+    Idempotency: skip rows whose
+      (vehicle_id, inspection_id, part, position, defect_type) tuple already
+    exists in `defects`. Safe to re-run after partial failures or after
+    additional reported_defects rows are written.
+
+    Rejected rows: a row with no reporter (no reported_by_id AND no
+    inspector on the parent inspection) is skipped — Defect.reported_by_id
+    is NOT NULL. This indicates a seeding gap; printed with the FD- id.
+    """
+    from app.models.defect import Defect, DefectSource
+    from app.models.inspection import Inspection, ReportedDefect
+
+    async with AsyncSessionLocal() as session:
+        rows = (
+            await session.execute(
+                select(ReportedDefect, Inspection)
+                .join(Inspection, ReportedDefect.inspection_id == Inspection.id)
+                .where(ReportedDefect.part_enum.is_not(None))
+                .where(ReportedDefect.defect_type_enum.is_not(None))
+            )
+        ).all()
+
+        copied = 0
+        skipped = 0
+        rejected = 0
+
+        for rd, insp in rows:
+            existing = (
+                await session.execute(
+                    select(Defect)
+                    .where(Defect.vehicle_id == insp.vehicle_id)
+                    .where(Defect.inspection_id == insp.id)
+                    .where(Defect.part == rd.part_enum)
+                    .where(
+                        Defect.position == rd.position
+                        if rd.position is not None
+                        else Defect.position.is_(None)
+                    )
+                    .where(Defect.defect_type == rd.defect_type_enum)
+                )
+            ).scalar_one_or_none()
+            if existing:
+                skipped += 1
+                continue
+
+            reporter_id = rd.reported_by_id or insp.inspector_id
+            if reporter_id is None:
+                print(
+                    f"[backfill-defects] reject FD-{rd.id:03d}: "
+                    f"no reporter (reported_by_id and inspection.inspector_id both NULL)"
+                )
+                rejected += 1
+                continue
+
+            d = Defect(
+                vehicle_id=insp.vehicle_id,
+                inspection_id=insp.id,
+                source=DefectSource.INSPECTION,
+                part=rd.part_enum,
+                position=rd.position,
+                defect_type=rd.defect_type_enum,
+                details=rd.details or {},
+                notes=rd.notes,
+                reported_by_id=reporter_id,
+                reported_at=rd.reported_at or rd.created_at,
+            )
+            session.add(d)
+            copied += 1
+
+        await session.commit()
+        print(
+            f"\n✅ Defects backfill: {copied} copied, "
+            f"{skipped} skipped (already in defects), {rejected} rejected."
+        )
+
+
 async def cmd_reset_password(email: str, new_password: str) -> None:
     async with AsyncSessionLocal() as session:
         user = (
@@ -538,6 +635,8 @@ def main() -> None:
         asyncio.run(cmd_seed_defect_catalog())
     elif cmd == "seed-dvic-template":
         asyncio.run(cmd_seed_dvic_template())
+    elif cmd == "backfill-defects":
+        asyncio.run(cmd_backfill_defects())
     elif cmd == "reset-password":
         if len(sys.argv) != 4:
             print("Usage: python -m app.cli reset-password <email> <new_password>")

@@ -1,10 +1,32 @@
-"""Defect endpoints — flat view across inspections.
+"""Defect endpoints — flat view across inspections (LEGACY).
 
 The Defects.jsx component on the frontend shows all defects a DSP cares
 about, flattened. This endpoint serves that view efficiently via JOINs
 rather than N+1 per-inspection lookups.
 
 PATCH /defects/{id} updates the workflow status (ack, dismiss, etc.).
+
+────────────────────────────────────────────────────────────────────────────
+TODO(post-migration): This whole module reads/writes the legacy
+`reported_defects` table. The new standalone `defects` table (see
+app/models/defect.py + app/routes/defects_v2.py) is the canonical home for
+defect data going forward.
+
+In particular, `PATCH /defects/{id}` (workflow status) needs to be
+re-pointed once the future `defect_status` table lands — per the Notion
+'Defect Data Schema' spec §2 'Excluded fields and why', workflow state
+does NOT live on the defect row. When that lands:
+
+  1. New endpoint writes to defect_status with a defect_id FK pointing
+     at the v2 `defects` table (not reported_defects).
+  2. This legacy PATCH stays only as long as the frontend's Defects.jsx
+     still reads /defects (legacy). Once the frontend cuts over to
+     /defects/v2 + the new workflow table, delete this whole module.
+  3. Move /defects/v2/* up to /defects/* (route rename) at the same time.
+
+See also: `python -m app.cli backfill-defects` for the data migration
+from reported_defects → defects.
+────────────────────────────────────────────────────────────────────────────
 """
 from datetime import date, datetime, time, timezone
 
@@ -118,6 +140,10 @@ async def list_defects(
     return DefectListResponse(items=items, total=total, page=page, per_page=per_page)
 
 
+# TODO(defect-workflow-migration): repoint this to the future `defect_status`
+# table (FK at the v2 `defects` table, not reported_defects). Per the Notion
+# 'Defect Data Schema' spec §2, workflow state does NOT live on the defect
+# row — this endpoint is legacy until the new workflow spec ships.
 @router.patch("/{defect_id}", response_model=DefectResponse)
 async def update_defect_status(
     body: DefectStatusUpdate,
