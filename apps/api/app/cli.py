@@ -10,6 +10,12 @@ Available commands:
                           Amazon DVIC Cargo + DOT PDFs, Apr 2026).
   backfill-defects       Copy v2-tagged rows from reported_defects → defects
                           (idempotent). Run after the 20260428_1500 migration.
+  create-service-user <email> <full_name> <org_id> <role>
+                         Create a new user (e.g. for a Slack bot or other
+                          machine integration). Generates a random password
+                          and prints it ONCE — capture it before exiting.
+                          org_id accepts NF-006 / V-005 / DSP-0004 / int.
+                          role: site_admin | dsp_owner | vendor_admin | technician.
   reset-password <email> <new_password>   Admin override for lost passwords.
 """
 import asyncio
@@ -606,6 +612,106 @@ async def cmd_backfill_defects() -> None:
         )
 
 
+def _parse_org_id(raw: str) -> int:
+    """Accept 'NF-006', 'V-005', 'DSP-0004', or a bare int."""
+    s = raw.strip().upper()
+    for prefix in ("DSP-", "NF-", "V-"):
+        if s.startswith(prefix):
+            s = s[len(prefix):]
+            break
+    return int(s)
+
+
+async def cmd_create_service_user(
+    email: str, full_name: str, org_id_raw: str, role_str: str
+) -> None:
+    """Create a user with a randomly-generated password.
+
+    Used for service accounts (Slack bots, ingest pipelines, etc.) that need
+    to authenticate against the API with a real `users.id`. The password is
+    printed ONCE — capture it from stdout, store it in a secret manager,
+    rotate later via `reset-password` if needed.
+    """
+    import secrets
+
+    # ── Validate role ──
+    try:
+        role = UserRole(role_str)
+    except ValueError:
+        print(
+            f"ERROR: invalid role {role_str!r}. "
+            f"Allowed: {[r.value for r in UserRole]}"
+        )
+        sys.exit(1)
+
+    # ── Validate + look up org ──
+    try:
+        org_pk = _parse_org_id(org_id_raw)
+    except ValueError:
+        print(f"ERROR: invalid org id {org_id_raw!r}.")
+        sys.exit(1)
+
+    async with AsyncSessionLocal() as session:
+        org = (
+            await session.execute(select(Organization).where(Organization.id == org_pk))
+        ).scalar_one_or_none()
+        if org is None:
+            print(f"ERROR: no organization with id {org_id_raw!r} (parsed as {org_pk}).")
+            sys.exit(1)
+
+        # ── Refuse if email already exists ──
+        email_lc = email.strip().lower()
+        existing = (
+            await session.execute(select(User).where(User.email == email_lc))
+        ).scalar_one_or_none()
+        if existing is not None:
+            print(
+                f"ERROR: user {email_lc!r} already exists (id={existing.id}, "
+                f"org_id={existing.organization_id}, role={existing.role.value}). "
+                f"Use 'reset-password' to rotate credentials."
+            )
+            sys.exit(1)
+
+        # ── Generate password ──
+        password = secrets.token_urlsafe(32)
+
+        # ── Build initials for avatar (first letter of first two words, max 2 chars) ──
+        parts = [p for p in full_name.split() if p]
+        avatar = "".join(p[0].upper() for p in parts[:2]) or "??"
+
+        user = User(
+            email=email_lc,
+            full_name=full_name,
+            password_hash=hash_password(password),
+            organization_id=org_pk,
+            role=role,
+            avatar=avatar,
+            language="en",
+            status=UserStatus.ACTIVE,
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+
+        sep = "─" * 72
+        print()
+        print(sep)
+        print("✅ Service user created. The password below is shown ONCE — copy it now.")
+        print(sep)
+        print(f"  user_id     : {user.id}")
+        print(f"  email       : {user.email}")
+        print(f"  full_name   : {user.full_name}")
+        print(f"  organization: {org.name} ({org.id_str})")
+        print(f"  role        : {user.role.value}")
+        print(f"  password    : {password}")
+        print(sep)
+        print(
+            "Store this in a secret manager. To rotate later: "
+            f"`python -m app.cli reset-password {user.email} <new_password>`."
+        )
+        print(sep)
+
+
 async def cmd_reset_password(email: str, new_password: str) -> None:
     async with AsyncSessionLocal() as session:
         user = (
@@ -637,6 +743,18 @@ def main() -> None:
         asyncio.run(cmd_seed_dvic_template())
     elif cmd == "backfill-defects":
         asyncio.run(cmd_backfill_defects())
+    elif cmd == "create-service-user":
+        if len(sys.argv) != 6:
+            print(
+                "Usage: python -m app.cli create-service-user "
+                "<email> <full_name> <org_id> <role>"
+            )
+            sys.exit(1)
+        asyncio.run(
+            cmd_create_service_user(
+                sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
+            )
+        )
     elif cmd == "reset-password":
         if len(sys.argv) != 4:
             print("Usage: python -m app.cli reset-password <email> <new_password>")
