@@ -1304,7 +1304,7 @@ function InspectionReadinessModal({ onClose }) {
 // ============ Start New Inspection — Vendor/Technician workflow ============
 // DSPs assigned to this inspector (assignment is managed from Admin panel)
 const ASSIGNED_DSPS = [
-  { id: 'DSP-4201', name: 'Ribrell 21',       code: 'RBR', station: 'DSE4', vanCount: 42, address: '13420 NE 20th St, Bellevue WA' },
+  { id: 'DSP-4201', name: 'Safety First LLC',       code: 'RBR', station: 'DSE4', vanCount: 42, address: '13420 NE 20th St, Bellevue WA' },
   { id: 'DSP-4202', name: 'Ceiba Routes',     code: 'CBR', station: 'DSE4', vanCount: 38, address: '8015 Martin Way E, Lacey WA' },
   { id: 'DSP-4203', name: 'TOTL Logistics',   code: 'TTL', station: 'DWA6', vanCount: 51, address: '2200 Alaskan Way, Seattle WA' },
   { id: 'DSP-4204', name: 'Summit Express',   code: 'SEX', station: 'DWA6', vanCount: 29, address: '5005 Union Bay Pl NE, Seattle WA' },
@@ -1312,9 +1312,9 @@ const ASSIGNED_DSPS = [
 ];
 
 const INSPECTION_FLEET = [
-  { id: 'VAN-1042', model: '2022 Ford Transit 250',   dsp: 'Ribrell 21',     dspId: 'DSP-4201', plate: 'WA-8F42-AZ', lastInspection: '2 days ago' },
-  { id: 'VAN-1018', model: '2021 Mercedes Sprinter',  dsp: 'Ribrell 21',     dspId: 'DSP-4201', plate: 'WA-3K18-AZ', lastInspection: '4 hours ago' },
-  { id: 'VAN-1033', model: '2023 Ford Transit 250',   dsp: 'Ribrell 21',     dspId: 'DSP-4201', plate: 'WA-1K33-AZ', lastInspection: 'Yesterday' },
+  { id: 'VAN-1042', model: '2022 Ford Transit 250',   dsp: 'Safety First LLC',     dspId: 'DSP-4201', plate: 'WA-8F42-AZ', lastInspection: '2 days ago' },
+  { id: 'VAN-1018', model: '2021 Mercedes Sprinter',  dsp: 'Safety First LLC',     dspId: 'DSP-4201', plate: 'WA-3K18-AZ', lastInspection: '4 hours ago' },
+  { id: 'VAN-1033', model: '2023 Ford Transit 250',   dsp: 'Safety First LLC',     dspId: 'DSP-4201', plate: 'WA-1K33-AZ', lastInspection: 'Yesterday' },
   { id: 'VAN-2009', model: '2022 Ford Transit 250',   dsp: 'Ceiba Routes',   dspId: 'DSP-4202', plate: 'WA-2P09-AZ', lastInspection: 'Yesterday' },
   { id: 'VAN-2015', model: '2023 Ram ProMaster 2500', dsp: 'Ceiba Routes',   dspId: 'DSP-4202', plate: 'WA-2G15-AZ', lastInspection: '3 days ago' },
   { id: 'VAN-2022', model: '2022 Mercedes Sprinter',  dsp: 'Ceiba Routes',   dspId: 'DSP-4202', plate: 'WA-2M22-AZ', lastInspection: '5 hours ago' },
@@ -2263,7 +2263,8 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onVi
             <tr className="text-navy-400 text-[10px] uppercase tracking-wide border-b border-navy-800">
               <th className="text-left px-4 py-2.5 font-semibold">Van</th>
               <th className="text-left px-4 py-2.5 font-semibold">Defect</th>
-              <th className="text-left px-4 py-2.5 font-semibold">Category</th><th className="text-left px-4 py-2.5 font-semibold">Reported by</th>
+              <th className="text-left px-4 py-2.5 font-semibold">Category</th>
+              <th className="text-left px-4 py-2.5 font-semibold">Reported by</th>
               <th className="text-left px-4 py-2.5 font-semibold">Status</th>
               <th className="text-right px-4 py-2.5 font-semibold">Actions</th>
             </tr>
@@ -2315,7 +2316,6 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onVi
                     </div>
                   </td>
                   <td className="px-4 py-2.5"><Badge variant="gray">{d.category}</Badge></td>
-                  <td className="px-4 py-2.5"></td>
                   <td className="px-4 py-2.5 text-[11px] text-navy-300">{da?.name || '—'}</td>
                   <td className="px-4 py-2.5"><Badge variant={defectStatusColors[d.status] || 'gray'}>{d.status}</Badge></td>
                   <td className="px-4 py-2.5">
@@ -2468,10 +2468,28 @@ export default function RealDVIC({ user }) {
 
   const canStartInspection = user?.role === 'vendor_admin' || user?.role === 'technician' || user?.role === 'site_admin';
 
+  // QC inspection banner: in production it appears automatically on
+  // inspection day. For the demo we expose a barely-visible toggle in the
+  // top-right corner of the Home view so we can show/hide it on demand.
+  const [showQcBanner, setShowQcBanner] = useState(false);
+
   return (
     <div>
-      {/* Daily QC Inspection Readiness banner — only for DSP users */}
+      {/* Subtle banner-visibility toggle — DSP users only */}
       {(user?.role === 'dsp_owner' || user?.role === 'site_admin') && (
+        <div className="flex justify-end -mt-2 mb-1">
+          <button
+            onClick={() => setShowQcBanner((s) => !s)}
+            title={showQcBanner ? 'Hide QC inspection banner' : 'Simulate inspection day (show banner)'}
+            className="text-[10px] text-navy-600 hover:text-navy-300 px-2 py-1 rounded transition-colors cursor-pointer"
+          >
+            {showQcBanner ? '· hide banner ·' : '· · ·'}
+          </button>
+        </div>
+      )}
+
+      {/* Daily QC Inspection Readiness banner — only when toggle is on (simulating inspection day) */}
+      {(user?.role === 'dsp_owner' || user?.role === 'site_admin') && showQcBanner && (
         <InspectionReadinessBanner onClick={() => setShowInspection(true)} />
       )}
 
@@ -2561,12 +2579,7 @@ export default function RealDVIC({ user }) {
                 <div className="text-2xl font-bold text-white mb-1">
                   {todayCount} <span className="text-navy-400 font-normal text-xl">of {fleetTotal}</span>
                 </div>
-                <div className="text-sm text-navy-400">Vans Inspected in Recent QC DVIC</div>
-                {todayIncompleteCount > 0 && (
-                  <div className="text-[11px] text-accent-red mt-1">
-                    {todayIncompleteCount} not inspectable
-                  </div>
-                )}
+                <div className="text-sm text-navy-400">Vans Inspected</div>
               </div>
               <div className="mt-auto pt-2 text-center text-[11px] text-navy-400">
                 Next inspection <span className="text-white font-medium">{nextInspectionDate}</span>
@@ -2580,14 +2593,13 @@ export default function RealDVIC({ user }) {
                 value={pendingApprovalCount}
                 color="accent-red"
                 delay={0.1}
-                labelClassName="text-sm font-semibold text-accent-red"
               />
             </div>
 
             <div onClick={() => setOpenCard('scheduled')} className="cursor-pointer h-full">
               <MetricCard
                 icon={AlertTriangle}
-                label="Scheduled Vehicle"
+                label="Scheduled Repairs"
                 value={scheduledTonight}
                 color="accent-red"
                 delay={0.15}
@@ -2598,7 +2610,7 @@ export default function RealDVIC({ user }) {
               <MetricCard
                 label="Defects Repaired"
                 value={repairedDefectsCount}
-                subtitle={repairedThisWeekCount > 0 ? `${repairedThisWeekCount} this week · tap for history` : 'Completed by vendors'}
+                subtitle="Current Week"
                 color="accent-green"
                 delay={0.2}
                 trend={repairedThisWeekCount > 0 ? Math.round((repairedThisWeekCount / Math.max(totalDefectsToday, 1)) * 100) : undefined}
@@ -2654,43 +2666,7 @@ export default function RealDVIC({ user }) {
             </motion.div>
           </div>
 
-          {/* Reward Tiers with pending award counts */}
-          <div>
-            <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
-              <Gift size={16} className="text-accent-gold" /> DA Reward Tiers
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              {Object.entries(tierConfig).map(([tier, cfg]) => (
-                <motion.div key={tier} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 * Number(tier) }}
-                  className={`${cfg.bg} border ${cfg.border} rounded-xl p-4`}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <Star size={16} style={{ color: cfg.color }} />
-                      <span className="text-sm font-semibold text-white">{cfg.label}</span>
-                    </div>
-                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
-                      cfg.pending > 0 ? 'bg-accent-orange/15 text-accent-orange border-accent-orange/30' : 'bg-navy-700/30 text-navy-400 border-navy-600/30'
-                    }`}>
-                      ({cfg.pending}) DAs pending award
-                    </span>
-                  </div>
-                  <div className="text-xs text-navy-300 mb-3">{cfg.range}</div>
-                  <div className="flex justify-between text-sm">
-                    <div>
-                      <div className="text-navy-400 text-[10px]">Cash/defect</div>
-                      <div className="font-bold text-white">{cfg.cash}</div>
-                    </div>
-                    <div>
-                      <div className="text-navy-400 text-[10px]">Vendor Bucks</div>
-                      <div className="font-bold text-white">{cfg.bucks}</div>
-                    </div>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          </div>
-
+          {/* DA Reward Tiers cards removed from Home — they live on the dedicated Rewards page */}
           {/* Today's Defects table moved to its own top-level 'Defects' page */}
           {/* Order Flex Fleet lives inside the Scheduled Repairs modal footer */}
       </div>

@@ -68,60 +68,7 @@ html.light .bg-black\/60 {
   background-color: rgba(15, 23, 42, 0.35) !important;
 }
 
-/* ============================================================
-   Calm mode — grayscale by default, color only under the cursor
-   ============================================================
-   Applies a nearly grayscale version of every accent color so the initial
-   impression is completely neutral. Any hover on an interactive element
-   (including any element Tailwind marks with cursor-pointer) restores
-   the full-saturation values via CSS custom-property cascade. Charts
-   (recharts SVG) and raw images use a grayscale filter that lifts on
-   hover — so everything goes monochrome together. */
-html.calm {
-  --color-accent-orange: #9a948c;
-  --color-accent-green:  #909a92;
-  --color-accent-red:    #9a8f8c;
-  --color-accent-blue:   #8e929c;
-  --color-accent-purple: #95909c;
-  --color-accent-gold:   #9a968a;
-}
-
-html.calm * {
-  transition: background-color 0.25s ease, border-color 0.25s ease,
-              color 0.25s ease, fill 0.25s ease, filter 0.3s ease;
-}
-
-/* Charts (recharts), images and SVGs with hardcoded fills become grayscale;
-   they return to full color whenever any ancestor/child is being hovered. */
-html.calm .recharts-wrapper,
-html.calm img,
-html.calm svg {
-  filter: grayscale(0.95) contrast(0.95);
-}
-
-html.calm .recharts-wrapper:hover,
-html.calm :hover > .recharts-wrapper,
-html.calm :hover .recharts-wrapper,
-html.calm img:hover,
-html.calm :hover > img,
-html.calm :hover img,
-html.calm svg:hover,
-html.calm :is(button, a, label, [role="button"], [class*="cursor-pointer"]):hover svg,
-html.calm :is(button, a, label, [role="button"], [class*="cursor-pointer"]):hover img {
-  filter: grayscale(0) contrast(1);
-}
-
-/* Hover any interactive element — including any Tailwind element with
-   cursor-pointer — to restore vivid accent CSS variables for that subtree. */
-html.calm :is(button, a, label, [role="button"], [class*="cursor-pointer"], .hover-vivid):hover,
-html.calm :is(button, a, label, [role="button"], [class*="cursor-pointer"], .hover-vivid):focus-visible {
-  --color-accent-orange: #ff9900;
-  --color-accent-green:  #22c55e;
-  --color-accent-red:    #ef4444;
-  --color-accent-blue:   #3b82f6;
-  --color-accent-purple: #8b5cf6;
-  --color-accent-gold:   #f59e0b;
-}
+/* Calm mode (grayscale palette) was removed — vivid colors are the only mode now. */
 
 #root {
   min-height: 100vh;
