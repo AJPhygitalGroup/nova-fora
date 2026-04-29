@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { Shield, ShieldCheck, AlertTriangle, Award, TrendingUp, Users, Flame, Camera, Gift, Lock, Star, Plus, Hourglass, CheckCheck, X, Clock, Wrench, CheckCircle2, Calendar, KeyRound, ChevronRight, Info, SkipForward, PlayCircle, ClipboardCheck, ChevronDown, Check, ArrowRight, Bell, LayoutGrid, Truck, ThumbsUp, ThumbsDown } from 'lucide-react';
-import { daList, dvicDefects, dspRewards, dspList, weeklyInspections, defectCategoryBreakdown, inspectionSections, workOrdersData } from '../data/mockData';
+import { daList, dspRewards, dspList, weeklyInspections, defectCategoryBreakdown, inspectionSections, workOrdersData } from '../data/mockData';
 import MetricCard from './ui/MetricCard';
 import ProgressBar from './ui/ProgressBar';
 import Badge from './ui/Badge';
@@ -10,7 +10,7 @@ import { FlexFleetModal, VehicleReportCard, CreateWorkOrderModal } from './Fleet
 import { fleetSnapshotVans } from '../data/mockData';
 import CreateInspectionWizard from './CreateInspectionWizard';
 import LiveInspectionReportCard from './LiveInspectionReportCard';
-import { inspections as inspectionsApi, vehicles as vehiclesApi } from '../api/client';
+import { inspections as inspectionsApi, vehicles as vehiclesApi, defectsV2 as defectsV2Api } from '../api/client';
 
 const tierConfig = {
   1: { label: 'Tier 1', range: '1–25 defects', cash: '$1', bucks: '$1', color: '#3b82f6', bg: 'bg-accent-blue/10', border: 'border-accent-blue/30', pending: 1 },
@@ -661,9 +661,37 @@ function ScheduledRepairsGrouped({ items }) {
   );
 }
 
-function CardDetailModal({ cardKey, onClose, onOpenVehicleReport, onApproveDefect, onOrderFlexFleet, liveInspected }) {
+function CardDetailModal({ cardKey, onClose, onOpenVehicleReport, onApproveDefect, onOrderFlexFleet, liveInspected, liveDefects }) {
   if (!cardKey) return null;
   let data = cardDetails[cardKey];
+  // Override the 'reported' card with live /defects/v2 data when present.
+  // Map the v2 wire shape (camelCased) into the modal's flat item shape.
+  if (cardKey === 'reported' && Array.isArray(liveDefects)) {
+    const fmtTime = (iso) => {
+      try {
+        return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      } catch {
+        return '';
+      }
+    };
+    const items = liveDefects.map((d) => {
+      const partLabel = d.position ? `${d.part} (${d.position})` : d.part;
+      const typeLabel = (d.defectType || '').replace(/_/g, ' ');
+      return {
+        label: d.vehicleId,
+        title: `${partLabel} — ${typeLabel}`,
+        meta: `${d.reportedBy || 'Driver'} · ${fmtTime(d.reportedAt)}`,
+        status: 'Reported',
+      };
+    });
+    data = {
+      ...data,
+      summary: items.length
+        ? `${items.length} defect${items.length === 1 ? '' : 's'} reported across fleet today`
+        : 'No defects reported today',
+      items,
+    };
+  }
   // Override the 'inspected' card with the live API data when we have it.
   // This way the modal shows the same vans you just inspected via the wizard,
   // not the mock list.
@@ -2434,9 +2462,40 @@ export default function RealDVIC({ user }) {
   const repairedThisWeekCount = repairedWOs.filter((wo) => wo.completedAt && new Date(wo.completedAt) >= oneWeekAgo).length;
   const [newDefects, setNewDefects] = useState([]);
 
-  const allDefects = [...newDefects, ...dvicDefects];
-  const totalDefectsToday = allDefects.length;
-  const rushOrders = allDefects.filter((d) => d.status === 'Rush Order').length;
+  // Live "DSP-reported defects today" — seeded from GET /defects/v2 and kept
+  // current via the SSE stream at /defects/v2/events. Both are role-scoped on
+  // the server (dsp_owner sees own DSP only). dedup by id_str so a publish
+  // arriving while the initial fetch is in flight doesn't double-count.
+  const [liveDefects, setLiveDefects] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const today = new Date().toISOString().slice(0, 10);
+    defectsV2Api
+      .list({ dateFrom: today, dateTo: today, perPage: 100 })
+      .then((res) => {
+        if (cancelled) return;
+        setLiveDefects(res.items || []);
+      })
+      .catch((err) => console.warn('defects/v2 list failed', err));
+
+    const cleanup = defectsV2Api.subscribe({
+      onDefect: (d) => {
+        setLiveDefects((prev) => (prev.some((x) => x.id === d.id) ? prev : [d, ...prev]));
+      },
+      onError: (e) => console.warn('defects/v2 SSE error', e),
+    });
+
+    return () => {
+      cancelled = true;
+      cleanup();
+    };
+  }, []);
+
+  const totalDefectsToday = newDefects.length + liveDefects.length;
+  // v2 spec has no urgency / rush concept yet — keep the slot for future use.
+  const rushOrders = 0;
+  const allDefects = [...newDefects];
   const scheduledTonight = allDefects.filter((d) => d.status === 'Rush Order' || d.status === 'Scheduled').length;
   const notInspected = 7;
   const newToApprove = 2;
@@ -2800,6 +2859,7 @@ export default function RealDVIC({ user }) {
             cardKey={openCard}
             onClose={() => setOpenCard(null)}
             liveInspected={todayInspected}
+            liveDefects={liveDefects}
             onOrderFlexFleet={isDspHome ? () => { setOpenCard(null); setShowFlexFleet(true); } : null}
             onOpenVehicleReport={(van) => {
               // Close the Vans Inspected modal first, then pop the appropriate
