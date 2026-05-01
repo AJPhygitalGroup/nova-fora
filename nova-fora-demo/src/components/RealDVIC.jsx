@@ -2204,6 +2204,18 @@ export const VENDOR_TYPES = [
   { id: 'detailing', label: 'Detailing', categories: ['Cleanliness', 'Interior', 'Detailing'] },
 ];
 
+// Status filter values match the display labels produced by fromApiDefect()
+// in Defects.jsx (which maps API workflow status → human label). 'open' is a
+// convenience bucket meaning "still actionable" (not converted, not rejected).
+const STATUS_FILTERS = [
+  { id: 'all',            label: 'All' },
+  { id: 'open',           label: 'Open',           match: (s) => s !== 'Repair Ordered' && s !== 'Scheduled' && s !== 'Rejected' && s !== 'Rush Order' },
+  { id: 'Logged',         label: 'Logged' },
+  { id: 'Repair Ordered', label: 'Repair Ordered' },
+  { id: 'Scheduled',      label: 'Scheduled' },
+  { id: 'Rejected',       label: 'Rejected' },
+];
+
 // Map a defect's (display) status to the row action state so the UI reflects
 // persisted backend state — not just ephemeral button clicks.
 const WO_CREATED_STATUSES = new Set(['Repair Ordered', 'Scheduled', 'Rush Order']);
@@ -2217,6 +2229,7 @@ function deriveActionFromStatus(d) {
 
 export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBulkCreateWO, onBulkReject, onViewPhotos, onOpenCreateDefect, scheduledCount, rushOrderCount, title = "Today's Defects" }) {
   const [activeVendor, setActiveVendor] = useState('all');
+  const [activeStatus, setActiveStatus] = useState('all');
   // rowActions: ephemeral per-click state (rare — only if the parent DIDN'T
   // yet reload after the API call). The effective action is derived from
   // defect.status so refreshes / backend reloads persist correctly.
@@ -2227,9 +2240,19 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
   const [selectedIds, setSelectedIds] = useState(() => new Set());
 
   const filtered = defects.filter((d) => {
-    if (activeVendor === 'all') return true;
-    const v = VENDOR_TYPES.find((x) => x.id === activeVendor);
-    return v?.categories?.includes(d.category);
+    if (activeVendor !== 'all') {
+      const v = VENDOR_TYPES.find((x) => x.id === activeVendor);
+      if (!v?.categories?.includes(d.category)) return false;
+    }
+    if (activeStatus !== 'all') {
+      const s = STATUS_FILTERS.find((x) => x.id === activeStatus);
+      if (s?.match) {
+        if (!s.match(d.status)) return false;
+      } else if (d.status !== activeStatus) {
+        return false;
+      }
+    }
+    return true;
   });
 
   // A defect is selectable only if it's still actionable (not already
@@ -2409,7 +2432,7 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
 
       {/* Vendor filter pills */}
       <div className="px-4 py-2.5 border-b border-navy-800 bg-navy-950/20 flex items-center gap-1.5 overflow-x-auto">
-        <span className="text-[10px] text-navy-400 font-semibold uppercase tracking-wide shrink-0 mr-1">Filter:</span>
+        <span className="text-[10px] text-navy-400 font-semibold uppercase tracking-wide shrink-0 mr-1">Vendor:</span>
         {VENDOR_TYPES.map((v) => {
           const count = v.id === 'all' ? defects.length : defects.filter((d) => v.categories?.includes(d.category)).length;
           const active = activeVendor === v.id;
@@ -2421,6 +2444,30 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
                   : 'bg-navy-800/40 border-navy-700 text-navy-400 hover:text-white hover:border-navy-600'
               }`}>
               {v.label}
+              <span className={`px-1 rounded ${active ? 'bg-black/20' : 'bg-navy-700/50 text-navy-300'}`}>{count}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Status filter pills */}
+      <div className="px-4 py-2.5 border-b border-navy-800 bg-navy-950/20 flex items-center gap-1.5 overflow-x-auto">
+        <span className="text-[10px] text-navy-400 font-semibold uppercase tracking-wide shrink-0 mr-1">Status:</span>
+        {STATUS_FILTERS.map((s) => {
+          const count = s.id === 'all'
+            ? defects.length
+            : s.match
+              ? defects.filter((d) => s.match(d.status)).length
+              : defects.filter((d) => d.status === s.id).length;
+          const active = activeStatus === s.id;
+          return (
+            <button key={s.id} onClick={() => setActiveStatus(s.id)}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all cursor-pointer shrink-0 ${
+                active
+                  ? 'bg-accent-purple/20 border-accent-purple/50 text-accent-purple'
+                  : 'bg-navy-800/40 border-navy-700 text-navy-400 hover:text-white hover:border-navy-600'
+              }`}>
+              {s.label}
               <span className={`px-1 rounded ${active ? 'bg-black/20' : 'bg-navy-700/50 text-navy-300'}`}>{count}</span>
             </button>
           );
@@ -2542,7 +2589,17 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
               );
             })}
             {filtered.length === 0 && (
-              <tr><td colSpan={bulkEnabled && selectMode ? 7 : 6} className="px-4 py-8 text-center text-sm text-navy-400">No defects match the selected vendor filter.</td></tr>
+              <tr><td colSpan={bulkEnabled && selectMode ? 7 : 6} className="px-4 py-8 text-center text-sm text-navy-400">
+                No defects match the current filters.
+                {(activeVendor !== 'all' || activeStatus !== 'all') && (
+                  <button
+                    onClick={() => { setActiveVendor('all'); setActiveStatus('all'); }}
+                    className="ml-2 text-accent-blue hover:underline cursor-pointer"
+                  >
+                    Clear filters
+                  </button>
+                )}
+              </td></tr>
             )}
           </tbody>
         </table>
