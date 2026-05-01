@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     sentry_dsn: str = ""
     posthog_key: str = ""
 
+    # ── Boot behavior ────────────────────────────────
+    # Skip the defect catalog + DVIC template re-sync on startup. Default
+    # is False (auto-seed on every boot — idempotent self-healing). Set
+    # SKIP_BOOT_SEED=1 in env when running the CLI in a debug shell or
+    # when you need a fast container start.
+    skip_boot_seed: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

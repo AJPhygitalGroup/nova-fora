@@ -37,6 +37,25 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         print(f"[nova-api] WARN: ensure_bucket() failed: {e}")
 
+    # Re-sync the defect catalog + DVIC template on every boot. Both seeds
+    # are idempotent (UPSERT keyed by enum values), so re-running is safe
+    # and gives us self-healing config-as-code: any change committed to
+    # seed_defect_catalog.py / seed_dvic_template.py applies automatically
+    # at next deploy. Wrapped in try/except so a transient DB hiccup
+    # doesn't block boot — the catalog will simply be stale until the next
+    # successful run, and /health stays up.
+    #
+    # Set SKIP_BOOT_SEED=1 to opt out (e.g. in a one-off debug shell).
+    if not settings.skip_boot_seed:
+        try:
+            from app.cli import cmd_seed_defect_catalog, cmd_seed_dvic_template
+            print("[nova-api] re-syncing defect catalog…")
+            await cmd_seed_defect_catalog()
+            print("[nova-api] re-syncing DVIC template…")
+            await cmd_seed_dvic_template()
+        except Exception as e:  # noqa: BLE001
+            print(f"[nova-api] WARN: catalog re-sync failed: {e}")
+
     yield
     print("[nova-api] shutting down")
 
