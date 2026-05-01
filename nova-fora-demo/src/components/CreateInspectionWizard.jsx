@@ -135,6 +135,30 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
 
   // Set of vehicle IDs that ALREADY have an inspection today (server-truth)
   const inspectedTodayIds = new Set(todayInspections.map((i) => i.vehicleId));
+  // Lookup of vehicleId → today's inspection summary so the picker can render
+  // an inline badge ("Passed / Flagged / Not inspected · reason") on each
+  // card. First-seen-wins per vehicle (a tech who flagged a van as "won't
+  // start" then later inspected it for real should see the FLAGGED state,
+  // not the incomplete one — but the API list orders newest first, so we
+  // pick the latest by overwriting older entries).
+  const inspectedTodayMap = (() => {
+    const map = new Map();
+    // Iterate oldest → newest so the latest wins on the final write.
+    const sorted = [...todayInspections].sort((a, b) => {
+      const ta = a.submittedAt || a.createdAt || '';
+      const tb = b.submittedAt || b.createdAt || '';
+      return ta.localeCompare(tb);
+    });
+    for (const i of sorted) {
+      map.set(i.vehicleId, {
+        id: i.id,
+        result: i.result,
+        incompleteReason: i.incompleteReason,
+        defectCount: i.defectCount || 0,
+      });
+    }
+    return map;
+  })();
   // Remaining vans to inspect in this DSP today
   const remainingVehicles = vehiclesForDsp.filter((v) => !inspectedTodayIds.has(v.id));
 
@@ -498,6 +522,7 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
           <Step3VehiclePicker
             dsp={dsp}
             vehicles={vehiclesForDsp}
+            inspectedTodayMap={inspectedTodayMap}
             value={vehicle}
             onChange={setVehicle}
           />
@@ -839,7 +864,13 @@ function Step2KeyRecorder({ dsp, keysReceived, onKeysChange, keysConfirmed, onCo
 // ─────────────────────────────────────────────────────
 // Step 3: vehicle picker (already filtered to selected DSP)
 // ─────────────────────────────────────────────────────
-function Step3VehiclePicker({ dsp, vehicles, value, onChange }) {
+// Reason value → human label (mirror of INCOMPLETE_REASONS, lookup-friendly)
+const INCOMPLETE_REASON_LABELS = INCOMPLETE_REASONS.reduce((acc, r) => {
+  acc[r.value] = r.label;
+  return acc;
+}, {});
+
+function Step3VehiclePicker({ dsp, vehicles, inspectedTodayMap, value, onChange }) {
   const [search, setSearch] = useState('');
 
   const filtered = vehicles.filter((v) => {
@@ -853,6 +884,18 @@ function Step3VehiclePicker({ dsp, vehicles, value, onChange }) {
     );
   });
 
+  // Sort: un-inspected first (so the tech's eye lands on what's left to do),
+  // then by fleet ID for stable ordering within each group.
+  const sorted = [...filtered].sort((a, b) => {
+    const aDone = inspectedTodayMap?.has(a.id) ? 1 : 0;
+    const bDone = inspectedTodayMap?.has(b.id) ? 1 : 0;
+    if (aDone !== bDone) return aDone - bDone;
+    return (a.fleetId || '').localeCompare(b.fleetId || '');
+  });
+
+  const inspectedCount = vehicles.filter((v) => inspectedTodayMap?.has(v.id)).length;
+  const remainingCount = vehicles.length - inspectedCount;
+
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 mb-2">
@@ -861,6 +904,26 @@ function Step3VehiclePicker({ dsp, vehicles, value, onChange }) {
           Pick a van from <span className="text-accent-blue">{dsp?.name}</span>
         </h3>
       </div>
+
+      {/* Progress strip — gives the tech an at-a-glance read of where the
+          DSP stands today. */}
+      {vehicles.length > 0 && (
+        <div className="flex items-center gap-3 rounded-lg border border-navy-700 bg-navy-900/40 px-3 py-2 text-[11px]">
+          <span className="text-navy-300">
+            <span className="text-accent-orange font-bold">{remainingCount}</span> remaining
+          </span>
+          <span className="text-navy-600">·</span>
+          <span className="text-navy-300">
+            <span className="text-accent-green font-bold">{inspectedCount}</span> done today
+          </span>
+          <div className="ml-auto h-1.5 flex-1 max-w-[120px] rounded-full bg-navy-800 overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-accent-green to-accent-blue transition-all"
+              style={{ width: `${vehicles.length ? (inspectedCount / vehicles.length) * 100 : 0}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       <input
         type="search"
@@ -871,12 +934,18 @@ function Step3VehiclePicker({ dsp, vehicles, value, onChange }) {
       />
 
       <div className="grid sm:grid-cols-2 gap-2">
-        {filtered.map((v) => (
-          <VehicleCard key={v.id} v={v} selected={value?.id === v.id} onSelect={onChange} />
+        {sorted.map((v) => (
+          <VehicleCard
+            key={v.id}
+            v={v}
+            selected={value?.id === v.id}
+            todayInspection={inspectedTodayMap?.get(v.id) || null}
+            onSelect={onChange}
+          />
         ))}
       </div>
 
-      {filtered.length === 0 && (
+      {sorted.length === 0 && (
         <div className="py-8 text-center text-sm text-navy-400">
           {vehicles.length === 0
             ? `${dsp?.name} has no vehicles in your visibility.`
@@ -887,18 +956,69 @@ function Step3VehiclePicker({ dsp, vehicles, value, onChange }) {
   );
 }
 
-function VehicleCard({ v, selected, onSelect }) {
+// Status badge variants for the vehicle card.
+//   passed       → green ✓ "Inspected"
+//   flagged      → orange ⚠ "Flagged · N defects"
+//   conditional  → gold ⚠ "Conditional"
+//   incomplete   → red ⛔ "Not inspected · {reason}"
+function VehicleStatusBadge({ status }) {
+  if (!status) return null;
+  if (status.result === 'passed') {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-green/15 border border-accent-green/40 text-[10px] font-semibold text-accent-green shrink-0">
+        <Check size={10} /> Inspected
+      </span>
+    );
+  }
+  if (status.result === 'flagged') {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-orange/15 border border-accent-orange/40 text-[10px] font-semibold text-accent-orange shrink-0">
+        <AlertTriangle size={10} /> Flagged · {status.defectCount}
+      </span>
+    );
+  }
+  if (status.result === 'conditional') {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-gold/15 border border-accent-gold/40 text-[10px] font-semibold text-accent-gold shrink-0">
+        <AlertTriangle size={10} /> Conditional
+      </span>
+    );
+  }
+  if (status.result === 'incomplete') {
+    const label = INCOMPLETE_REASON_LABELS[status.incompleteReason] || 'Not inspected';
+    return (
+      <span
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-red/15 border border-accent-red/40 text-[10px] font-semibold text-accent-red shrink-0 max-w-full"
+        title={label}
+      >
+        <Ban size={10} /> <span className="truncate">{label}</span>
+      </span>
+    );
+  }
+  return null;
+}
+
+function VehicleCard({ v, selected, todayInspection, onSelect }) {
+  const isDone = !!todayInspection;
   return (
     <button
       onClick={() => onSelect(v)}
-      className={`text-left rounded-lg p-3 border-2 transition-all cursor-pointer ${
+      className={`text-left rounded-lg p-3 border-2 transition-all cursor-pointer relative ${
         selected
           ? 'border-accent-blue bg-accent-blue/10'
-          : 'border-navy-700 bg-navy-900/60 hover:border-navy-600'
+          : isDone
+            ? 'border-navy-800 bg-navy-900/30 hover:border-navy-600'
+            : 'border-navy-700 bg-navy-900/60 hover:border-navy-600'
       }`}
     >
-      <div className="text-sm font-bold text-white font-mono mb-1">{v.fleetId}</div>
-      <div className="text-xs text-navy-300 truncate">
+      {/* Top row — fleet ID + status badge */}
+      <div className="flex items-start justify-between gap-2 mb-1">
+        <div className={`text-sm font-bold font-mono ${isDone ? 'text-navy-300' : 'text-white'}`}>
+          {v.fleetId}
+        </div>
+        <VehicleStatusBadge status={todayInspection} />
+      </div>
+      <div className={`text-xs truncate ${isDone ? 'text-navy-400' : 'text-navy-300'}`}>
         {v.year} {v.make} {v.model}
       </div>
       <div className="text-[10px] text-navy-500 mt-1">
