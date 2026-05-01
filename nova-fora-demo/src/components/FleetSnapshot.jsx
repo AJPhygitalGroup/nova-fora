@@ -564,8 +564,16 @@ function VendorCard({ vendor, selected, onSelect, neededServices }) {
   );
 }
 
-export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectId, vans, user, onClose, onCreate }) {
-  const [step, setStep] = useState(initialVan ? 2 : 1);
+export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectId, initialDefectIds, initialDefects, vans, user, onClose, onCreate }) {
+  // ── Bulk mode: caller passed defect ids via the array prop (one WO covering
+  // N defects, even if N === 1). The legacy single-defect path uses
+  // `initialDefectId` (singular) and goes through the per-defect form.
+  const bulkIds = initialDefectIds && initialDefectIds.length > 0 ? initialDefectIds : null;
+  const bulkMode = !!bulkIds;
+  const bulkDefects = initialDefects || [];
+
+  // In bulk mode we skip step 1 entirely (van is locked, no per-defect form).
+  const [step, setStep] = useState(bulkMode || initialVan ? 2 : 1);
   // Step 1: vehicle + defect
   const [van, setVan] = useState(initialVan || null);
   const [vanDropdownOpen, setVanDropdownOpen] = useState(false);
@@ -622,8 +630,13 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
     };
   }, []);
 
-  // Services needed for this section
-  const neededServices = section ? (SECTION_TO_SERVICES[section] || []) : [];
+  // Services needed — in bulk mode, derive from union of selected defects'
+  // categories; in single-defect mode, derive from the chosen section.
+  const neededServices = bulkMode
+    ? Array.from(new Set(
+        bulkDefects.flatMap((d) => SECTION_TO_SERVICES[d.category] || [])
+      ))
+    : section ? (SECTION_TO_SERVICES[section] || []) : [];
   // Sort vendors: preferred first, then by matching services + rating
   const vendorsToShow = apiVendors || [];
   const sortedVendors = [...vendorsToShow].sort((a, b) => {
@@ -634,7 +647,8 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
     return (b.rating || 0) - (a.rating || 0);
   });
 
-  // Step 1 validity: defect mode needs section + description; PM mode only needs vehicle + PM type
+  // Step 1 validity: defect mode needs section + description; PM mode only needs
+  // vehicle + PM type. Bulk mode never reaches step 1 (van is pre-set + locked).
   const canGoNext = step === 1
     ? (van && (isPM ? !!pmType : (section && description.length > 4)))
     : step === 2 ? !!vendor : true;
@@ -648,7 +662,10 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
       return;
     }
 
-    if (!initialDefectId) {
+    // Build the items list — bulk mode passes N ids; legacy single-defect path
+    // collapses to a 1-item list.
+    const itemIds = bulkIds || (initialDefectId ? [initialDefectId] : []);
+    if (itemIds.length === 0) {
       setSubmitError('No source defect — open this dialog from the Defects tab.');
       return;
     }
@@ -663,7 +680,7 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
 
       const created = await woApi.create({
         vendorId: vendor.id,
-        items: [{ defectId: initialDefectId }],
+        items: itemIds.map((id) => ({ defectId: id })),
         flags,
         notes,
       });
@@ -678,6 +695,8 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
         vendor,
         preferredDate,
         extraNotes,
+        bulk: bulkMode,
+        defectIds: itemIds,
         createdBy: user?.name,
         apiResponse: created,
       });
@@ -729,7 +748,9 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                 ))}
               </div>
               <div className="flex items-center justify-between text-[10px] sm:text-[11px] text-navy-400">
-                <span className={step >= 1 ? 'text-white font-semibold' : ''}>1. Vehicle & Defect</span>
+                <span className={step >= 1 ? 'text-white font-semibold' : ''}>
+                  {bulkMode ? `1. ${bulkIds.length} Defects` : '1. Vehicle & Defect'}
+                </span>
                 <span className={step >= 2 ? 'text-white font-semibold' : ''}>2. Choose Vendor</span>
                 <span className={step >= 3 ? 'text-white font-semibold' : ''}>3. Review & Send</span>
               </div>
@@ -749,13 +770,17 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                 </motion.div>
                 <h4 className="text-lg font-semibold text-white mb-1">Work order sent to {vendor.name}</h4>
                 <p className="text-sm text-navy-400 mb-4">
-                  {vendor.name} has been notified and will see this in their Work Orders hub.
-                  You'll receive an update when they accept, decline or complete.
+                  {bulkMode
+                    ? `${vendor.name} received one work order covering ${bulkIds.length} defects on ${van?.id}. You'll get a single update when they accept, decline or complete.`
+                    : `${vendor.name} has been notified and will see this in their Work Orders hub. You'll receive an update when they accept, decline or complete.`}
                 </p>
                 <div className="inline-flex flex-col gap-1 px-4 py-3 rounded-lg bg-navy-800/60 border border-navy-700/40 text-left">
                   <div className="text-[11px] text-navy-400">Work Order ID</div>
                   <div className="text-sm font-mono text-accent-blue">{createdWoId}</div>
-                  <div className="text-[11px] text-navy-400 mt-1">Vehicle: <span className="text-white">{van?.id}</span> · Vendor: <span className="text-white">{vendor?.name}</span></div>
+                  <div className="text-[11px] text-navy-400 mt-1">
+                    Vehicle: <span className="text-white">{van?.id}</span> · Vendor: <span className="text-white">{vendor?.name}</span>
+                    {bulkMode && <> · <span className="text-white">{bulkIds.length} defects</span></>}
+                  </div>
                   {isRush && <div className="text-[11px] text-accent-red mt-1 flex items-center gap-1"><Flame size={10} /> Rush Order — scheduled tonight</div>}
                 </div>
               </motion.div>
@@ -933,6 +958,12 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
               </motion.div>
             ) : step === 2 ? (
               <motion.div key="s2" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-3">
+                {bulkMode && (
+                  <div className="rounded-lg border border-accent-blue/40 bg-accent-blue/5 px-3 py-2 flex items-center gap-2 text-xs text-navy-200">
+                    <ClipboardList size={12} className="text-accent-blue shrink-0" />
+                    Bundling <strong className="text-white">{bulkIds.length} defects</strong> from <span className="font-mono text-white">{van?.id}</span> into one work order.
+                  </div>
+                )}
                 <div className="flex items-center gap-2 text-xs text-navy-400 mb-2 flex-wrap">
                   <span>Choose a vendor to process this work order</span>
                   {neededServices.length > 0 && (
@@ -954,14 +985,43 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                   <div className="flex items-center gap-2 mb-2">
                     <Truck size={14} className="text-accent-green" />
                     <span className="text-sm font-semibold text-white">{van?.id} · {van?.model}</span>
+                    {bulkMode && (
+                      <span className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-blue/15 border border-accent-blue/40 text-[10px] font-semibold text-accent-blue">
+                        {bulkIds.length} defects
+                      </span>
+                    )}
                   </div>
                   <div className="flex justify-between text-sm gap-3"><span className="text-navy-400">Plate</span><span className="text-white font-mono">{van?.plate}</span></div>
-                  <div className="flex justify-between text-sm gap-3"><span className="text-navy-400">Section</span><span className="text-white">{section}</span></div>
-                  {part && <div className="flex justify-between text-sm gap-3"><span className="text-navy-400">Part</span><span className="text-white">{part}</span></div>}
+                  {!bulkMode && (
+                    <>
+                      <div className="flex justify-between text-sm gap-3"><span className="text-navy-400">Section</span><span className="text-white">{section}</span></div>
+                      {part && <div className="flex justify-between text-sm gap-3"><span className="text-navy-400">Part</span><span className="text-white">{part}</span></div>}
+                    </>
+                  )}
                   {isRush && <div className="flex justify-between text-sm gap-3"><span className="text-navy-400">Priority</span><Badge variant="red"><Flame size={9} className="inline mr-0.5" /> Rush Order</Badge></div>}
                   <div className="pt-2 border-t border-navy-700/40">
-                    <div className="text-[11px] text-navy-400 mb-1">Description</div>
-                    <div className="text-sm text-white">{description}</div>
+                    <div className="text-[11px] text-navy-400 mb-1">{bulkMode ? 'Defects in this work order' : 'Description'}</div>
+                    {bulkMode ? (
+                      <ul className="space-y-1.5 max-h-48 overflow-y-auto">
+                        {bulkDefects.map((d) => (
+                          <li key={d.id} className="flex items-start gap-2 text-sm">
+                            <span className="font-mono text-[10px] text-navy-400 mt-0.5 shrink-0">{d.id}</span>
+                            <div className="min-w-0 flex-1">
+                              {d.line1 ? (
+                                <>
+                                  <div className="text-white truncate">{d.line1}</div>
+                                  {d.line2 && <div className="text-[11px] text-navy-300 truncate">{d.line2}</div>}
+                                </>
+                              ) : (
+                                <div className="text-white truncate">{d.desc || d.category}</div>
+                              )}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div className="text-sm text-white">{description}</div>
+                    )}
                   </div>
                 </div>
 
@@ -997,8 +1057,10 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                 {/* Auto-approval note */}
                 <div className="flex items-start gap-2 p-3 rounded-lg bg-accent-green/10 border border-accent-green/30 text-xs">
                   <Info size={12} className="text-accent-green mt-0.5 shrink-0" />
-                  <div className="text-navy-200"> Matches your auto-approval rules for {section}.
-                    This WO will be <strong className="text-accent-green">processed automatically</strong> unless cost exceeds your cap.
+                  <div className="text-navy-200">
+                    {bulkMode
+                      ? <>Matches your auto-approval rules. This WO will be <strong className="text-accent-green">processed automatically</strong> unless cost exceeds your cap.</>
+                      : <>Matches your auto-approval rules for {section}. This WO will be <strong className="text-accent-green">processed automatically</strong> unless cost exceeds your cap.</>}
                   </div>
                 </div>
               </motion.div>
@@ -1018,13 +1080,25 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                 </div>
               )}
               <div className="flex items-center justify-between gap-2">
-                <button onClick={() => (step === 1 ? onClose() : setStep(step - 1))}
+                <button onClick={() => {
+                  // Bulk mode skips step 1 entirely — clicking back from step 2
+                  // should close the modal (there's nothing to go back to).
+                  if (step === 1 || (bulkMode && step === 2)) {
+                    onClose();
+                  } else {
+                    setStep(step - 1);
+                  }
+                }}
                   className={`px-4 py-2.5 rounded-lg text-sm font-medium cursor-pointer transition-colors ${
-                    step === 1
+                    (step === 1 || (bulkMode && step === 2))
                       ? 'text-accent-red border border-accent-red/40 bg-accent-red/10 hover:bg-accent-red/20'
                       : 'text-navy-300 hover:text-white hover:bg-navy-800'
                   }`}>
-                  {step === 1 ? <><X size={12} className="inline mr-1" /> Reject</> : 'Back'}
+                  {step === 1
+                    ? <><X size={12} className="inline mr-1" /> Reject</>
+                    : (bulkMode && step === 2)
+                      ? <><X size={12} className="inline mr-1" /> Cancel</>
+                      : 'Back'}
                 </button>
                 {step < 3 ? (
                   <button onClick={() => setStep(step + 1)} disabled={!canGoNext}

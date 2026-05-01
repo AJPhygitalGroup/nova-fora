@@ -176,6 +176,27 @@ export default function Defects({ user }) {
     }
   };
 
+  // Bulk convert: caller passes display-defect rows (already filtered to a
+  // single vehicle by the table). We resolve the matching van + ACK all
+  // defects in parallel, then open the modal in bulk mode.
+  const handleBulkCreateWO = async (selected) => {
+    if (!selected || selected.length === 0) return;
+    const vanInternalId = selected[0].vanInternalId;
+    const matchingVan = modalVans.find((v) => v.id === vanInternalId);
+    setCreateWOContext({
+      van: matchingVan || null,
+      defect: null,
+      defectId: null,
+      defectIds: selected.map((d) => d.id),
+      defects: selected,
+    });
+    // ACK all selected defects in parallel — fire & forget, modal stays open
+    // even if some fail.
+    Promise.allSettled(
+      selected.map((d) => defectsApi.updateStatus(d.id, 'acknowledged'))
+    ).then(() => reload());
+  };
+
   const handleViewPhotos = async (d) => {
     // Open modal + fetch existing photos on demand
     try {
@@ -234,6 +255,7 @@ export default function Defects({ user }) {
         rushOrderCount={rushOrderCount}
         onReject={handleReject}
         onCreateWO={handleCreateWO}
+        onBulkCreateWO={handleBulkCreateWO}
         onViewPhotos={handleViewPhotos}
         onOpenCreateDefect={() => { /* hook when Create Defect flow is wired */ }}
       />
@@ -244,6 +266,8 @@ export default function Defects({ user }) {
             initialVan={createWOContext.van}
             initialDefect={createWOContext.defect}
             initialDefectId={createWOContext.defectId}
+            initialDefectIds={createWOContext.defectIds}
+            initialDefects={createWOContext.defects}
             vans={modalVans}
             user={user}
             onClose={() => {

@@ -2215,18 +2215,37 @@ function deriveActionFromStatus(d) {
   return null;
 }
 
-export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onViewPhotos, onOpenCreateDefect, scheduledCount, rushOrderCount, title = "Today's Defects" }) {
+export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBulkCreateWO, onViewPhotos, onOpenCreateDefect, scheduledCount, rushOrderCount, title = "Today's Defects" }) {
   const [activeVendor, setActiveVendor] = useState('all');
   // rowActions: ephemeral per-click state (rare — only if the parent DIDN'T
   // yet reload after the API call). The effective action is derived from
   // defect.status so refreshes / backend reloads persist correctly.
   const [rowActions, setRowActions] = useState({});
+  // Bulk-select mode (only enabled when parent passes onBulkCreateWO)
+  const bulkEnabled = !!onBulkCreateWO;
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
 
   const filtered = defects.filter((d) => {
     if (activeVendor === 'all') return true;
     const v = VENDOR_TYPES.find((x) => x.id === activeVendor);
     return v?.categories?.includes(d.category);
   });
+
+  // A defect is selectable only if it's still actionable (not already
+  // converted to WO and not rejected). Same rule the per-row buttons use.
+  const isSelectable = (d) => deriveActionFromStatus(d) === null;
+  const selectableInView = filtered.filter(isSelectable);
+
+  // Selected rows that are still in the current filtered view AND still
+  // actionable. We use this for the action bar count + the "all selected" check.
+  const visibleSelected = selectableInView.filter((d) => selectedIds.has(d.id));
+  const selectedDefects = defects.filter((d) => selectedIds.has(d.id));
+
+  // Same-vehicle constraint: one WO is sent to one vendor for one vehicle, so
+  // bulk only makes sense when every selected defect is on the same van.
+  const distinctVans = new Set(selectedDefects.map((d) => d.vanInternalId).filter(Boolean));
+  const sameVan = distinctVans.size <= 1;
 
   const handleReject = (d) => {
     setRowActions({ ...rowActions, [d.id]: 'rejected' });
@@ -2236,6 +2255,51 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onVi
     setRowActions({ ...rowActions, [d.id]: 'wo_created' });
     onCreateWO?.(d);
   };
+
+  // ── Selection helpers ────────────────────────────
+  const toggleOne = (d) => {
+    if (!isSelectable(d)) return;
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(d.id)) next.delete(d.id);
+      else next.add(d.id);
+      return next;
+    });
+  };
+  const toggleAllVisible = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      const allVisibleSelected = selectableInView.length > 0 &&
+        selectableInView.every((d) => prev.has(d.id));
+      if (allVisibleSelected) {
+        // un-check all visible
+        selectableInView.forEach((d) => next.delete(d.id));
+      } else {
+        // check all visible
+        selectableInView.forEach((d) => next.add(d.id));
+      }
+      return next;
+    });
+  };
+  const clearSelection = () => setSelectedIds(new Set());
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    clearSelection();
+  };
+  const handleBulkCreate = () => {
+    if (!sameVan || selectedDefects.length === 0) return;
+    onBulkCreateWO?.(selectedDefects);
+    // Optimistically mark these rows as wo_created
+    setRowActions((prev) => {
+      const next = { ...prev };
+      selectedDefects.forEach((d) => { next[d.id] = 'wo_created'; });
+      return next;
+    });
+    exitSelectMode();
+  };
+  const allVisibleSelected = selectableInView.length > 0 &&
+    selectableInView.every((d) => selectedIds.has(d.id));
+  const someVisibleSelected = visibleSelected.length > 0 && !allVisibleSelected;
 
   return (
     <div className="bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl overflow-hidden">
@@ -2257,12 +2321,69 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onVi
               {rushOrderCount} Rush Order
             </span>
           )}
+          {bulkEnabled && (
+            <button
+              onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+              className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-semibold border transition-colors cursor-pointer ${
+                selectMode
+                  ? 'bg-navy-800 border-navy-600 text-white'
+                  : 'bg-navy-800/60 border-navy-700 text-navy-300 hover:text-white hover:border-navy-600'
+              }`}
+              title={selectMode ? 'Exit select mode' : 'Select multiple defects to bulk-convert'}
+            >
+              {selectMode ? <X size={12} /> : <Check size={12} />}
+              {selectMode ? 'Cancel' : 'Select'}
+            </button>
+          )}
           <button onClick={onOpenCreateDefect}
             className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-accent-blue text-white text-xs font-semibold hover:opacity-90 cursor-pointer">
             <Plus size={12} /> Create Defect
           </button>
         </div>
       </div>
+
+      {/* Bulk action bar — appears when defects are selected */}
+      {bulkEnabled && selectMode && selectedDefects.length > 0 && (
+        <div className="px-4 py-2.5 border-b border-navy-800 bg-accent-blue/10 flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-3 text-xs">
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-accent-blue/20 border border-accent-blue/40 text-accent-blue font-semibold">
+              <Check size={11} /> {selectedDefects.length} selected
+            </span>
+            {!sameVan && (
+              <span className="inline-flex items-center gap-1.5 text-accent-orange">
+                <AlertTriangle size={11} />
+                Bulk WO requires defects from a single vehicle
+                ({distinctVans.size} vans selected)
+              </span>
+            )}
+            {sameVan && distinctVans.size === 1 && (
+              <span className="text-navy-300">
+                from <span className="font-mono text-white">{[...distinctVans][0]}</span>
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={clearSelection}
+              className="px-2.5 py-1 rounded-md bg-navy-800 border border-navy-700 text-navy-300 hover:text-white text-[11px] font-semibold cursor-pointer"
+            >
+              Clear
+            </button>
+            <button
+              onClick={handleBulkCreate}
+              disabled={!sameVan}
+              className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-[11px] font-semibold ${
+                sameVan
+                  ? 'bg-accent-green text-white hover:opacity-90 cursor-pointer'
+                  : 'bg-navy-800 border border-navy-700 text-navy-500 cursor-not-allowed'
+              }`}
+              title={sameVan ? 'Create one work order containing all selected defects' : 'All selected defects must belong to the same vehicle'}
+            >
+              <Check size={11} /> Bulk Create WO ({selectedDefects.length})
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Vendor filter pills */}
       <div className="px-4 py-2.5 border-b border-navy-800 bg-navy-950/20 flex items-center gap-1.5 overflow-x-auto">
@@ -2289,6 +2410,19 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onVi
         <table className="w-full text-sm">
           <thead>
             <tr className="text-navy-400 text-[10px] uppercase tracking-wide border-b border-navy-800">
+              {bulkEnabled && selectMode && (
+                <th className="text-left pl-4 pr-2 py-2.5 font-semibold w-8">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all visible defects"
+                    checked={allVisibleSelected}
+                    ref={(el) => { if (el) el.indeterminate = someVisibleSelected; }}
+                    onChange={toggleAllVisible}
+                    disabled={selectableInView.length === 0}
+                    className="w-3.5 h-3.5 accent-accent-blue cursor-pointer disabled:opacity-40"
+                  />
+                </th>
+              )}
               <th className="text-left px-4 py-2.5 font-semibold">Van</th>
               <th className="text-left px-4 py-2.5 font-semibold">Defect</th>
               <th className="text-left px-4 py-2.5 font-semibold">Category</th>
@@ -2302,12 +2436,28 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onVi
               const da = daList.find((x) => x.id === d.da);
               // Prefer ephemeral click state, fall back to derived-from-status
               const action = rowActions[d.id] || deriveActionFromStatus(d);
+              const rowSelectable = bulkEnabled && selectMode && isSelectable(d);
+              const rowSelected = selectedIds.has(d.id);
               return (
                 <tr key={d.id} className={`border-b border-navy-800/50 last:border-b-0 transition-colors ${
                   action === 'rejected' ? 'bg-accent-red/5 opacity-60'
                   : action === 'wo_created' ? 'bg-accent-green/5'
+                  : rowSelected ? 'bg-accent-blue/10'
                   : 'hover:bg-navy-800/30'
                 }`}>
+                  {bulkEnabled && selectMode && (
+                    <td className="pl-4 pr-2 py-2.5 w-8">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select defect ${d.id}`}
+                        checked={rowSelected}
+                        onChange={() => toggleOne(d)}
+                        disabled={!rowSelectable}
+                        className="w-3.5 h-3.5 accent-accent-blue cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={rowSelectable ? '' : 'This defect is already converted or rejected'}
+                      />
+                    </td>
+                  )}
                   <td className="px-4 py-2.5 text-white font-semibold font-mono">{d.van}</td>
                   <td className="px-4 py-2.5 text-white">
                     <div className="flex items-start justify-between gap-2">
@@ -2370,7 +2520,7 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onVi
               );
             })}
             {filtered.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-navy-400">No defects match the selected vendor filter.</td></tr>
+              <tr><td colSpan={bulkEnabled && selectMode ? 7 : 6} className="px-4 py-8 text-center text-sm text-navy-400">No defects match the selected vendor filter.</td></tr>
             )}
           </tbody>
         </table>
