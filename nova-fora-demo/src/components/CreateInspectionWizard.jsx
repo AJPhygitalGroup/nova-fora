@@ -17,7 +17,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeft, ArrowRight, X, Truck, Gauge, ClipboardList, Check, AlertCircle,
   Loader2, Plus, Trash2, Camera, ChevronDown, ChevronUp, AlertTriangle, Building2,
-  KeyRound,
+  KeyRound, PlayCircle, Ban,
 } from 'lucide-react';
 import {
   inspections as inspectionsApi,
@@ -61,7 +61,8 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
   //   - completeWarning: shown when user clicks Complete with vans pending
   //   - fleetDone: terminal celebration screen
   const [phase, setPhase] = useState('inspecting');
-  const [step, setStep] = useState(1); // 1=DSP, 2=keys, 3=vehicle, 4=odometer, 5=sections, 6=review
+  // 1=DSP, 2=keys, 3=vehicle, 4=start-or-skip gate, 5=odometer, 6=defects, 7=review
+  const [step, setStep] = useState(1);
 
   // Fleet data — fetched once at mount, refetched after submit so the
   // "remaining" calculation reflects the latest server state.
@@ -91,6 +92,12 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
   const [submitting, setSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState(null);
   const [submitError, setSubmitError] = useState(null);
+
+  // Per-vehicle "not inspected" submit (step 4 gate). Separate from submitting
+  // so the start-gate UI can show its own loader without flashing the review
+  // step's spinner.
+  const [incompleteSubmitting, setIncompleteSubmitting] = useState(false);
+  const [incompleteError, setIncompleteError] = useState(null);
 
   // Server-side "today's inspections" cache for the chosen DSP (refetched after each submit)
   const [todayInspections, setTodayInspections] = useState([]);
@@ -163,7 +170,8 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
   const canGoNextStep1 = !!dsp;
   const canGoNextStep2 = keysConfirmed;  // need to confirm keys count (or skip)
   const canGoNextStep3 = !!vehicle;
-  const canGoNextStep4 = inspectionId !== null;  // draft must exist after odometer
+  // Step 4 (start-gate) has no "Next" — its in-screen buttons drive transitions.
+  const canGoNextStep5 = inspectionId !== null;  // draft must exist after odometer
   const canSubmit = inspectionId !== null;
 
   // Auto-create the DRAFT when entering the odometer step
@@ -198,22 +206,62 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
       // Keys confirmed → vehicle list
       setStep(3);
     } else if (step === 3) {
-      // Vehicle picked → odometer
+      // Vehicle picked → start-or-skip gate
       setStep(4);
     } else if (step === 4) {
-      // Create draft (with vehicle + odometer + keys), then go to sections
-      const id = await ensureDraft();
-      if (id) setStep(5);
+      // No-op: gate is driven by in-screen buttons (Start → 5, reason → reset to 3)
     } else if (step === 5) {
-      setStep(6);
+      // Create draft (with vehicle + odometer + keys), then go to defects
+      const id = await ensureDraft();
+      if (id) setStep(6);
+    } else if (step === 6) {
+      setStep(7);
     }
   };
 
   const goBack = () => {
     if (step > 1) {
-      // If user goes back into the vehicle picker, clear current vehicle
+      // Going back from the vehicle picker clears the picked van so the user
+      // doesn't accidentally start the gate flow with a stale selection.
       if (step === 3) setVehicle(null);
       setStep(step - 1);
+    }
+  };
+
+  // ─── Step 4 gate: tech said "Vehicle not inspected" + picked a reason ─
+  const handleMarkNotInspected = async (reasonValue) => {
+    if (!vehicle) return;
+    setIncompleteSubmitting(true);
+    setIncompleteError(null);
+    try {
+      const created = await inspectionsApi.create({
+        vehicleId: vehicle.id,
+        incompleteReason: reasonValue,
+        resultOverride: 'incomplete',
+      });
+      // Add to session log so the running counters reflect the new entry.
+      setInspectedSession((prev) => [
+        ...prev,
+        {
+          inspectionId: created.id,
+          vehicleId: created.vehicleId || vehicle.id,
+          fleetId: created.fleetId || vehicle.fleetId,
+          defectCount: 0,
+          result: 'incomplete',
+          incompleteReason: reasonValue,
+        },
+      ]);
+      // Server-truth for "remaining" goes down — refetch so the picker hides
+      // the van we just flagged.
+      await refreshTodayInspections();
+      // Streamlined fast-path: skip the post-submit chooser and drop the tech
+      // straight back at the vehicle picker for the next van.
+      resetForNextVehicle();
+      setStep(3);
+    } catch (err) {
+      setIncompleteError(err?.detail || err?.message || 'Failed to record');
+    } finally {
+      setIncompleteSubmitting(false);
     }
   };
 
@@ -290,10 +338,13 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
     setCreatingDraft(false);
     setCreateError(null);
     setDefects([]);
-    setOpenSection(null);
-    setAddingDefect(null);
+    // (openSection / addingDefect were legacy v1 state — removed when the
+    // section-first picker moved into DvicWizard. Keeping the function lean.)
     setSubmitResult(null);
     setSubmitError(null);
+    // Step-4 gate state — clear so the next van starts fresh
+    setIncompleteSubmitting(false);
+    setIncompleteError(null);
   };
 
   // ─── Action: inspect another van in the SAME DSP ────
@@ -410,7 +461,7 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
   return (
     <FullScreenShell
       title="QC DVIC Inspection"
-      subtitle={`Step ${step} of 6`}
+      subtitle={`Step ${step} of 7`}
       onClose={onClose}
     >
       {/* Body */}
@@ -452,8 +503,19 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
           />
         )}
 
-        {/* ── Step 4: odometer ── */}
+        {/* ── Step 4: start-gate (Start Inspection / Vehicle not inspected) ── */}
         {step === 4 && (
+          <Step4StartGate
+            vehicle={vehicle}
+            incompleteSubmitting={incompleteSubmitting}
+            incompleteError={incompleteError}
+            onStart={() => setStep(5)}
+            onMarkNotInspected={handleMarkNotInspected}
+          />
+        )}
+
+        {/* ── Step 5: odometer ── */}
+        {step === 5 && (
           <Step4Odometer
             vehicle={vehicle}
             odometer={odometer}
@@ -465,8 +527,8 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
           />
         )}
 
-        {/* ── Step 5: defects (flat list + DefectWizard overlay) ── */}
-        {step === 5 && (
+        {/* ── Step 6: defects (flat list + DefectWizard overlay) ── */}
+        {step === 6 && (
           <Step5Defects
             inspectionId={inspectionId}
             defects={defects}
@@ -475,8 +537,8 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
           />
         )}
 
-        {/* ── Step 6: review + submit ── */}
-        {step === 6 && (
+        {/* ── Step 7: review + submit ── */}
+        {step === 7 && (
           <Step6Review
             dsp={dsp}
             keysReceived={keysReceived}
@@ -518,27 +580,33 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
             {step === 1 && 'Pick the DSP'}
             {step === 2 && 'Record keys'}
             {step === 3 && 'Pick a vehicle'}
-            {step === 4 && 'Odometer'}
-            {step === 5 && `${totalDefects} defect${totalDefects === 1 ? '' : 's'}`}
-            {step === 6 && 'Review & submit'}
+            {step === 4 && 'Start or skip'}
+            {step === 5 && 'Odometer'}
+            {step === 6 && `${totalDefects} defect${totalDefects === 1 ? '' : 's'}`}
+            {step === 7 && 'Review & submit'}
           </div>
 
-          {step < 6 && (
+          {/* Step 4 has its own in-screen buttons (Start / reason picker) — no footer Next. */}
+          {step < 7 && step !== 4 && (
             <button
               onClick={goNext}
               disabled={
                 (step === 1 && !canGoNextStep1) ||
                 (step === 2 && !canGoNextStep2) ||
                 (step === 3 && !canGoNextStep3) ||
-                (step === 4 && creatingDraft)
+                (step === 5 && creatingDraft)
               }
               className="flex items-center gap-1.5 px-4 py-2 rounded-md bg-accent-blue text-white font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-sm"
             >
               {creatingDraft ? <Loader2 size={14} className="animate-spin" /> : null}
-              {step === 4 && !inspectionId ? 'Start' : 'Next'} <ArrowRight size={14} />
+              {step === 5 && !inspectionId ? 'Start' : 'Next'} <ArrowRight size={14} />
             </button>
           )}
-          {step === 6 && (
+          {step === 4 && (
+            // Spacer keeps Back/caption left-aligned without a Next button on step 4.
+            <span className="w-[80px]" aria-hidden />
+          )}
+          {step === 7 && (
             <button
               onClick={handleSubmit}
               disabled={submitting || !canSubmit}
@@ -837,6 +905,96 @@ function VehicleCard({ v, selected, onSelect }) {
         {v.plate} &middot; {v.mileage?.toLocaleString() || 0} mi
       </div>
     </button>
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// Step 4: Start gate — tech is in front of the picked vehicle and decides
+//   "Start Inspection" → step 5 (odometer + the rest of the walkthrough)
+//   "Vehicle not inspected" + reason → POST incomplete + jump back to picker
+// Designed to be one tap away from either path so the tech moves through
+// a parking lot of vans quickly.
+// ─────────────────────────────────────────────────────
+function Step4StartGate({
+  vehicle,
+  incompleteSubmitting,
+  incompleteError,
+  onStart,
+  onMarkNotInspected,
+}) {
+  return (
+    <div className="space-y-5">
+      {/* Vehicle context — confirm the tech's standing in front of the right van */}
+      <div className="rounded-lg bg-navy-900/60 border border-navy-700 p-3">
+        <div className="text-[10px] uppercase tracking-wide text-navy-400 mb-1">
+          Vehicle ready
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm font-bold text-white font-mono">{vehicle?.fleetId}</div>
+            <div className="text-xs text-navy-300 truncate">
+              {vehicle?.year} {vehicle?.make} {vehicle?.model}
+            </div>
+          </div>
+          <div className="text-[11px] text-navy-400 shrink-0">
+            {vehicle?.plate} · {vehicle?.mileage?.toLocaleString() || 0} mi
+          </div>
+        </div>
+      </div>
+
+      {/* Big primary CTA — the happy path */}
+      <button
+        onClick={onStart}
+        disabled={incompleteSubmitting}
+        className="w-full py-5 rounded-xl bg-gradient-to-r from-accent-blue to-accent-purple text-white font-bold text-base flex items-center justify-center gap-2 hover:opacity-90 disabled:opacity-40 cursor-pointer shadow-lg shadow-accent-blue/20"
+      >
+        <PlayCircle size={20} />
+        Start Inspection
+      </button>
+
+      {/* Visual divider */}
+      <div className="flex items-center gap-3 my-1">
+        <div className="flex-1 border-t border-navy-700" />
+        <span className="text-[10px] uppercase tracking-wide text-navy-500">Or</span>
+        <div className="flex-1 border-t border-navy-700" />
+      </div>
+
+      {/* Vehicle not inspected — 3 reasons. Tap any → POST + back to picker */}
+      <div className="rounded-xl border border-navy-700 bg-navy-900/40 p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <Ban size={14} className="text-accent-orange" />
+          <div className="text-sm font-semibold text-white">Vehicle not inspected</div>
+        </div>
+        <p className="text-[11px] text-navy-400 mb-3">
+          Tap a reason — we'll record it and drop you back at the vehicle picker.
+        </p>
+        <div className="grid grid-cols-1 gap-2">
+          {INCOMPLETE_REASONS.map((r) => (
+            <button
+              key={r.value}
+              onClick={() => onMarkNotInspected(r.value)}
+              disabled={incompleteSubmitting}
+              className="flex items-center gap-2 px-3 py-3 rounded-lg border border-navy-700 bg-navy-800 hover:border-accent-orange/50 hover:bg-accent-orange/10 text-left text-sm text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+            >
+              <AlertTriangle size={14} className="text-accent-orange shrink-0" />
+              <span className="flex-1">{r.label}</span>
+              <ArrowRight size={14} className="text-navy-400" />
+            </button>
+          ))}
+        </div>
+        {incompleteSubmitting && (
+          <div className="mt-3 flex items-center gap-2 text-xs text-navy-300">
+            <Loader2 size={12} className="animate-spin" /> Recording…
+          </div>
+        )}
+        {incompleteError && (
+          <div className="mt-3 flex items-start gap-2 p-2 rounded-md bg-accent-red/15 border border-accent-red/40 text-accent-red text-xs">
+            <AlertCircle size={12} className="shrink-0 mt-0.5" />
+            <span>{incompleteError}</span>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
