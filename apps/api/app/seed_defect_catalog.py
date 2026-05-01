@@ -124,6 +124,33 @@ PART_SYSTEM_ROWS = [
 
     # under_vehicle
     (P.UNDERCARRIAGE_OBJECT, S.UNDER_VEHICLE, True, None),
+
+    # ── DVIC-specific parts (Cargo + DOT PDFs, Apr 2026) ──
+    # These mirror the additions in DefectPart enum and the DVIC template seed.
+    (P.SUSPENSION, S.UNDER_VEHICLE, True, None),
+    (P.UNDERBODY_OBJECT, S.UNDER_VEHICLE, True, None),
+    (P.FLUID_LEAK, S.UNDER_VEHICLE, True, None),
+    (P.FLUID_LEAK, S.FLUIDS_UNDER_HOOD, False, None),
+    (P.HOOD_LATCH, S.BODY_STEPS, True, "panels"),
+    (P.LIFT_GATE, S.BODY_STEPS, True, "panels"),
+    (P.BACKUP_CAMERA, S.CAMERAS_ELECTRONICS, True, "cameras"),
+    (P.SIDE_VIEW_CAMERA, S.CAMERAS_ELECTRONICS, True, "cameras"),
+    (P.CARGO_STEP, S.BODY_STEPS, True, "steps"),
+    (P.FUEL_CAP, S.FLUIDS_UNDER_HOOD, True, None),
+    (P.MUD_FLAP, S.BODY_STEPS, True, "panels"),
+    (P.BATTERY_COVER, S.BODY_STEPS, True, "panels"),
+    (P.AMAZON_DOT_DECAL, S.COMPLIANCE, True, "stickers"),
+    (P.PRIME_DECAL, S.COMPLIANCE, True, "stickers"),
+    (P.INSURANCE_DOC, S.COMPLIANCE, True, "docs"),
+    (P.REGISTRATION_DOC, S.COMPLIANCE, True, "docs"),
+    (P.SHELF, S.INTERIOR, True, "cab"),
+    (P.SPARE_FUSE, S.INTERIOR, True, "safety_gear"),
+    (P.SPARE_FUSE, S.COMPLIANCE, False, "safety"),
+    (P.REFLECTIVE_TRIANGLE, S.INTERIOR, True, "safety_gear"),
+    (P.REFLECTIVE_TRIANGLE, S.COMPLIANCE, False, "safety"),
+    (P.AIR_PRESSURE_GAUGE, S.BRAKES_STEERING, True, None),
+    (P.VEHICLE_INTERIOR, S.INTERIOR, True, "cleanliness"),
+    (P.DEVICE_ON_WINDSHIELD, S.WINDSHIELD_WIPERS, True, None),
 ]
 
 
@@ -147,7 +174,10 @@ PART_VALIDITY_ROWS = [
     # left/right required
     (P.HEADLIGHT, LEFT_RIGHT, True, False),
     (P.TAIL_LIGHT, LEFT_RIGHT, True, False),
-    (P.TURN_SIGNAL, LEFT_RIGHT, True, False),
+    # turn signal: DVIC wizard picker allows L/R + front/rear (cab dashboard usage)
+    (P.TURN_SIGNAL, [Pos.DRIVER_SIDE, Pos.PASSENGER_SIDE, Pos.FRONT, Pos.REAR], True, False),
+    # hazard light: front-side + back-side rows pin position; in-cab row has none
+    (P.HAZARD_LIGHT, [Pos.FRONT, Pos.REAR], False, True),
     (P.WIPER_BLADE, LEFT_RIGHT, True, False),
     (P.MARKER_LIGHT, LEFT_RIGHT, True, False),
     (P.STEPWELL_LIGHT, LEFT_RIGHT, True, False),
@@ -177,11 +207,32 @@ PART_VALIDITY_ROWS = [
     # exterior_door (driver_side / passenger_side / rear)
     (P.EXTERIOR_DOOR, [Pos.DRIVER_SIDE, Pos.PASSENGER_SIDE, Pos.REAR], True, False),
     (P.DOOR_HARDWARE, [Pos.DRIVER_SIDE, Pos.PASSENGER_SIDE, Pos.REAR], False, True),
+
+    # ── DVIC-specific parts (Apr 2026 PDFs) ──
+    # under-vehicle objects can be reported per side or front/rear
+    (P.UNDERBODY_OBJECT, [Pos.FRONT, Pos.REAR, Pos.DRIVER_SIDE, Pos.PASSENGER_SIDE], False, True),
+    # fluid leaks happen on the ground under driver/passenger side
+    (P.FLUID_LEAK, [Pos.DRIVER_SIDE, Pos.PASSENGER_SIDE], False, True),
+    # rear-only parts (lift gate, backup camera)
+    (P.LIFT_GATE, [Pos.REAR], False, True),
+    (P.BACKUP_CAMERA, [Pos.REAR], False, True),
+    # left/right body parts
+    (P.SIDE_VIEW_CAMERA, LEFT_RIGHT, True, False),
+    (P.AMAZON_DOT_DECAL, LEFT_RIGHT, True, False),
+    (P.PRIME_DECAL, LEFT_RIGHT, True, False),
+    # cargo step can appear on either side or rear
+    (P.CARGO_STEP, [Pos.DRIVER_SIDE, Pos.PASSENGER_SIDE, Pos.REAR], False, True),
+    # mud flap pinned to rear-corner per Amazon DVIC spec
+    (P.MUD_FLAP, [Pos.DRIVER_REAR, Pos.PASSENGER_REAR], True, False),
+    # battery cover: DOT box trucks only — driver-side panel
+    (P.BATTERY_COVER, [Pos.DRIVER_SIDE], False, True),
 ]
 
 # All other parts: no position
 NO_POSITION_PARTS = [
-    P.HAZARD_LIGHT, P.CABIN_LIGHT, P.CARGO_LIGHT,
+    # NB: HAZARD_LIGHT was here historically — moved above to a positioned-row
+    # so the front/rear DVIC entries pass validation.
+    P.CABIN_LIGHT, P.CARGO_LIGHT,
     P.WINDSHIELD, P.WASHER_SYSTEM,
     P.HOOD, P.FLOOR_PANEL, P.REAR_STEP,
     P.BULKHEAD_DOOR, P.REAR_CARGO_DOOR, P.ROLL_UP_DOOR,
@@ -195,6 +246,18 @@ NO_POSITION_PARTS = [
     P.COOLANT, P.BRAKE_FLUID, P.POWER_STEERING_FLUID,
     P.DEF_FLUID, P.ENGINE_OIL, P.GEAR_OIL,
     P.INSPECTION_STICKER, P.REGISTRATION_STICKER,
+    # ── DVIC-specific NO_POSITION additions ──
+    P.SUSPENSION,           # whole-vehicle leaning check
+    P.HOOD_LATCH,           # singular front part
+    P.FUEL_CAP,             # singular front/side part
+    P.INSURANCE_DOC,        # paper documentation
+    P.REGISTRATION_DOC,     # paper documentation
+    P.SHELF,                # interior cargo area
+    P.SPARE_FUSE,           # in-cab safety gear
+    P.REFLECTIVE_TRIANGLE,  # in-cab safety gear
+    P.AIR_PRESSURE_GAUGE,   # dashboard gauge
+    P.VEHICLE_INTERIOR,     # whole-cabin cleanliness
+    P.DEVICE_ON_WINDSHIELD, # accessory mounted on windshield
 ]
 PART_VALIDITY_ROWS.extend((p, [], False, True) for p in NO_POSITION_PARTS)
 
@@ -398,6 +461,36 @@ DETAILS_SCHEMA_ROWS.extend(_flat(P.REGISTRATION_STICKER, [T.MISSING, T.ILLEGIBLE
 
 # Under vehicle
 DETAILS_SCHEMA_ROWS.extend(_flat(P.UNDERCARRIAGE_OBJECT, [T.OTHER_DAMAGE]))
+
+
+# ─────────────────────────────────────────────────────
+# DVIC template auto-coverage
+#
+# Every (part, defect_type) combo declared in seed_dvic_template.py MUST be in
+# the catalog allow-list — otherwise the wizard can record a defect that the
+# server then rejects with "defect_type X is not allowed on part Y" (the bug
+# this block was added to prevent). Curated rows above take precedence; the
+# loop only fills gaps. Re-run `python -m app.cli seed-defect-catalog` after
+# editing either seed.
+# ─────────────────────────────────────────────────────
+def _ensure_dvic_coverage():
+    from app.seed_dvic_template import DVIC_ROWS
+
+    seen = {(part, dt) for part, dt, _ in DETAILS_SCHEMA_ROWS}
+    added: list[tuple] = []
+    for r in DVIC_ROWS:
+        key = (r["part_enum"], r["defect_type_enum"])
+        if key in seen:
+            continue
+        seen.add(key)
+        # Use the DVIC template's details_schema if present so the validator's
+        # required-fields check matches what the wizard collected.
+        schema = r.get("details_schema") or EMPTY_SCHEMA
+        added.append((r["part_enum"], r["defect_type_enum"], schema))
+    return added
+
+
+DETAILS_SCHEMA_ROWS.extend(_ensure_dvic_coverage())
 
 
 def get_seed_data():
