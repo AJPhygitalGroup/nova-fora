@@ -176,6 +176,23 @@ export default function Defects({ user }) {
     }
   };
 
+  // Bulk reject: dismiss N defects in parallel. No same-vehicle constraint
+  // (rejecting is per-defect; cross-van is fine). Failures are surfaced via
+  // a single alert listing the IDs that didn't update.
+  const handleBulkReject = async (selected) => {
+    if (!selected || selected.length === 0) return;
+    const results = await Promise.allSettled(
+      selected.map((d) => defectsApi.updateStatus(d.id, 'dismissed'))
+    );
+    const failed = selected
+      .map((d, i) => (results[i].status === 'rejected' ? d.id : null))
+      .filter(Boolean);
+    if (failed.length > 0) {
+      alert(`Failed to reject ${failed.length} defect${failed.length === 1 ? '' : 's'}: ${failed.join(', ')}`);
+    }
+    reload();
+  };
+
   // Bulk convert: caller passes display-defect rows (already filtered to a
   // single vehicle by the table). We resolve the matching van + ACK all
   // defects in parallel, then open the modal in bulk mode.
@@ -256,6 +273,7 @@ export default function Defects({ user }) {
         onReject={handleReject}
         onCreateWO={handleCreateWO}
         onBulkCreateWO={handleBulkCreateWO}
+        onBulkReject={handleBulkReject}
         onViewPhotos={handleViewPhotos}
         onOpenCreateDefect={() => { /* hook when Create Defect flow is wired */ }}
       />

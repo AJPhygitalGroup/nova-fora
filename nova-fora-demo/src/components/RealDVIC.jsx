@@ -2215,14 +2215,14 @@ function deriveActionFromStatus(d) {
   return null;
 }
 
-export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBulkCreateWO, onViewPhotos, onOpenCreateDefect, scheduledCount, rushOrderCount, title = "Today's Defects" }) {
+export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBulkCreateWO, onBulkReject, onViewPhotos, onOpenCreateDefect, scheduledCount, rushOrderCount, title = "Today's Defects" }) {
   const [activeVendor, setActiveVendor] = useState('all');
   // rowActions: ephemeral per-click state (rare — only if the parent DIDN'T
   // yet reload after the API call). The effective action is derived from
   // defect.status so refreshes / backend reloads persist correctly.
   const [rowActions, setRowActions] = useState({});
-  // Bulk-select mode (only enabled when parent passes onBulkCreateWO)
-  const bulkEnabled = !!onBulkCreateWO;
+  // Bulk-select mode (enabled when parent passes either bulk handler)
+  const bulkEnabled = !!(onBulkCreateWO || onBulkReject);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
 
@@ -2293,6 +2293,17 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
     setRowActions((prev) => {
       const next = { ...prev };
       selectedDefects.forEach((d) => { next[d.id] = 'wo_created'; });
+      return next;
+    });
+    exitSelectMode();
+  };
+  const handleBulkRejectClick = () => {
+    if (selectedDefects.length === 0) return;
+    onBulkReject?.(selectedDefects);
+    // Optimistically mark these rows as rejected
+    setRowActions((prev) => {
+      const next = { ...prev };
+      selectedDefects.forEach((d) => { next[d.id] = 'rejected'; });
       return next;
     });
     exitSelectMode();
@@ -2369,18 +2380,29 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
             >
               Clear
             </button>
-            <button
-              onClick={handleBulkCreate}
-              disabled={!sameVan}
-              className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-[11px] font-semibold ${
-                sameVan
-                  ? 'bg-accent-green text-white hover:opacity-90 cursor-pointer'
-                  : 'bg-navy-800 border border-navy-700 text-navy-500 cursor-not-allowed'
-              }`}
-              title={sameVan ? 'Create one work order containing all selected defects' : 'All selected defects must belong to the same vehicle'}
-            >
-              <Check size={11} /> Bulk Create WO ({selectedDefects.length})
-            </button>
+            {onBulkReject && (
+              <button
+                onClick={handleBulkRejectClick}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-[11px] font-semibold bg-accent-red/15 border border-accent-red/40 text-accent-red hover:bg-accent-red/25 cursor-pointer"
+                title="Reject all selected defects"
+              >
+                <X size={11} /> Bulk Reject ({selectedDefects.length})
+              </button>
+            )}
+            {onBulkCreateWO && (
+              <button
+                onClick={handleBulkCreate}
+                disabled={!sameVan}
+                className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-[11px] font-semibold ${
+                  sameVan
+                    ? 'bg-accent-green text-white hover:opacity-90 cursor-pointer'
+                    : 'bg-navy-800 border border-navy-700 text-navy-500 cursor-not-allowed'
+                }`}
+                title={sameVan ? 'Create one work order containing all selected defects' : 'All selected defects must belong to the same vehicle'}
+              >
+                <Check size={11} /> Bulk Create WO ({selectedDefects.length})
+              </button>
+            )}
           </div>
         </div>
       )}
