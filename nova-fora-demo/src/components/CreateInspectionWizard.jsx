@@ -61,7 +61,10 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
   //   - completeWarning: shown when user clicks Complete with vans pending
   //   - fleetDone: terminal celebration screen
   const [phase, setPhase] = useState('inspecting');
-  // 1=DSP, 2=keys, 3=vehicle, 4=start-or-skip gate, 5=odometer, 6=defects, 7=review
+  // 1=DSP, 2=keys, 3=vehicle, 4=start-or-skip gate, 5=odometer,
+  // 6=DvicWizard (section hub + Complete Inspection submits the whole thing).
+  // The dedicated review step was folded into the DvicWizard hub — the tech
+  // sees the running defect list right there and submits in one tap.
   const [step, setStep] = useState(1);
 
   // Fleet data — fetched once at mount, refetched after submit so the
@@ -79,8 +82,8 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
   // Each item: { id, partLabel, partIcon, positionLabel, defectTypeLabel,
   //              defectTypeIcon, severity, photos: [], _v2: true }
   const [defects, setDefects] = useState([]);
-  // Whether the DefectWizard overlay is open
-  const [showDefectWizard, setShowDefectWizard] = useState(false);
+  // (DvicWizard now renders inline at step 6 instead of as an on-demand
+  // overlay — no separate "open" flag needed.)
 
   // Session-wide state (kept across multiple inspections in one shift)
   const [dsp, setDsp] = useState(null);  // {id, numericId, name, count}
@@ -235,12 +238,13 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
     } else if (step === 4) {
       // No-op: gate is driven by in-screen buttons (Start → 5, reason → reset to 3)
     } else if (step === 5) {
-      // Create draft (with vehicle + odometer + keys), then go to defects
+      // Create draft (with vehicle + odometer + keys), then hand off to the
+      // DvicWizard hub at step 6. From there the tech adds defects and taps
+      // "Complete Inspection" to submit.
       const id = await ensureDraft();
       if (id) setStep(6);
-    } else if (step === 6) {
-      setStep(7);
     }
+    // step 6: no goNext — DvicWizard's "Complete Inspection" calls handleSubmit directly.
   };
 
   const goBack = () => {
@@ -291,7 +295,9 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
 
   // ─── Defect operations (v2 flat list) ──────────────
   // The DefectWizard handles its own POST /defects call and returns the
-  // created row enriched with catalog labels. We just append to our list.
+  // created row enriched with catalog labels. We just append to our list —
+  // DvicWizard auto-resets back to its section picker so the tech can add
+  // the next defect without leaving the screen.
   const handleDefectCommitted = (created) => {
     setDefects((prev) => [
       ...prev,
@@ -307,7 +313,6 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
         description: created.description,
       },
     ]);
-    setShowDefectWizard(false);
   };
 
   const handleRemoveDefect = async (defect) => {
@@ -482,10 +487,32 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
     );
   }
 
+  // ─── Step 6: hand off to DvicWizard ─────────────────
+  // The wizard renders its own full-screen Shell, so we early-return here
+  // and skip CreateInspectionWizard's outer Shell + footer to avoid stacking
+  // two fixed overlays. DvicWizard's section picker doubles as the running
+  // defect log, and its "Complete Inspection" button calls handleSubmit.
+  if (step === 6 && phase === 'inspecting' && inspectionId) {
+    return (
+      <DvicWizard
+        inspectionId={inspectionId}
+        assetType={vehicle?.assetType || 'extra_large_cargo_van'}
+        defects={defects}
+        onCommitted={handleDefectCommitted}
+        onRemoveDefect={handleRemoveDefect}
+        onComplete={handleSubmit}
+        submitting={submitting}
+        submitError={submitError}
+        onClose={onClose}
+        onBack={() => setStep(5)}
+      />
+    );
+  }
+
   return (
     <FullScreenShell
       title="QC DVIC Inspection"
-      subtitle={`Step ${step} of 7`}
+      subtitle={`Step ${step} of 6`}
       onClose={onClose}
     >
       {/* Body */}
@@ -552,42 +579,9 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
           />
         )}
 
-        {/* ── Step 6: defects (flat list + DefectWizard overlay) ── */}
-        {step === 6 && (
-          <Step5Defects
-            inspectionId={inspectionId}
-            defects={defects}
-            onOpenWizard={() => setShowDefectWizard(true)}
-            onRemoveDefect={handleRemoveDefect}
-          />
-        )}
-
-        {/* ── Step 7: review + submit ── */}
-        {step === 7 && (
-          <Step6Review
-            dsp={dsp}
-            keysReceived={keysReceived}
-            vehicle={vehicle}
-            odometer={odometer}
-            defects={defects}
-            totalDefects={totalDefects}
-            inspectionId={inspectionId}
-            submitting={submitting}
-            submitError={submitError}
-            onSubmit={handleSubmit}
-          />
-        )}
-
-        {/* DvicWizard overlay — opens above the inspection wizard.
-            Section-first picker driven by /dvic-template?asset_type=X. */}
-        {showDefectWizard && (
-          <DvicWizard
-            inspectionId={inspectionId}
-            assetType={vehicle?.assetType || 'extra_large_cargo_van'}
-            onCommitted={handleDefectCommitted}
-            onCancel={() => setShowDefectWizard(false)}
-          />
-        )}
+        {/* Steps 6 (defects + Complete Inspection) is handled by the
+            DvicWizard early-return above — its section picker is the hub
+            and its footer button submits the whole inspection. */}
       </div>
 
       {/* Sticky footer nav */}
@@ -607,12 +601,11 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
             {step === 3 && 'Pick a vehicle'}
             {step === 4 && 'Start or skip'}
             {step === 5 && 'Odometer'}
-            {step === 6 && `${totalDefects} defect${totalDefects === 1 ? '' : 's'}`}
-            {step === 7 && 'Review & submit'}
+            {/* Step 6 short-circuits above — DvicWizard owns its own footer. */}
           </div>
 
           {/* Step 4 has its own in-screen buttons (Start / reason picker) — no footer Next. */}
-          {step < 7 && step !== 4 && (
+          {step < 6 && step !== 4 && (
             <button
               onClick={goNext}
               disabled={
@@ -630,16 +623,6 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
           {step === 4 && (
             // Spacer keeps Back/caption left-aligned without a Next button on step 4.
             <span className="w-[80px]" aria-hidden />
-          )}
-          {step === 7 && (
-            <button
-              onClick={handleSubmit}
-              disabled={submitting || !canSubmit}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-md bg-accent-green text-white font-semibold hover:opacity-90 disabled:opacity-40 cursor-pointer text-sm"
-            >
-              {submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-              Submit
-            </button>
           )}
         </div>
       </div>

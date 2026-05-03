@@ -25,7 +25,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeft, ArrowRight, X, Check, AlertCircle, Loader2,
-  ChevronRight, ClipboardList,
+  ChevronRight, ClipboardList, Trash2, Send,
 } from 'lucide-react';
 import {
   dvicTemplate as dvicTemplateApi,
@@ -34,7 +34,33 @@ import {
 } from '../api/client';
 
 
-export default function DvicWizard({ inspectionId, assetType, onCommitted, onCancel }) {
+/**
+ * Props:
+ *   inspectionId, assetType (required) — what we're adding defects to
+ *   onCommitted(defect) — fires after each successful POST /defects
+ *   defects — running list of defects already committed (for the step-1 list)
+ *   onRemoveDefect(defect) — delete handler for the inline list
+ *   onComplete() — submit the entire inspection (POST /inspections/{id}/submit)
+ *   submitting, submitError — bubbled from the parent's submit state
+ *   onClose() — close the entire inspection wizard (top-right X)
+ *   onBack() — go back to the previous parent step (top-left arrow on step 1)
+ *   onCancel() — legacy alias for onClose, kept for backward-compat
+ */
+export default function DvicWizard({
+  inspectionId,
+  assetType,
+  onCommitted,
+  defects = [],
+  onRemoveDefect,
+  onComplete,
+  submitting = false,
+  submitError = null,
+  onClose,
+  onBack,
+  onCancel,
+}) {
+  // Resolve close action: prefer onClose (new), fall back to onCancel (legacy).
+  const handleCloseAction = onClose || onCancel;
   // Step 1..6
   const [step, setStep] = useState(1);
 
@@ -51,9 +77,10 @@ export default function DvicWizard({ inspectionId, assetType, onCommitted, onCan
   const [tplLoading, setTplLoading] = useState(true);
   const [tplError, setTplError] = useState(null);
 
-  // Submit
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState(null);
+  // Per-defect commit state (separate from the parent's per-inspection submit
+  // state which is bubbled in via the `submitting` prop).
+  const [defectSubmitting, setDefectSubmitting] = useState(false);
+  const [defectSubmitError, setDefectSubmitError] = useState(null);
 
   // Load template
   useEffect(() => {
@@ -107,11 +134,24 @@ export default function DvicWizard({ inspectionId, assetType, onCommitted, onCan
     setStep(prev);
   };
 
-  // ─── Submit ─────────────────────────────────────────
-  const handleSubmit = async () => {
+  // Reset all per-defect picker state — used after a successful commit so
+  // the user lands on a fresh step 1 ready for the next defect.
+  const resetForNextDefect = () => {
+    setSection(null);
+    setItem(null);
+    setPosition(null);
+    setSubPosition(null);
+    setDetails({});
+    setNotes('');
+    setDefectSubmitError(null);
+    setStep(1);
+  };
+
+  // ─── Commit one defect ──────────────────────────────
+  const handleCommitDefect = async () => {
     if (!item) return;
-    setSubmitting(true);
-    setSubmitError(null);
+    setDefectSubmitting(true);
+    setDefectSubmitError(null);
     try {
       // Server-side, position is the DefectPosition enum value. Two cases:
       //  a) item.position is pre-set → use it as-is
@@ -149,17 +189,21 @@ export default function DvicWizard({ inspectionId, assetType, onCommitted, onCan
         defectTypeIcon: item.defectTypeIcon,
         details: finalDetails,
       });
+      // Auto-return to the section picker so the inspector can immediately
+      // log the next defect — this is the explicit UX request from the
+      // tech-flow review (no manual "Back" tap needed).
+      resetForNextDefect();
     } catch (err) {
-      setSubmitError(err instanceof APIError ? err.detail : 'Submit failed');
+      setDefectSubmitError(err instanceof APIError ? err.detail : 'Submit failed');
     } finally {
-      setSubmitting(false);
+      setDefectSubmitting(false);
     }
   };
 
   // ─── Render ─────────────────────────────────────────
   if (tplLoading) {
     return (
-      <Shell title="Loading checklist…" onCancel={onCancel}>
+      <Shell title="Loading checklist…" onCancel={handleCloseAction}>
         <div className="flex items-center justify-center py-16">
           <Loader2 size={28} className="text-accent-blue animate-spin" />
         </div>
@@ -169,7 +213,7 @@ export default function DvicWizard({ inspectionId, assetType, onCommitted, onCan
 
   if (tplError || !tpl) {
     return (
-      <Shell title="Couldn't load checklist" onCancel={onCancel}>
+      <Shell title="Couldn't load checklist" onCancel={handleCloseAction}>
         <div className="px-4 py-12 text-center text-sm text-navy-300">
           <AlertCircle size={28} className="text-accent-red mx-auto mb-3" />
           <p>{tplError || 'Unknown error'}</p>
@@ -178,13 +222,23 @@ export default function DvicWizard({ inspectionId, assetType, onCommitted, onCan
     );
   }
 
+  // Top-left back button:
+  //   - on step 1 (the hub): if onBack is provided (parent wants us to go back
+  //     to the previous wizard step), use it. Otherwise no back button.
+  //   - on steps 2-6: standard intra-DvicWizard back navigation.
+  const topBackHandler = step === 1
+    ? (onBack || null)
+    : goBack;
+
   return (
     <Shell
-      title={`Add defect — ${tpl.assetTypeLabel}`}
+      title={step === 1
+        ? `Add defects — ${tpl.assetTypeLabel}`
+        : `Add defect — ${tpl.assetTypeLabel}`}
       step={step}
       totalSteps={6}
-      onCancel={onCancel}
-      onBack={step > 1 ? goBack : null}
+      onCancel={handleCloseAction}
+      onBack={topBackHandler}
     >
       <div className="px-4 sm:px-6 pt-3 pb-24 max-w-2xl mx-auto">
         <AnimatePresence mode="wait">
@@ -193,8 +247,26 @@ export default function DvicWizard({ inspectionId, assetType, onCommitted, onCan
               <SectionPicker
                 sections={tpl.sections}
                 value={section}
-                onChange={(s) => { setSection(s); setItem(null); }}
+                onChange={(s) => {
+                  // Tile tap selects + auto-advances to the item picker so
+                  // the tech doesn't have to also reach for the Next button.
+                  setSection(s);
+                  setItem(null);
+                  setStep(2);
+                }}
               />
+              {/* Running defect list — gives the tech confidence the additions
+                  are saved without requiring them to leave this view. */}
+              <CommittedDefectsList
+                defects={defects}
+                onRemove={onRemoveDefect}
+              />
+              {submitError && (
+                <div className="mt-4 rounded-md bg-accent-red/10 border border-accent-red/30 px-3 py-2 text-xs text-accent-red flex items-start gap-2">
+                  <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                  <span>{submitError}</span>
+                </div>
+              )}
             </Pane>
           )}
           {step === 2 && section && (
@@ -253,7 +325,7 @@ export default function DvicWizard({ inspectionId, assetType, onCommitted, onCan
                 details={details}
                 notes={notes}
                 onNotesChange={setNotes}
-                submitError={submitError}
+                submitError={defectSubmitError}
               />
             </Pane>
           )}
@@ -263,13 +335,49 @@ export default function DvicWizard({ inspectionId, assetType, onCommitted, onCan
       {/* Sticky footer */}
       <div className="fixed bottom-0 left-0 right-0 border-t border-navy-800 bg-navy-950/95 backdrop-blur px-4 py-3 z-10">
         <div className="max-w-2xl mx-auto flex items-center justify-between gap-3">
-          <button
-            onClick={step === 1 ? onCancel : goBack}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-md border border-navy-700 text-navy-300 hover:text-white hover:border-navy-600 cursor-pointer text-sm"
-          >
-            <ArrowLeft size={14} /> {step === 1 ? 'Cancel' : 'Back'}
-          </button>
-          {step < 6 ? (
+          {/* Left button:
+              - step 1: "Back" returns to the previous parent step (odometer)
+                if onBack is given; otherwise hidden (top-X handles full close)
+              - steps 2-6: in-wizard Back navigation */}
+          {step === 1 ? (
+            onBack ? (
+              <button
+                onClick={onBack}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-md border border-navy-700 text-navy-300 hover:text-white hover:border-navy-600 cursor-pointer text-sm"
+              >
+                <ArrowLeft size={14} /> Back
+              </button>
+            ) : (
+              <span className="w-[80px]" aria-hidden />
+            )
+          ) : (
+            <button
+              onClick={goBack}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-md border border-navy-700 text-navy-300 hover:text-white hover:border-navy-600 cursor-pointer text-sm"
+            >
+              <ArrowLeft size={14} /> Back
+            </button>
+          )}
+
+          {/* Right button:
+              - step 1: "Complete Inspection" — submits the WHOLE inspection
+                via onComplete (parent's handleSubmit). Always enabled even
+                with 0 defects (a clean walkthrough = passed inspection).
+              - steps 2-5: "Next" — advances internally
+              - step 6: "Add defect" — POSTs the defect, resets, returns to step 1 */}
+          {step === 1 && onComplete && (
+            <button
+              onClick={onComplete}
+              disabled={submitting}
+              className="flex items-center gap-1.5 px-4 py-2.5 rounded-md bg-accent-green text-white font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-sm shadow-lg shadow-accent-green/20"
+            >
+              {submitting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+              {submitting
+                ? 'Submitting…'
+                : `Complete Inspection${defects.length > 0 ? ` (${defects.length})` : ''}`}
+            </button>
+          )}
+          {step > 1 && step < 6 && (
             <button
               onClick={goNext}
               disabled={!canGoNext(step)}
@@ -277,19 +385,80 @@ export default function DvicWizard({ inspectionId, assetType, onCommitted, onCan
             >
               Next <ArrowRight size={14} />
             </button>
-          ) : (
+          )}
+          {step === 6 && (
             <button
-              onClick={handleSubmit}
-              disabled={submitting}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-md bg-accent-green text-white font-semibold hover:opacity-90 disabled:opacity-40 cursor-pointer text-sm"
+              onClick={handleCommitDefect}
+              disabled={defectSubmitting}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-md bg-accent-blue text-white font-semibold hover:opacity-90 disabled:opacity-40 cursor-pointer text-sm"
             >
-              {submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-              {submitting ? 'Adding…' : 'Add defect'}
+              {defectSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+              {defectSubmitting ? 'Adding…' : 'Add defect'}
             </button>
           )}
         </div>
       </div>
     </Shell>
+  );
+}
+
+
+// ─────────────────────────────────────────────────────
+// Committed defects list — rendered inline on step 1 so the tech can see
+// what they've added so far + delete a wrongly-tapped one without leaving
+// the section picker.
+// ─────────────────────────────────────────────────────
+function CommittedDefectsList({ defects, onRemove }) {
+  if (!defects || defects.length === 0) {
+    return (
+      <div className="mt-6 px-3 py-4 rounded-lg border border-dashed border-navy-700 bg-navy-900/30 text-center">
+        <p className="text-[11px] text-navy-400">
+          No defects added yet. Tap a section above to start, or hit{' '}
+          <span className="text-accent-green font-semibold">Complete Inspection</span>{' '}
+          if everything checks out.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-6">
+      <div className="flex items-center gap-2 mb-2">
+        <ClipboardList size={14} className="text-accent-blue" />
+        <h4 className="text-xs font-semibold text-white">
+          Defects added <span className="text-navy-400 font-normal">({defects.length})</span>
+        </h4>
+      </div>
+      <ul className="space-y-1.5">
+        {defects.map((d) => (
+          <li
+            key={d.id}
+            className="flex items-start gap-2 px-2.5 py-2 rounded-md border border-navy-700/60 bg-navy-900/40"
+          >
+            <span className="text-base shrink-0">{d.partIcon || '🔧'}</span>
+            <div className="flex-1 min-w-0">
+              <div className="text-xs text-white truncate">
+                <span className="font-semibold">{d.partLabel || d.part || '—'}</span>
+                {d.positionLabel && (
+                  <span className="text-navy-400 font-normal"> ({d.positionLabel})</span>
+                )}
+              </div>
+              <div className="text-[11px] text-navy-300 truncate">
+                {d.defectTypeIcon} {d.defectTypeLabel || d.description || ''}
+              </div>
+            </div>
+            {onRemove && (
+              <button
+                onClick={() => onRemove(d)}
+                className="text-navy-400 hover:text-accent-red p-1 -mr-1 rounded shrink-0"
+                title="Remove defect"
+              >
+                <Trash2 size={12} />
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
