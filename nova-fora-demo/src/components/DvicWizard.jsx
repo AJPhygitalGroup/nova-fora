@@ -134,6 +134,50 @@ export default function DvicWizard({
     setStep(prev);
   };
 
+  // ─── Auto-advance tile-pick handlers ───────────────
+  // Mirror the goNext skip-logic but compute it from the freshly-picked
+  // value rather than React state (which is async). One tap = select +
+  // jump to the next required step. Same UX rule as the section tiles.
+
+  const handleItemPick = (it) => {
+    setItem(it);
+    const itHasPositionOptions = (it.positionOptions?.length || 0) > 0;
+    const onlyOnePosition = it.positionOptions?.length === 1;
+    const itHasSubPositions = (it.subPositions?.length || 0) > 0;
+    const itRequiresDetails = !!it.requiresDetails;
+
+    // Auto-pick the single position option (rare — keeps existing behavior).
+    if (onlyOnePosition) setPosition(it.positionOptions[0]);
+    else setPosition(null);
+    setSubPosition(null);
+    setDetails({});
+
+    // Walk the same skip-chain as goNext: 3 → 4 → 5 → 6 collapsing through
+    // any step whose data the item doesn't need.
+    let next = 3;
+    if (next === 3 && (!itHasPositionOptions || onlyOnePosition)) next = 4;
+    if (next === 4 && !itHasSubPositions) next = 5;
+    if (next === 5 && !itRequiresDetails) next = 6;
+    setStep(next);
+  };
+
+  const handlePositionPick = (p) => {
+    setPosition(p);
+    // hasSubPositions / requiresDetails come from the already-picked item,
+    // so the React-state values are fine here (no closure staleness).
+    let next = 4;
+    if (next === 4 && !hasSubPositions) next = 5;
+    if (next === 5 && !requiresDetails) next = 6;
+    setStep(next);
+  };
+
+  const handleSubPositionPick = (sp) => {
+    setSubPosition(sp);
+    let next = 5;
+    if (next === 5 && !requiresDetails) next = 6;
+    setStep(next);
+  };
+
   // Reset all per-defect picker state — used after a successful commit so
   // the user lands on a fresh step 1 ready for the next defect.
   const resetForNextDefect = () => {
@@ -274,17 +318,7 @@ export default function DvicWizard({
               <ItemPicker
                 section={section}
                 value={item}
-                onChange={(it) => {
-                  setItem(it);
-                  // Auto-pick position if exactly one option (rare)
-                  if (it.positionOptions?.length === 1) {
-                    setPosition(it.positionOptions[0]);
-                  } else {
-                    setPosition(null);
-                  }
-                  setSubPosition(null);
-                  setDetails({});
-                }}
+                onChange={handleItemPick}
               />
             </Pane>
           )}
@@ -293,7 +327,7 @@ export default function DvicWizard({
               <PositionPicker
                 options={item.positionOptions}
                 value={position}
-                onChange={setPosition}
+                onChange={handlePositionPick}
               />
             </Pane>
           )}
@@ -303,7 +337,7 @@ export default function DvicWizard({
                 part={item.part}
                 options={item.subPositions}
                 value={subPosition}
-                onChange={setSubPosition}
+                onChange={handleSubPositionPick}
               />
             </Pane>
           )}
