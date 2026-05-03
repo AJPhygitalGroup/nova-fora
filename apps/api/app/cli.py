@@ -457,11 +457,33 @@ async def cmd_seed_dvic_template() -> None:
 
     Dedup key: (asset_types_csv, section, part_enum, defect_type_enum, position).
     Re-running after a PDF revision updates description/severity/etc.
+
+    Orphan handling: any row in DB whose key is no longer in the seed (e.g.
+    after a consolidation that merges two CARGO+DOT rows into one ALL_ASSETS
+    row) is flipped to is_active=False so the wizard stops surfacing it.
+    Hard-delete is skipped intentionally — defects already authored against
+    that row's labels still need the row around for historical rendering.
     """
     from app.models.defect_catalog import DvicTemplateItem
     from app.seed_dvic_template import get_dvic_template_seed
 
     rows = get_dvic_template_seed()
+
+    # Pre-compute the set of keys we expect to touch — used at the end to
+    # find orphans.
+    seed_keys: set[tuple] = set()
+    for r in rows:
+        position_val = r["position"].value if r["position"] is not None else None
+        section_val = r["section"].value if hasattr(r["section"], "value") else r["section"]
+        seed_keys.add(
+            (
+                r["asset_types_csv"],
+                section_val,
+                r["part_enum"].value,
+                r["defect_type_enum"].value,
+                position_val,
+            )
+        )
 
     async with AsyncSessionLocal() as session:
         new_count, updated_count = 0, 0
@@ -511,10 +533,33 @@ async def cmd_seed_dvic_template() -> None:
                 session.add(existing)
                 updated_count += 1
 
+        # Deactivate any DB row whose key is no longer in the seed. This
+        # covers the case where the seed file removed/merged a row — without
+        # this step the wizard would keep showing the old row alongside the
+        # new one (the "two identical tiles" bug after consolidation).
+        all_existing = (
+            await session.execute(select(DvicTemplateItem))
+        ).scalars().all()
+        deactivated_count = 0
+        for row_db in all_existing:
+            position_val = row_db.position.value if row_db.position is not None else None
+            section_val = row_db.section.value if hasattr(row_db.section, "value") else row_db.section
+            key = (
+                row_db.asset_types_csv,
+                section_val,
+                row_db.part_enum.value,
+                row_db.defect_type_enum.value,
+                position_val,
+            )
+            if key not in seed_keys and row_db.is_active:
+                row_db.is_active = False
+                session.add(row_db)
+                deactivated_count += 1
+
         await session.commit()
         print("✅ DVIC template seed:")
-        print(f"   {new_count} new rows, {updated_count} updated")
-        print(f"   Total: {len(rows)}")
+        print(f"   {new_count} new rows, {updated_count} updated, {deactivated_count} deactivated")
+        print(f"   Seed total: {len(rows)}")
 
 
 async def cmd_backfill_defects() -> None:

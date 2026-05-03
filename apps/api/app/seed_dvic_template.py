@@ -474,10 +474,13 @@ _add(
     ),
 )
 
-# --- Body and doors (driver — Cargo) ---
+# --- Body and doors (driver — all asset types) ---
+# Side-view camera/cargo step check applies identically to cargo, EDV, and
+# DOT step vans, so it lives as a single ALL_ASSETS row. The DOT-only decal +
+# battery-cover rows below pile on top of it for step vans.
 _add(
     row(
-        CARGO, DS.DRIVER_SIDE, "Body and doors",
+        ALL_ASSETS, DS.DRIVER_SIDE, "Body and doors",
         P.SIDE_VIEW_CAMERA, T.ITEMS_LOOSE_OR_HELD_WITH_TAPE,
         position=Pos.DRIVER_SIDE,
         description="Items attached to the body of the vehicle (for example: side view "
@@ -486,16 +489,8 @@ _add(
     ),
 )
 
-# --- Body and doors (driver — DOT additions) ---
+# --- Body and doors (driver — DOT-only additions) ---
 _add(
-    row(
-        DOT, DS.DRIVER_SIDE, "Body and doors",
-        P.SIDE_VIEW_CAMERA, T.ITEMS_LOOSE_OR_HELD_WITH_TAPE,
-        position=Pos.DRIVER_SIDE,
-        description="Items attached to the body of the vehicle (for example: side view "
-                    "camera or cargo steps) are missing, damaged, loose, unsecure, "
-                    "hanging, or held with a zip-tie, tape, or similar",
-    ),
     row(
         DOT, DS.DRIVER_SIDE, "Body and doors",
         P.AMAZON_DOT_DECAL, T.NOT_VISIBLE,
@@ -626,24 +621,16 @@ _add(
         description="Side mirrors are loose, hanging, unsecured, or held up with a "
                     "zip-tie, tape, or similar",
     ),
-    # Body & doors (Cargo)
+    # Body & doors — applies to all asset types
     row(
-        CARGO, DS.PASSENGER_SIDE, "Body and doors",
+        ALL_ASSETS, DS.PASSENGER_SIDE, "Body and doors",
         P.SIDE_VIEW_CAMERA, T.ITEMS_LOOSE_OR_HELD_WITH_TAPE,
         position=Pos.PASSENGER_SIDE,
         description="Items attached to the body of the vehicle (for example: side view "
                     "camera or cargo steps) are missing, damaged, loose, unsecure, "
                     "hanging, or held with a zip-tie, tape, or similar",
     ),
-    # Body & doors (DOT additions)
-    row(
-        DOT, DS.PASSENGER_SIDE, "Body and doors",
-        P.SIDE_VIEW_CAMERA, T.ITEMS_LOOSE_OR_HELD_WITH_TAPE,
-        position=Pos.PASSENGER_SIDE,
-        description="Items attached to the body of the vehicle (for example: side view "
-                    "camera or cargo steps) are missing, damaged, loose, unsecure, "
-                    "hanging, or held with a zip-tie, tape, or similar",
-    ),
+    # Body & doors (DOT-only additions)
     row(
         DOT, DS.PASSENGER_SIDE, "Body and doors",
         P.AMAZON_DOT_DECAL, T.NOT_VISIBLE,
