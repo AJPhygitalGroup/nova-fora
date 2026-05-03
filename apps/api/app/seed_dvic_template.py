@@ -21,7 +21,15 @@ from app.models.defect_catalog import DvicSection as DS
 # Asset type tags — used to keep the rows compact
 # ─────────────────────────────────────────────────────
 ALL_ASSETS = ",".join(at.value for at in AT)
-CARGO = f"{AT.EXTRA_LARGE_CARGO_VAN.value},{AT.LARGE_CARGO_VAN.value}"
+# CARGO covers non-DOT delivery vehicles: the two cargo van variants plus the
+# Rivian EDV. From an inspection-checklist standpoint EDVs are cargo vans
+# that happen to be electric — they use the same DVIR template Amazon ships
+# for cargo vans (no DOT/CA BIT line, no fire extinguisher, etc.).
+CARGO = (
+    f"{AT.EXTRA_LARGE_CARGO_VAN.value},"
+    f"{AT.LARGE_CARGO_VAN.value},"
+    f"{AT.ELECTRIC_DELIVERY_VEHICLE.value}"
+)
 DOT = f"{AT.STEP_VAN_MEDIUM.value},{AT.STEP_VAN_LARGE.value}"
 DOT_LARGE_ONLY = AT.STEP_VAN_LARGE.value  # battery cover only on box trucks
 
@@ -176,6 +184,24 @@ _add(
     ),
 )
 
+# State Inspection Tag (CARGO + EDV only — DOT step vans use the
+# DOT/CA BIT/State Inspection sticker row above instead). Inspectors pick
+# whichever sub-issue applies — same per-issue split we use for license
+# plates so work-order routing has a clear cause.
+_add(
+    row(
+        CARGO, DS.GENERAL, "Vehicle Documentation",
+        P.INSPECTION_STICKER, T.MISSING,
+        description="State inspection tag is missing",
+    ),
+    row(
+        CARGO, DS.GENERAL, "Vehicle Documentation",
+        P.INSPECTION_STICKER, T.EXPIRED,
+        description="State inspection tag is expired",
+        details_schema=SCHEMA_EXPIRATION_DATE,
+    ),
+)
+
 # Vehicle Cleanliness (all assets)
 _add(
     row(
@@ -268,10 +294,29 @@ _add(
 # 3. BACK SIDE
 # ─────────────────────────────────────────────────────
 _add(
+    # Per-issue rows so the inspector picks WHICH problem applies — the
+    # original Amazon DVIR collapses these into one line, but breaking them
+    # up makes the work-order routing + repair instructions sharper.
+    row(
+        ALL_ASSETS, DS.BACK_SIDE, "License plates/tags",
+        P.LICENSE_PLATE, T.MISSING,
+        description="License plate / temp tag is missing",
+    ),
+    row(
+        ALL_ASSETS, DS.BACK_SIDE, "License plates/tags",
+        P.LICENSE_PLATE, T.EXPIRED,
+        description="License plate / temp tag is expired",
+        details_schema=SCHEMA_EXPIRATION_DATE,
+    ),
+    row(
+        ALL_ASSETS, DS.BACK_SIDE, "License plates/tags",
+        P.LICENSE_PLATE, T.ILLEGIBLE,
+        description="License plate / temp tag is illegible",
+    ),
     row(
         ALL_ASSETS, DS.BACK_SIDE, "License plates/tags",
         P.LICENSE_PLATE, T.DAMAGED,
-        description="License plates/temp tags are damaged, missing, illegible, or expired",
+        description="License plate / temp tag is damaged",
     ),
     row(
         ALL_ASSETS, DS.BACK_SIDE, "Suspension & underbody shield",
@@ -750,7 +795,16 @@ _add(
     row(
         ALL_ASSETS, DS.IN_CAB, "Lights and light covers",
         P.TURN_SIGNAL, T.NOT_WORKING,
-        position_options=[Pos.DRIVER_SIDE, Pos.PASSENGER_SIDE, Pos.FRONT, Pos.REAR],
+        # Turn signals exist on all four corners of the vehicle. Inspectors
+        # tell us which corner by picking on two axes:
+        #   1. position (FRONT vs REAR)   — the standard DefectPosition slot
+        #   2. sub_position (driver vs passenger side) — stored in details
+        #      under `lateral_side` (see subPositionKeyForPart in DvicWizard).
+        position_options=[Pos.FRONT, Pos.REAR],
+        sub_positions=[
+            {"key": "driver_side", "label": "Driver side"},
+            {"key": "passenger_side", "label": "Passenger side"},
+        ],
         description="Turn signal is not working",
     ),
     row(

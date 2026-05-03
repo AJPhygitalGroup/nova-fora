@@ -76,6 +76,7 @@ class AssetType(str, Enum):
     LARGE_CARGO_VAN = "large_cargo_van"              # Transit 250, ProMaster 1500
     STEP_VAN_MEDIUM = "step_van_medium"              # box truck — DOT
     STEP_VAN_LARGE = "step_van_large"                # large box truck — DOT
+    ELECTRIC_DELIVERY_VEHICLE = "electric_delivery_vehicle"  # Rivian EDV — non-DOT, cargo-van checklist
 
 
 class DefectPart(str, Enum):

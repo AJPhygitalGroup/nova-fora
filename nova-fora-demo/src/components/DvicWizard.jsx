@@ -749,6 +749,7 @@ function subPositionKeyForPart(part) {
     case 'seatbelt': return 'component';
     case 'exterior_door': return 'door';
     case 'warning_lamp': return 'lamp_type';
+    case 'turn_signal': return 'lateral_side';  // driver_side | passenger_side (paired with FRONT/REAR position)
     default: return 'sub_position';
   }
 }
