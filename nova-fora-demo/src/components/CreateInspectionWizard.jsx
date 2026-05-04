@@ -102,6 +102,11 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
   const [incompleteSubmitting, setIncompleteSubmitting] = useState(false);
   const [incompleteError, setIncompleteError] = useState(null);
 
+  // Odometer-photo count (step 5 gate). PhotoUploader fires onChanged with
+  // 'added' / 'deleted'; we mirror that into a counter so we can block the
+  // Next button until the inspector actually attached an odometer picture.
+  const [odometerPhotoCount, setOdometerPhotoCount] = useState(0);
+
   // Server-side "today's inspections" cache for the chosen DSP (refetched after each submit)
   const [todayInspections, setTodayInspections] = useState([]);
   const [loadingToday, setLoadingToday] = useState(false);
@@ -198,7 +203,13 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
   const canGoNextStep2 = keysConfirmed;  // need to confirm keys count (or skip)
   const canGoNextStep3 = !!vehicle;
   // Step 4 (start-gate) has no "Next" — its in-screen buttons drive transitions.
-  const canGoNextStep5 = inspectionId !== null;  // draft must exist after odometer
+  // Step 5 (odometer) gates: draft created AND a positive integer mileage AND
+  // an odometer photo on file. The photo can only land after the draft exists
+  // (PhotoUploader needs a parentId), so the order is: enter mileage → tap
+  // "Start inspection to attach the odometer photo" → take picture → Next.
+  const odometerNum = odometer ? parseInt(odometer, 10) : NaN;
+  const odometerValid = Number.isFinite(odometerNum) && odometerNum > 0;
+  const canGoNextStep5 = inspectionId !== null && odometerValid && odometerPhotoCount >= 1;
   const canSubmit = inspectionId !== null;
 
   // Auto-create the DRAFT when entering the odometer step
@@ -374,6 +385,8 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
     // Step-4 gate state — clear so the next van starts fresh
     setIncompleteSubmitting(false);
     setIncompleteError(null);
+    // Step-5 odometer-photo gate — must reach the threshold for each van
+    setOdometerPhotoCount(0);
   };
 
   // ─── Action: inspect another van in the SAME DSP ────
@@ -576,6 +589,11 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
             creatingDraft={creatingDraft}
             createError={createError}
             onEnsureDraft={ensureDraft}
+            odometerPhotoCount={odometerPhotoCount}
+            onOdometerPhotoChanged={(action) => {
+              if (action === 'added') setOdometerPhotoCount((c) => c + 1);
+              else if (action === 'deleted') setOdometerPhotoCount((c) => Math.max(0, c - 1));
+            }}
           />
         )}
 
@@ -612,8 +630,15 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
                 (step === 1 && !canGoNextStep1) ||
                 (step === 2 && !canGoNextStep2) ||
                 (step === 3 && !canGoNextStep3) ||
-                (step === 5 && creatingDraft)
+                (step === 5 && (creatingDraft || !canGoNextStep5))
               }
+              title={step === 5 && !canGoNextStep5
+                ? (!odometerValid
+                  ? 'Enter the current mileage'
+                  : !inspectionId
+                    ? 'Tap "Start inspection" to create the draft'
+                    : 'Attach the odometer photo to continue')
+                : ''}
               className="flex items-center gap-1.5 px-4 py-2 rounded-md bg-accent-blue text-white font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-sm"
             >
               {creatingDraft ? <Loader2 size={14} className="animate-spin" /> : null}
@@ -1104,7 +1129,20 @@ function Step4StartGate({
 // ─────────────────────────────────────────────────────
 // Step 4: odometer + start draft
 // ─────────────────────────────────────────────────────
-function Step4Odometer({ vehicle, odometer, onOdometerChange, inspectionId, creatingDraft, createError, onEnsureDraft }) {
+function Step4Odometer({
+  vehicle,
+  odometer,
+  onOdometerChange,
+  inspectionId,
+  creatingDraft,
+  createError,
+  onEnsureDraft,
+  odometerPhotoCount,
+  onOdometerPhotoChanged,
+}) {
+  const mileageNum = odometer ? parseInt(odometer, 10) : NaN;
+  const mileageValid = Number.isFinite(mileageNum) && mileageNum > 0;
+  const photoLanded = odometerPhotoCount >= 1;
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-2">
@@ -1120,14 +1158,18 @@ function Step4Odometer({ vehicle, odometer, onOdometerChange, inspectionId, crea
       </div>
 
       <div>
-        <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Current mileage</label>
+        <label className="text-xs font-semibold text-navy-300 mb-1.5 block">
+          Current mileage <span className="text-accent-red">*</span>
+        </label>
         <input
           type="number"
           inputMode="numeric"
           value={odometer}
           onChange={(e) => onOdometerChange(e.target.value)}
           placeholder="e.g. 86209"
-          className="w-full rounded-lg px-3 py-3 bg-navy-800 border border-navy-700 text-white text-lg font-mono text-right outline-none focus:border-accent-blue"
+          className={`w-full rounded-lg px-3 py-3 bg-navy-800 border text-white text-lg font-mono text-right outline-none focus:border-accent-blue ${
+            mileageValid ? 'border-navy-700' : 'border-accent-orange/50'
+          }`}
         />
         {odometer && vehicle && parseInt(odometer, 10) < vehicle.mileage && (
           <p className="mt-1.5 text-[11px] text-accent-orange flex items-center gap-1">
@@ -1136,27 +1178,51 @@ function Step4Odometer({ vehicle, odometer, onOdometerChange, inspectionId, crea
         )}
       </div>
 
-      {/* Photo of odometer (only after the draft is created — we need an inspection_id) */}
-      {inspectionId ? (
-        <div>
-          <label className="text-xs font-semibold text-navy-300 mb-2 block">Odometer photo (optional)</label>
-          <PhotoUploader
-            parentKind="inspection"
-            parentId={inspectionId}
-            category="odometer"
-            maxPhotos={1}
-          />
-        </div>
-      ) : (
-        <button
-          onClick={onEnsureDraft}
-          disabled={creatingDraft}
-          className="w-full flex items-center justify-center gap-2 py-3 rounded-lg border-2 border-dashed border-navy-600 text-navy-400 hover:border-accent-blue hover:text-accent-blue cursor-pointer text-sm"
-        >
-          {creatingDraft ? <Loader2 size={14} className="animate-spin" /> : <Camera size={14} />}
-          {creatingDraft ? 'Creating draft…' : 'Start inspection to add photo'}
-        </button>
-      )}
+      {/* Odometer photo — REQUIRED to start the inspection. The draft has to
+          exist before we can bind the uploader, so we surface a "Start
+          inspection" button until the draft lands. After that the uploader
+          replaces the button and the inspector takes the picture. */}
+      <div>
+        <label className="text-xs font-semibold text-navy-300 mb-2 block">
+          Odometer photo <span className="text-accent-red">*</span>
+        </label>
+        {inspectionId ? (
+          <>
+            <PhotoUploader
+              parentKind="inspection"
+              parentId={inspectionId}
+              category="odometer"
+              maxPhotos={1}
+              onChanged={onOdometerPhotoChanged}
+            />
+            <div className={`mt-2 rounded-md border px-2.5 py-2 text-[11px] flex items-start gap-2 ${
+              photoLanded
+                ? 'bg-accent-green/10 border-accent-green/40 text-accent-green'
+                : 'bg-accent-orange/10 border-accent-orange/40 text-accent-orange'
+            }`}>
+              {photoLanded
+                ? <><Check size={12} className="shrink-0 mt-0.5" /> Photo attached. You can continue to the inspection.</>
+                : <><AlertCircle size={12} className="shrink-0 mt-0.5" /> A photo of the odometer is required to start the inspection.</>}
+            </div>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={onEnsureDraft}
+              disabled={creatingDraft || !mileageValid}
+              title={!mileageValid ? 'Enter the current mileage first' : ''}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-lg border-2 border-dashed border-accent-orange/40 bg-accent-orange/5 text-accent-orange hover:bg-accent-orange/10 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-sm font-semibold"
+            >
+              {creatingDraft ? <Loader2 size={14} className="animate-spin" /> : <Camera size={14} />}
+              {creatingDraft ? 'Creating draft…' : 'Start inspection to attach the odometer photo'}
+            </button>
+            <p className="mt-2 text-[11px] text-navy-400">
+              We start a draft so the photo can be tied to the inspection. The
+              draft becomes the inspection record once you submit at the end.
+            </p>
+          </>
+        )}
+      </div>
 
       {createError && (
         <div className="flex items-start gap-2 p-3 rounded-lg bg-accent-red/15 border border-accent-red/40 text-accent-red text-xs">

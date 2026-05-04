@@ -25,13 +25,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeft, ArrowRight, X, Check, AlertCircle, Loader2,
-  ChevronRight, ClipboardList, Trash2, Send,
+  ChevronRight, ClipboardList, Trash2, Send, Camera,
 } from 'lucide-react';
 import {
   dvicTemplate as dvicTemplateApi,
   inspections as inspectionsApi,
   APIError,
 } from '../api/client';
+import PhotoUploader from './ui/PhotoUploader';
 
 
 /**
@@ -81,6 +82,15 @@ export default function DvicWizard({
   // state which is bubbled in via the `submitting` prop).
   const [defectSubmitting, setDefectSubmitting] = useState(false);
   const [defectSubmitError, setDefectSubmitError] = useState(null);
+
+  // Photo-gate state — set after handleCommitDefect POSTs the defect; cleared
+  // when the user finalizes (uploads ≥ 1 photo + clicks Done) or rolls back.
+  // committedDefect carries the augmented row we'll bubble up via onCommitted
+  // ONLY after a photo lands. photoCount comes from PhotoUploader's onChanged
+  // callback. justAddedPhoto is the "photo upload obligatory before save"
+  // gate the inspector sees on step 7.
+  const [committedDefect, setCommittedDefect] = useState(null);
+  const [photoCount, setPhotoCount] = useState(0);
 
   // Load template
   useEffect(() => {
@@ -178,8 +188,8 @@ export default function DvicWizard({
     setStep(next);
   };
 
-  // Reset all per-defect picker state — used after a successful commit so
-  // the user lands on a fresh step 1 ready for the next defect.
+  // Reset all per-defect picker state — used after a successful commit + photo
+  // so the user lands on a fresh step 1 ready for the next defect.
   const resetForNextDefect = () => {
     setSection(null);
     setItem(null);
@@ -188,10 +198,17 @@ export default function DvicWizard({
     setDetails({});
     setNotes('');
     setDefectSubmitError(null);
+    setCommittedDefect(null);
+    setPhotoCount(0);
     setStep(1);
   };
 
   // ─── Commit one defect ──────────────────────────────
+  // Step 6 → step 7 transition. POSTs the defect so the photo uploader has a
+  // parentId to bind to. The defect is NOT bubbled up to the parent yet —
+  // that happens only after the inspector uploads at least one photo and
+  // taps Done on step 7. If they back out instead, handleRollbackDefect
+  // deletes the row server-side so we don't leak orphaned defects.
   const handleCommitDefect = async () => {
     if (!item) return;
     setDefectSubmitting(true);
@@ -223,9 +240,10 @@ export default function DvicWizard({
       if (notes.trim()) body.notes = notes.trim();
 
       const created = await inspectionsApi.addDefect(inspectionId, body);
-      onCommitted?.({
+      // Park the augmented row until the photo step finalizes — only then
+      // does it bubble up to the parent's running list.
+      setCommittedDefect({
         ...created,
-        // Augment with template labels for nice rendering upstream
         partLabel: item.partLabel,
         partIcon: item.partIcon,
         positionLabel: position?.label || item.positionLabel,
@@ -233,15 +251,41 @@ export default function DvicWizard({
         defectTypeIcon: item.defectTypeIcon,
         details: finalDetails,
       });
-      // Auto-return to the section picker so the inspector can immediately
-      // log the next defect — this is the explicit UX request from the
-      // tech-flow review (no manual "Back" tap needed).
-      resetForNextDefect();
+      setPhotoCount(0);
+      setStep(7);  // → photo gate
     } catch (err) {
       setDefectSubmitError(err instanceof APIError ? err.detail : 'Submit failed');
     } finally {
       setDefectSubmitting(false);
     }
+  };
+
+  // ─── Photo gate finalize / rollback ────────────────
+  // Inspector uploaded ≥ 1 photo and tapped "Save defect" on step 7.
+  const handleFinalizeDefectWithPhoto = () => {
+    if (!committedDefect || photoCount < 1) return;
+    onCommitted?.({ ...committedDefect, photoCount });
+    resetForNextDefect();  // → step 1 (section picker), ready for the next defect
+  };
+
+  // Inspector backed out of step 7 without uploading a photo — DELETE the
+  // freshly-created defect so an unphotographed row doesn't leak into the
+  // inspection. Best-effort: if the server delete fails (network blip,
+  // permission, whatever) we still drop it from local state and let the
+  // server cleanup orphans on submit.
+  const handleRollbackDefect = async (nextStep) => {
+    const id = committedDefect?.id;
+    if (id) {
+      try {
+        await inspectionsApi.removeDefect(inspectionId, id);
+      } catch (err) {
+        console.warn('rollback defect failed', err);
+      }
+    }
+    setCommittedDefect(null);
+    setPhotoCount(0);
+    setDefectSubmitError(null);
+    setStep(nextStep);
   };
 
   // ─── Render ─────────────────────────────────────────
@@ -269,19 +313,36 @@ export default function DvicWizard({
   // Top-left back button:
   //   - on step 1 (the hub): if onBack is provided (parent wants us to go back
   //     to the previous wizard step), use it. Otherwise no back button.
+  //   - on step 7: hidden — the user must either Save (with photo) or Discard
+  //     (which rolls back the defect server-side) via the footer.
   //   - on steps 2-6: standard intra-DvicWizard back navigation.
   const topBackHandler = step === 1
     ? (onBack || null)
-    : goBack;
+    : step === 7
+      ? null
+      : goBack;
+
+  // Top-right X handler — on step 7 we have a half-saved defect, so confirm
+  // + rollback before closing instead of leaking an unphotographed row.
+  const topCloseHandler = (step === 7 && committedDefect)
+    ? async () => {
+        if (window.confirm("Discard this defect and close? You haven't uploaded a photo yet.")) {
+          await handleRollbackDefect(1);
+          handleCloseAction?.();
+        }
+      }
+    : handleCloseAction;
 
   return (
     <Shell
       title={step === 1
         ? `Add defects — ${tpl.assetTypeLabel}`
-        : `Add defect — ${tpl.assetTypeLabel}`}
+        : step === 7
+          ? `Photo required — ${tpl.assetTypeLabel}`
+          : `Add defect — ${tpl.assetTypeLabel}`}
       step={step}
-      totalSteps={6}
-      onCancel={handleCloseAction}
+      totalSteps={7}
+      onCancel={topCloseHandler}
       onBack={topBackHandler}
     >
       <div className="px-4 sm:px-6 pt-3 pb-24 max-w-2xl mx-auto">
@@ -363,6 +424,18 @@ export default function DvicWizard({
               />
             </Pane>
           )}
+          {step === 7 && committedDefect && (
+            <Pane key="7">
+              <PhotoGateStep
+                defect={committedDefect}
+                photoCount={photoCount}
+                onPhotoChanged={(action) => {
+                  if (action === 'added') setPhotoCount((c) => c + 1);
+                  else if (action === 'deleted') setPhotoCount((c) => Math.max(0, c - 1));
+                }}
+              />
+            </Pane>
+          )}
         </AnimatePresence>
       </div>
 
@@ -372,7 +445,10 @@ export default function DvicWizard({
           {/* Left button:
               - step 1: "Back" returns to the previous parent step (odometer)
                 if onBack is given; otherwise hidden (top-X handles full close)
-              - steps 2-6: in-wizard Back navigation */}
+              - steps 2-6: in-wizard Back navigation
+              - step 7: "Discard" — photo gate Back rolls back the freshly
+                created defect via DELETE /defects/{id} so an unphotographed
+                row doesn't leak into the inspection. */}
           {step === 1 ? (
             onBack ? (
               <button
@@ -384,6 +460,17 @@ export default function DvicWizard({
             ) : (
               <span className="w-[80px]" aria-hidden />
             )
+          ) : step === 7 ? (
+            <button
+              onClick={() => {
+                if (window.confirm("Discard this defect? You haven't uploaded a photo yet.")) {
+                  handleRollbackDefect(6);
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-md border border-accent-red/40 bg-accent-red/10 text-accent-red hover:bg-accent-red/20 cursor-pointer text-sm font-semibold"
+            >
+              <X size={14} /> Discard
+            </button>
           ) : (
             <button
               onClick={goBack}
@@ -398,7 +485,9 @@ export default function DvicWizard({
                 via onComplete (parent's handleSubmit). Always enabled even
                 with 0 defects (a clean walkthrough = passed inspection).
               - steps 2-5: "Next" — advances internally
-              - step 6: "Add defect" — POSTs the defect, resets, returns to step 1 */}
+              - step 6: "Continue → photo" — POSTs the defect (parks it as
+                committedDefect), advances to the photo gate
+              - step 7: "Save defect" — disabled until ≥ 1 photo uploaded */}
           {step === 1 && onComplete && (
             <button
               onClick={onComplete}
@@ -426,13 +515,98 @@ export default function DvicWizard({
               disabled={defectSubmitting}
               className="flex items-center gap-1.5 px-4 py-2 rounded-md bg-accent-blue text-white font-semibold hover:opacity-90 disabled:opacity-40 cursor-pointer text-sm"
             >
-              {defectSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-              {defectSubmitting ? 'Adding…' : 'Add defect'}
+              {defectSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Camera size={14} />}
+              {defectSubmitting ? 'Saving…' : 'Continue → photo'}
+            </button>
+          )}
+          {step === 7 && (
+            <button
+              onClick={handleFinalizeDefectWithPhoto}
+              disabled={photoCount < 1}
+              title={photoCount < 1 ? 'Upload at least one photo to continue' : ''}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-md bg-accent-green text-white font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-sm"
+            >
+              <Check size={14} />
+              {photoCount < 1
+                ? 'Upload a photo to save'
+                : `Save defect${photoCount > 1 ? ` (${photoCount} photos)` : ''}`}
             </button>
           )}
         </div>
       </div>
     </Shell>
+  );
+}
+
+
+// ─────────────────────────────────────────────────────
+// Step 7 — Photo gate (mandatory, blocks the defect from being saved
+// until at least one photo lands on its row in MinIO + the API).
+// ─────────────────────────────────────────────────────
+function PhotoGateStep({ defect, photoCount, onPhotoChanged }) {
+  const positionLabel = defect.positionLabel || '';
+  return (
+    <div className="space-y-4">
+      {/* Defect summary so the inspector knows which defect they're
+          documenting — kept compact since this isn't the review step. */}
+      <div className="rounded-xl border border-navy-700 bg-navy-900/60 p-3">
+        <div className="flex items-start gap-3">
+          <span className="text-2xl shrink-0">{defect.partIcon || '🔧'}</span>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-white truncate">
+              {defect.partLabel}
+              {positionLabel && (
+                <span className="text-navy-400 font-normal"> ({positionLabel})</span>
+              )}
+            </div>
+            <div className="text-xs text-navy-300 truncate">
+              {defect.defectTypeIcon} {defect.defectTypeLabel}
+            </div>
+            <div className="text-[10px] text-navy-500 font-mono mt-0.5">{defect.id}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Required-photo banner — explicit + visible so there's no ambiguity
+          about what the inspector needs to do to advance. */}
+      <div className={`rounded-lg border-2 px-3 py-2.5 flex items-start gap-2 ${
+        photoCount >= 1
+          ? 'border-accent-green/40 bg-accent-green/10'
+          : 'border-accent-orange/40 bg-accent-orange/10'
+      }`}>
+        {photoCount >= 1 ? (
+          <Check size={16} className="text-accent-green shrink-0 mt-0.5" />
+        ) : (
+          <AlertCircle size={16} className="text-accent-orange shrink-0 mt-0.5" />
+        )}
+        <div className="text-xs">
+          <div className="font-semibold text-white mb-0.5">
+            {photoCount >= 1
+              ? `Photo${photoCount === 1 ? '' : 's'} attached — ready to save`
+              : 'Photo required'}
+          </div>
+          <p className="text-navy-300">
+            {photoCount >= 1
+              ? 'Tap "Save defect" below to commit. You can add more photos before saving.'
+              : 'Take or upload at least one photo of the defect. Without a photo this defect can\'t be saved.'}
+          </p>
+        </div>
+      </div>
+
+      {/* The actual uploader — bound to the just-created defect.id so each
+          file goes straight to MinIO + commits to /defects/{id}/photos. */}
+      <PhotoUploader
+        parentKind="defect"
+        parentId={defect.id}
+        category="damage"
+        onChanged={onPhotoChanged}
+      />
+
+      <p className="text-[11px] text-navy-500 italic">
+        Tip: take a wide shot first so the location of the defect is obvious,
+        then a close-up. Compression happens locally — uploads stay fast on 4G.
+      </p>
+    </div>
   );
 }
 
