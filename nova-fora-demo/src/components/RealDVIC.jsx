@@ -10,7 +10,7 @@ import { FlexFleetModal, VehicleReportCard, CreateWorkOrderModal } from './Fleet
 import { fleetSnapshotVans } from '../data/mockData';
 import CreateInspectionWizard from './CreateInspectionWizard';
 import LiveInspectionReportCard from './LiveInspectionReportCard';
-import { inspections as inspectionsApi, vehicles as vehiclesApi, defectsV2 as defectsV2Api } from '../api/client';
+import { inspections as inspectionsApi, vehicles as vehiclesApi, defects as defectsApi } from '../api/client';
 
 const tierConfig = {
   1: { label: 'Tier 1', range: '1–25 defects', cash: '$1', bucks: '$1', color: '#3b82f6', bg: 'bg-accent-blue/10', border: 'border-accent-blue/30', pending: 1 },
@@ -2700,7 +2700,7 @@ export default function RealDVIC({ user }) {
   useEffect(() => {
     let cancelled = false;
     const today = new Date().toISOString().slice(0, 10);
-    defectsV2Api
+    defectsApi
       .list({ dateFrom: today, dateTo: today, perPage: 100 })
       .then((res) => {
         if (cancelled) return;
@@ -2708,7 +2708,7 @@ export default function RealDVIC({ user }) {
       })
       .catch((err) => console.warn('defects/v2 list failed', err));
 
-    const cleanup = defectsV2Api.subscribe({
+    const cleanup = defectsApi.subscribe({
       onDefect: (d) => {
         setLiveDefects((prev) => (prev.some((x) => x.id === d.id) ? prev : [d, ...prev]));
       },

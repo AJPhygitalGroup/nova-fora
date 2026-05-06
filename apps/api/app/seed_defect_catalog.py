@@ -1,502 +1,743 @@
-"""Seed data for the defect catalog reference tables.
+"""V2.2 defect catalog seed — minimum viable Fase 1 set.
 
-Driven by the Notion 'Defect Data Schema' spec. Run via:
-    python -m app.cli seed-defect-catalog
+Implements ~50 core defect rules covering:
+  - Every DefectSystem (tires, lights, body, brakes, etc.)
+  - All 5 vehicle_class values with appropriate scoping (DOT-only items
+    skipped on non-DOT classes; ICE-only items skipped on EV)
+  - The 4 details_schema patterns from V2.2 §8 (tread depth, warning lamp
+    ICE/EV variants, windshield line-of-sight, compliance expiration dates)
 
-Idempotent: re-running upserts existing rows (no duplicates).
+Idempotent UPSERT keyed by natural keys:
+  part_group_default       → PK (part)
+  defect_part_system       → composite PK (part, system)
+  defect_rule              → UNIQUE (part, defect_type)
+  defect_applicability     → UNIQUE (rule_id, vehicle_class)
+
+Re-running after edits to this file UPDATEs existing rows in place. Rules
+no longer in the seed get `is_active=False` so the wizard stops surfacing
+them (preserves audit; doesn't hard-delete since defects may reference).
+
+This is a Fase 1 starter — full V2.2 spec is 258 rules + 1094 applicability
+rows; scaling there happens in Fase 2 post-Jun 15.
 """
-from app.models.defect_catalog import DefectPart as P
-from app.models.defect_catalog import DefectPosition as Pos
-from app.models.defect_catalog import DefectSystem as S
-from app.models.defect_catalog import DefectType as T
+from __future__ import annotations
+
+from app.models.defect_catalog import (
+    DefectClassification as C,
+    DefectGroup as G,
+    DefectPart as P,
+    DefectPosition as Pos,
+    DefectSystem as S,
+    DefectType as T,
+    VehicleClass as VC,
+)
+
 
 # ─────────────────────────────────────────────────────
-# defect_part_system seed
-# Each tuple: (part, system, is_primary, display_group)
-# Primary marker drives dashboard rollups; display_group drives UI grouping
-# inside a system tile when count >= 6.
+# Vehicle-class groupings — used as `applicable` in the rule list
 # ─────────────────────────────────────────────────────
-PART_SYSTEM_ROWS = [
-    # tires_wheels — flat
+ALL_CLASSES = (
+    VC.CUSTOM_DELIVERY_VAN,
+    VC.REGULAR_CARGO_VAN,
+    VC.STEP_VAN_DOT,
+    VC.ELECTRIC_VEHICLE,
+    VC.BOX_TRUCK_DOT,
+)
+ICE_ONLY = (
+    VC.CUSTOM_DELIVERY_VAN,
+    VC.REGULAR_CARGO_VAN,
+    VC.STEP_VAN_DOT,
+    VC.BOX_TRUCK_DOT,
+)
+DOT_ONLY = (VC.STEP_VAN_DOT, VC.BOX_TRUCK_DOT)
+EV_ONLY = (VC.ELECTRIC_VEHICLE,)
+
+
+# ─────────────────────────────────────────────────────
+# Position groupings
+# ─────────────────────────────────────────────────────
+FOUR_CORNER = [
+    Pos.DRIVER_FRONT.value, Pos.PASSENGER_FRONT.value,
+    Pos.DRIVER_REAR.value, Pos.PASSENGER_REAR.value,
+]
+LEFT_RIGHT = [Pos.DRIVER_SIDE.value, Pos.PASSENGER_SIDE.value]
+FRONT_REAR = [Pos.FRONT.value, Pos.REAR.value]
+DRIVER_PASSENGER = [Pos.DRIVER.value, Pos.PASSENGER.value]
+DOOR_POSITIONS = [
+    Pos.DRIVER_SIDE.value, Pos.PASSENGER_SIDE.value, Pos.REAR.value,
+]
+
+
+# ─────────────────────────────────────────────────────
+# JSON Schemas (V2.2 §8)
+# ─────────────────────────────────────────────────────
+TREAD_DEPTH_SCHEMA = {
+    "type": "object",
+    "required": ["tread_depth_32nds"],
+    "properties": {
+        "tread_depth_32nds": {
+            "type": "integer", "minimum": 0, "maximum": 10,
+            "title": "Tread depth (X/32 inches — type just X)",
+        },
+        # Dual rear wheels: CDV / Step Van / Box Truck have inner+outer rear
+        # tires per side. The frontend renders this picker only when the
+        # selected position is rear AND the vehicle_class has duals — Cargo
+        # vans and Rivian EVs have single rears so this stays hidden.
+        "wheel_position": {
+            "type": "string",
+            "enum": ["inner", "outer"],
+            "title": "Inner or outer rear wheel?",
+            "description": "Dual-wheel rear axle (CDV / Step Van / Box Truck).",
+            # Nova Fora extension — read by DvicWizard.DetailsForm
+            "x_show_when": {
+                "position_in": ["driver_rear", "passenger_rear"],
+                "vehicle_class_in": [
+                    "custom_delivery_van",
+                    "step_van_dot",
+                    "box_truck_dot",
+                ],
+            },
+            "x_required_when_shown": True,
+        },
+    },
+    "additionalProperties": False,
+}
+
+WARNING_LAMP_SCHEMA_ICE = {
+    "type": "object",
+    "required": ["lamp_type", "state"],
+    "properties": {
+        "lamp_type": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": True,
+            "items": {
+                "enum": [
+                    "check_engine", "oil", "tire_pressure", "brake", "abs",
+                    "airbag", "battery", "coolant", "def", "glow_plug",
+                    "service_due", "other",
+                ]
+            },
+            "title": "Which lamp(s)?",
+        },
+        "state": {"enum": ["on", "flashing"], "default": "on", "title": "Lamp state"},
+    },
+    "additionalProperties": False,
+}
+
+WARNING_LAMP_SCHEMA_EV = {
+    "type": "object",
+    "required": ["lamp_type", "state"],
+    "properties": {
+        "lamp_type": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": True,
+            "items": {
+                "enum": [
+                    "check_engine", "tire_pressure", "brake", "abs",
+                    "airbag", "battery", "service_due", "other",
+                ]
+            },
+            "title": "Which lamp(s)?",
+        },
+        "state": {"enum": ["on", "flashing"], "default": "on", "title": "Lamp state"},
+    },
+    "additionalProperties": False,
+}
+
+WINDSHIELD_LOS_SCHEMA = {
+    "type": "object",
+    "required": ["in_drivers_line_of_sight"],
+    "properties": {"in_drivers_line_of_sight": {"type": "boolean"}},
+    "additionalProperties": False,
+}
+
+# Date formats use US convention (MM/DD/YYYY and MM/YYYY) to match the
+# inspector workflow — drivers + vendors in the US read dates this way on
+# the physical stickers/decals being inspected.
+EXP_MONTH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "expiration_month": {
+            "type": "string",
+            "pattern": r"^(0[1-9]|1[0-2])/\d{4}$",
+            "title": "Expiration month",
+        }
+    },
+    "additionalProperties": False,
+}
+
+EXP_DATE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "expiration_date": {
+            "type": "string",
+            "pattern": r"^(0[1-9]|1[0-2])/(0[1-9]|[12]\d|3[01])/\d{4}$",
+            "title": "Expiration date",
+        }
+    },
+    "additionalProperties": False,
+}
+
+
+# ─────────────────────────────────────────────────────
+# part_group_default — default routing group per part
+# (Used by the seed to populate DefectRule.group when omitted in the rule
+# list. Direct edits here only affect new rules; existing rules keep their
+# previously-set group until manually re-synced.)
+# ─────────────────────────────────────────────────────
+PART_GROUP_DEFAULTS: list[tuple[P, G, str | None]] = [
+    # tires_wheels
+    (P.TIRE, G.TIRES, None),
+    (P.RIM, G.TIRES, None),
+    (P.WHEEL_NUT, G.TIRES, None),
+    (P.MOUNTING_EQUIPMENT, G.TIRES, None),
+    # additional parts referenced by the Amazon DVIC PDFs (Cargo + DOT)
+    (P.WASHER_SYSTEM, G.AMR, None),
+    (P.HORN, G.AMR, None),
+    (P.SEATBELT_ALARM, G.AMR, None),
+    (P.BACKUP_ALARM, G.AMR, None),
+    (P.DELIVERY_DEVICE_CRADLE, G.AMR, None),
+    (P.DASHBOARD_ILLUMINATION, G.AMR, None),
+    (P.INTERIOR_CLEANLINESS, G.DETAILING, None),
+    (P.INTERIOR_LOOSE_OBJECTS, G.DETAILING, None),
+    (P.SUSPENSION, G.AMR, None),
+    (P.UNDERCARRIAGE_OBJECT, G.AMR, None),
+    (P.BULKHEAD_DOOR, G.BODY, None),
+    (P.PERIODIC_INSPECTION_STICKER, G.CNMR, None),
+    (P.FUEL_CAP, G.AMR, None),
+    (P.BATTERY_COVER, G.AMR, None),
+    # lights
+    (P.HEADLIGHT, G.AMR, None),
+    (P.TAIL_LIGHT, G.AMR, None),
+    (P.TURN_SIGNAL, G.AMR, None),
+    (P.HAZARD_LIGHT, G.AMR, None),
+    (P.MARKER_LIGHT, G.AMR, None),
+    (P.LICENSE_PLATE_LIGHT, G.AMR, None),
+    # windshield_wipers
+    (P.WINDSHIELD, G.BODY, None),
+    (P.WIPER_BLADE, G.AMR, None),
+    (P.WASHER_SYSTEM, G.AMR, None),
+    # mirrors
+    (P.SIDE_MIRROR, G.BODY, None),
+    (P.MIRROR_LIGHT, G.AMR, "Turn signal embedded in side mirror — AMR like other lights."),
+    # body_steps
+    (P.BUMPER, G.BODY, None),
+    (P.FENDER, G.BODY, None),
+    (P.HOOD, G.BODY, None),
+    (P.SIDE_PANEL, G.BODY, None),
+    (P.FLOOR_PANEL, G.BODY, None),
+    (P.SIDE_STEP, G.BODY, None),
+    (P.REAR_STEP, G.BODY, None),
+    # doors_windows
+    (P.EXTERIOR_DOOR, G.BODY, None),
+    (P.SLIDING_SIDE_DOOR, G.BODY, None),
+    (P.REAR_CARGO_DOOR, G.BODY, None),
+    (P.WINDOW, G.BODY, None),
+    # interior
+    (P.DRIVER_SEAT, G.CNMR, None),
+    (P.SEATBELT, G.CMR, "Safety-critical; Sev1 escalation."),
+    (P.SEATBELT_BUCKLE, G.CMR, None),
+    # brakes_steering
+    (P.SERVICE_BRAKE, G.CMR, "Brake issues are always commercial motor repair (CMR)."),
+    (P.PARKING_BRAKE, G.CMR, None),
+    (P.STEERING_WHEEL, G.CMR, None),
+    (P.ALIGNMENT, G.AMR, None),
+    # cameras_electronics
+    (P.NETRADYNE_CAMERA, G.NETRADYNE, "All Netradyne issues route to the Netradyne queue."),
+    (P.REAR_CAMERA, G.AMR, None),
+    (P.SIDE_CAMERA, G.AMR, None),
+    (P.CAMERA_MONITOR, G.AMR, None),
+    (P.WARNING_LAMP, G.AMR, None),
+    # hvac
+    (P.AC, G.AMR, None),
+    (P.HEATER, G.AMR, None),
+    # fluids_under_hood
+    (P.ENGINE_OIL, G.PM, None),
+    (P.COOLANT, G.PM, None),
+    (P.BRAKE_FLUID, G.PM, None),
+    (P.POWER_STEERING_FLUID, G.PM, None),
+    # compliance
+    (P.LICENSE_PLATE, G.CNMR, None),
+    (P.INSPECTION_STICKER, G.CNMR, None),
+    (P.REGISTRATION_STICKER, G.CNMR, None),
+    (P.DOT_DECAL, G.CNMR, None),
+    (P.PRIME_DECAL, G.CNMR, None),
+    (P.PAPER_DOCUMENT, G.CNMR, None),
+    (P.FIRE_EXTINGUISHER, G.CNMR, None),
+    (P.REFLECTIVE_TRIANGLES, G.CNMR, None),
+    (P.SPARE_FUSES, G.CNMR, None),
+    (P.AIR_PRESSURE_GAUGE, G.CMR, None),
+    (P.LOW_AIR_WARNING, G.CMR, "Air-brake low-pressure warning indicator (DOT)."),
+    # ev_powertrain
+    (P.CHARGING_PORT_CAP, G.BODY, None),
+    (P.EV_CENTER_DISPLAY, G.AMR, None),
+    (P.HIGH_VOLTAGE_CABLE, G.CMR, "EV high-voltage — Sev1 if exposed."),
+    (P.AVAS_SPEAKER, G.AMR, None),
+    # attached
+    (P.MUD_FLAP, G.BODY, None),
+    (P.LIFT_GATE, G.CMR, None),
+]
+
+
+# ─────────────────────────────────────────────────────
+# defect_part_system — UI navigation (primary system per part)
+# ─────────────────────────────────────────────────────
+PART_SYSTEMS: list[tuple[P, S, bool, str | None]] = [
+    # tires_wheels
     (P.TIRE, S.TIRES_WHEELS, True, None),
     (P.RIM, S.TIRES_WHEELS, True, None),
     (P.WHEEL_NUT, S.TIRES_WHEELS, True, None),
     (P.MOUNTING_EQUIPMENT, S.TIRES_WHEELS, True, None),
-
-    # lights — 3 groups (exterior / cabin_cargo / attached)
+    # lights
     (P.HEADLIGHT, S.LIGHTS, True, "exterior"),
     (P.TAIL_LIGHT, S.LIGHTS, True, "exterior"),
     (P.TURN_SIGNAL, S.LIGHTS, True, "exterior"),
     (P.HAZARD_LIGHT, S.LIGHTS, True, "exterior"),
     (P.MARKER_LIGHT, S.LIGHTS, True, "exterior"),
     (P.LICENSE_PLATE_LIGHT, S.LIGHTS, True, "exterior"),
-    (P.CABIN_LIGHT, S.LIGHTS, True, "cabin_cargo"),
-    (P.CARGO_LIGHT, S.LIGHTS, True, "cabin_cargo"),
-    (P.STEPWELL_LIGHT, S.LIGHTS, True, "attached"),
-    (P.MIRROR_LIGHT, S.LIGHTS, True, "attached"),
-    # secondary appearances
-    (P.MIRROR_LIGHT, S.MIRRORS, False, None),
-    (P.STEPWELL_LIGHT, S.BODY_STEPS, False, None),
-    (P.CABIN_LIGHT, S.INTERIOR, False, "cab"),
-    (P.CARGO_LIGHT, S.INTERIOR, False, "cab"),
-
     # windshield_wipers
     (P.WINDSHIELD, S.WINDSHIELD_WIPERS, True, None),
     (P.WIPER_BLADE, S.WINDSHIELD_WIPERS, True, None),
     (P.WASHER_SYSTEM, S.WINDSHIELD_WIPERS, True, None),
-    (P.WASHER_SYSTEM, S.FLUIDS_UNDER_HOOD, False, None),
-
     # mirrors
     (P.SIDE_MIRROR, S.MIRRORS, True, None),
-
     # body_steps
-    (P.BUMPER, S.BODY_STEPS, True, "panels"),
-    (P.FENDER, S.BODY_STEPS, True, "panels"),
-    (P.HOOD, S.BODY_STEPS, True, "panels"),
-    (P.SIDE_PANEL, S.BODY_STEPS, True, "panels"),
-    (P.FLOOR_PANEL, S.BODY_STEPS, True, "panels"),
+    (P.BUMPER, S.BODY_STEPS, True, "exterior"),
+    (P.FENDER, S.BODY_STEPS, True, "exterior"),
+    (P.HOOD, S.BODY_STEPS, True, "exterior"),
+    (P.SIDE_PANEL, S.BODY_STEPS, True, "exterior"),
     (P.SIDE_STEP, S.BODY_STEPS, True, "steps"),
     (P.REAR_STEP, S.BODY_STEPS, True, "steps"),
-
     # doors_windows
-    (P.EXTERIOR_DOOR, S.DOORS_WINDOWS, True, "doors"),
-    (P.SLIDING_SIDE_DOOR, S.DOORS_WINDOWS, True, "doors"),
-    (P.BULKHEAD_DOOR, S.DOORS_WINDOWS, True, "doors"),
-    (P.REAR_CARGO_DOOR, S.DOORS_WINDOWS, True, "doors"),
-    (P.ROLL_UP_DOOR, S.DOORS_WINDOWS, True, "doors"),
-    (P.WINDOW, S.DOORS_WINDOWS, True, "windows"),
-    (P.DOOR_HARDWARE, S.DOORS_WINDOWS, True, "hardware"),
-
-    # interior — 5 display groups
-    (P.DRIVER_SEAT, S.INTERIOR, True, "seating"),
-    (P.PASSENGER_SEAT, S.INTERIOR, True, "seating"),
-    (P.SEATBELT, S.INTERIOR, True, "restraints"),
-    (P.SEATBELT_BUCKLE, S.INTERIOR, True, "restraints"),
-    (P.SEATBELT, S.COMPLIANCE, False, "safety"),
-    (P.SEATBELT_BUCKLE, S.COMPLIANCE, False, "safety"),
-    (P.SUN_VISOR, S.INTERIOR, True, "cab"),
-    (P.INTERIOR_CLEANLINESS, S.INTERIOR, True, "cleanliness"),
-    (P.INTERIOR_LOOSE_OBJECTS, S.INTERIOR, True, "cleanliness"),
-    (P.FIRE_EXTINGUISHER, S.INTERIOR, True, "safety_gear"),
-    (P.FIRE_EXTINGUISHER, S.COMPLIANCE, False, "safety"),
-
+    (P.EXTERIOR_DOOR, S.DOORS_WINDOWS, True, None),
+    (P.SLIDING_SIDE_DOOR, S.DOORS_WINDOWS, True, None),
+    (P.REAR_CARGO_DOOR, S.DOORS_WINDOWS, True, None),
+    (P.WINDOW, S.DOORS_WINDOWS, True, None),
+    # interior
+    (P.DRIVER_SEAT, S.INTERIOR, True, None),
+    (P.SEATBELT, S.INTERIOR, True, None),
+    (P.SEATBELT_BUCKLE, S.INTERIOR, True, None),
     # brakes_steering
-    (P.PARKING_BRAKE, S.BRAKES_STEERING, True, None),
     (P.SERVICE_BRAKE, S.BRAKES_STEERING, True, None),
+    (P.PARKING_BRAKE, S.BRAKES_STEERING, True, None),
     (P.STEERING_WHEEL, S.BRAKES_STEERING, True, None),
     (P.ALIGNMENT, S.BRAKES_STEERING, True, None),
-
+    # cameras_electronics
+    (P.NETRADYNE_CAMERA, S.CAMERAS_ELECTRONICS, True, None),
+    (P.REAR_CAMERA, S.CAMERAS_ELECTRONICS, True, None),
+    (P.SIDE_CAMERA, S.CAMERAS_ELECTRONICS, True, None),
+    (P.CAMERA_MONITOR, S.CAMERAS_ELECTRONICS, True, None),
+    (P.WARNING_LAMP, S.CAMERAS_ELECTRONICS, True, None),
     # hvac
     (P.AC, S.HVAC, True, None),
     (P.HEATER, S.HVAC, True, None),
-    (P.DEFROSTER, S.HVAC, True, None),
-    (P.CABIN_FAN, S.HVAC, True, None),
-    (P.AC, S.INTERIOR, False, "cab"),
-    (P.HEATER, S.INTERIOR, False, "cab"),
-    (P.DEFROSTER, S.INTERIOR, False, "cab"),
-
-    # cameras_electronics — 4 display groups
-    (P.NETRADYNE_CAMERA, S.CAMERAS_ELECTRONICS, True, "cameras"),
-    (P.REAR_CAMERA, S.CAMERAS_ELECTRONICS, True, "cameras"),
-    (P.SIDE_CAMERA, S.CAMERAS_ELECTRONICS, True, "cameras"),
-    (P.CAMERA_MONITOR, S.CAMERAS_ELECTRONICS, True, "cameras"),
-    (P.WARNING_LAMP, S.CAMERAS_ELECTRONICS, True, "alerts"),
-    (P.BACKUP_ALARM, S.CAMERAS_ELECTRONICS, True, "alerts"),
-    (P.SEATBELT_ALARM, S.CAMERAS_ELECTRONICS, True, "alerts"),
-    (P.HORN, S.CAMERAS_ELECTRONICS, True, "alerts"),
-    (P.USB_PORT, S.CAMERAS_ELECTRONICS, True, "charging"),
-    (P.PHONE_CHARGER, S.CAMERAS_ELECTRONICS, True, "charging"),
-    (P.DELIVERY_DEVICE_CRADLE, S.CAMERAS_ELECTRONICS, True, "mounts"),
-    (P.PHONE_CRADLE, S.CAMERAS_ELECTRONICS, True, "mounts"),
-
     # fluids_under_hood
+    (P.ENGINE_OIL, S.FLUIDS_UNDER_HOOD, True, None),
     (P.COOLANT, S.FLUIDS_UNDER_HOOD, True, None),
     (P.BRAKE_FLUID, S.FLUIDS_UNDER_HOOD, True, None),
     (P.POWER_STEERING_FLUID, S.FLUIDS_UNDER_HOOD, True, None),
-    (P.DEF_FLUID, S.FLUIDS_UNDER_HOOD, True, None),
-    (P.ENGINE_OIL, S.FLUIDS_UNDER_HOOD, True, None),
-    (P.GEAR_OIL, S.FLUIDS_UNDER_HOOD, True, None),
-
     # compliance
-    (P.LICENSE_PLATE, S.COMPLIANCE, True, "plates"),
-    (P.INSPECTION_STICKER, S.COMPLIANCE, True, "stickers"),
-    (P.REGISTRATION_STICKER, S.COMPLIANCE, True, "stickers"),
-
-    # under_vehicle
-    (P.UNDERCARRIAGE_OBJECT, S.UNDER_VEHICLE, True, None),
-
-    # ── DVIC-specific parts (Cargo + DOT PDFs, Apr 2026) ──
-    # These mirror the additions in DefectPart enum and the DVIC template seed.
-    (P.SUSPENSION, S.UNDER_VEHICLE, True, None),
-    (P.UNDERBODY_OBJECT, S.UNDER_VEHICLE, True, None),
-    (P.FLUID_LEAK, S.UNDER_VEHICLE, True, None),
-    (P.FLUID_LEAK, S.FLUIDS_UNDER_HOOD, False, None),
-    (P.HOOD_LATCH, S.BODY_STEPS, True, "panels"),
-    (P.LIFT_GATE, S.BODY_STEPS, True, "panels"),
-    (P.BACKUP_CAMERA, S.CAMERAS_ELECTRONICS, True, "cameras"),
-    (P.SIDE_VIEW_CAMERA, S.CAMERAS_ELECTRONICS, True, "cameras"),
-    (P.CARGO_STEP, S.BODY_STEPS, True, "steps"),
-    (P.FUEL_CAP, S.FLUIDS_UNDER_HOOD, True, None),
-    (P.MUD_FLAP, S.BODY_STEPS, True, "panels"),
-    (P.BATTERY_COVER, S.BODY_STEPS, True, "panels"),
-    (P.AMAZON_DOT_DECAL, S.COMPLIANCE, True, "stickers"),
-    (P.PRIME_DECAL, S.COMPLIANCE, True, "stickers"),
-    (P.INSURANCE_DOC, S.COMPLIANCE, True, "docs"),
-    (P.REGISTRATION_DOC, S.COMPLIANCE, True, "docs"),
-    (P.SHELF, S.INTERIOR, True, "cab"),
-    (P.SPARE_FUSE, S.INTERIOR, True, "safety_gear"),
-    (P.SPARE_FUSE, S.COMPLIANCE, False, "safety"),
-    (P.REFLECTIVE_TRIANGLE, S.INTERIOR, True, "safety_gear"),
-    (P.REFLECTIVE_TRIANGLE, S.COMPLIANCE, False, "safety"),
-    (P.AIR_PRESSURE_GAUGE, S.BRAKES_STEERING, True, None),
-    (P.VEHICLE_INTERIOR, S.INTERIOR, True, "cleanliness"),
-    (P.DEVICE_ON_WINDSHIELD, S.WINDSHIELD_WIPERS, True, None),
+    (P.LICENSE_PLATE, S.COMPLIANCE, True, None),
+    (P.INSPECTION_STICKER, S.COMPLIANCE, True, None),
+    (P.REGISTRATION_STICKER, S.COMPLIANCE, True, None),
+    (P.DOT_DECAL, S.COMPLIANCE, True, None),
+    (P.PRIME_DECAL, S.COMPLIANCE, True, None),
+    (P.PAPER_DOCUMENT, S.COMPLIANCE, True, None),
+    (P.FIRE_EXTINGUISHER, S.COMPLIANCE, True, None),
+    (P.REFLECTIVE_TRIANGLES, S.COMPLIANCE, True, None),
+    (P.SPARE_FUSES, S.COMPLIANCE, True, None),
+    (P.AIR_PRESSURE_GAUGE, S.AIR_BRAKE, True, None),
+    # ev_powertrain
+    (P.CHARGING_PORT_CAP, S.EV_POWERTRAIN, True, None),
+    (P.EV_CENTER_DISPLAY, S.EV_POWERTRAIN, True, None),
+    (P.HIGH_VOLTAGE_CABLE, S.EV_POWERTRAIN, True, None),
+    (P.AVAS_SPEAKER, S.EV_POWERTRAIN, True, None),
+    # attached
+    (P.MUD_FLAP, S.BODY_STEPS, True, "attached"),
+    (P.LIFT_GATE, S.BODY_STEPS, True, "attached"),
+    # mirror light shows under both Lights and Mirrors (secondary appearance)
+    # Skipping for the Fase 1 starter — single-system mapping only.
 ]
 
 
 # ─────────────────────────────────────────────────────
-# defect_part_validity seed
-# Each tuple: (part, [valid_positions], position_required, allow_null_position)
-# ─────────────────────────────────────────────────────
-FOUR_CORNER = [Pos.DRIVER_FRONT, Pos.PASSENGER_FRONT, Pos.DRIVER_REAR, Pos.PASSENGER_REAR]
-LEFT_RIGHT = [Pos.DRIVER_SIDE, Pos.PASSENGER_SIDE]
-LEFT_RIGHT_OPTIONAL = [Pos.DRIVER_SIDE, Pos.PASSENGER_SIDE]
-DRIVER_PASSENGER = [Pos.DRIVER, Pos.PASSENGER]
-FRONT_REAR = [Pos.FRONT, Pos.REAR]
-
-PART_VALIDITY_ROWS = [
-    # 4-corner parts
-    (P.TIRE, FOUR_CORNER, True, False),
-    (P.RIM, FOUR_CORNER, True, False),
-    (P.WHEEL_NUT, FOUR_CORNER, True, False),
-    (P.MOUNTING_EQUIPMENT, FOUR_CORNER, True, False),
-
-    # left/right required
-    (P.HEADLIGHT, LEFT_RIGHT, True, False),
-    (P.TAIL_LIGHT, LEFT_RIGHT, True, False),
-    # turn signal: DVIC wizard picker allows L/R + front/rear (cab dashboard usage)
-    (P.TURN_SIGNAL, [Pos.DRIVER_SIDE, Pos.PASSENGER_SIDE, Pos.FRONT, Pos.REAR], True, False),
-    # hazard light: front-side + back-side rows pin position; in-cab row has none
-    (P.HAZARD_LIGHT, [Pos.FRONT, Pos.REAR], False, True),
-    (P.WIPER_BLADE, LEFT_RIGHT, True, False),
-    (P.MARKER_LIGHT, LEFT_RIGHT, True, False),
-    (P.STEPWELL_LIGHT, LEFT_RIGHT, True, False),
-    (P.MIRROR_LIGHT, LEFT_RIGHT, True, False),
-    (P.SIDE_MIRROR, LEFT_RIGHT, True, False),
-    (P.SIDE_CAMERA, LEFT_RIGHT, True, False),
-    (P.SLIDING_SIDE_DOOR, LEFT_RIGHT, True, False),
-    (P.WINDOW, LEFT_RIGHT, True, False),
-    (P.FENDER, LEFT_RIGHT, True, False),
-    (P.SIDE_STEP, LEFT_RIGHT, True, False),
-    (P.SIDE_PANEL, LEFT_RIGHT, True, False),
-
-    # left/right optional (single-instance possible)
-    (P.LICENSE_PLATE_LIGHT, LEFT_RIGHT_OPTIONAL, False, True),
-    (P.LICENSE_PLATE, LEFT_RIGHT_OPTIONAL, False, True),
-    (P.CABIN_FAN, LEFT_RIGHT_OPTIONAL, False, True),
-
-    # driver/passenger interior
-    (P.SEATBELT, DRIVER_PASSENGER, True, False),
-    (P.SEATBELT_BUCKLE, DRIVER_PASSENGER, True, False),
-    (P.SUN_VISOR, DRIVER_PASSENGER, False, True),
-
-    # front/rear
-    (P.BUMPER, FRONT_REAR, True, False),
-    (P.UNDERCARRIAGE_OBJECT, FRONT_REAR, False, True),
-
-    # exterior_door (driver_side / passenger_side / rear)
-    (P.EXTERIOR_DOOR, [Pos.DRIVER_SIDE, Pos.PASSENGER_SIDE, Pos.REAR], True, False),
-    (P.DOOR_HARDWARE, [Pos.DRIVER_SIDE, Pos.PASSENGER_SIDE, Pos.REAR], False, True),
-
-    # ── DVIC-specific parts (Apr 2026 PDFs) ──
-    # under-vehicle objects can be reported per side or front/rear
-    (P.UNDERBODY_OBJECT, [Pos.FRONT, Pos.REAR, Pos.DRIVER_SIDE, Pos.PASSENGER_SIDE], False, True),
-    # fluid leaks happen on the ground under driver/passenger side
-    (P.FLUID_LEAK, [Pos.DRIVER_SIDE, Pos.PASSENGER_SIDE], False, True),
-    # rear-only parts (lift gate, backup camera)
-    (P.LIFT_GATE, [Pos.REAR], False, True),
-    (P.BACKUP_CAMERA, [Pos.REAR], False, True),
-    # left/right body parts
-    (P.SIDE_VIEW_CAMERA, LEFT_RIGHT, True, False),
-    (P.AMAZON_DOT_DECAL, LEFT_RIGHT, True, False),
-    (P.PRIME_DECAL, LEFT_RIGHT, True, False),
-    # cargo step can appear on either side or rear
-    (P.CARGO_STEP, [Pos.DRIVER_SIDE, Pos.PASSENGER_SIDE, Pos.REAR], False, True),
-    # mud flap pinned to rear-corner per Amazon DVIC spec
-    (P.MUD_FLAP, [Pos.DRIVER_REAR, Pos.PASSENGER_REAR], True, False),
-    # battery cover: DOT box trucks only — driver-side panel
-    (P.BATTERY_COVER, [Pos.DRIVER_SIDE], False, True),
-]
-
-# All other parts: no position
-NO_POSITION_PARTS = [
-    # NB: HAZARD_LIGHT was here historically — moved above to a positioned-row
-    # so the front/rear DVIC entries pass validation.
-    P.CABIN_LIGHT, P.CARGO_LIGHT,
-    P.WINDSHIELD, P.WASHER_SYSTEM,
-    P.HOOD, P.FLOOR_PANEL, P.REAR_STEP,
-    P.BULKHEAD_DOOR, P.REAR_CARGO_DOOR, P.ROLL_UP_DOOR,
-    P.DRIVER_SEAT, P.PASSENGER_SEAT,
-    P.INTERIOR_CLEANLINESS, P.INTERIOR_LOOSE_OBJECTS, P.FIRE_EXTINGUISHER,
-    P.PARKING_BRAKE, P.SERVICE_BRAKE, P.STEERING_WHEEL, P.ALIGNMENT,
-    P.AC, P.HEATER, P.DEFROSTER,
-    P.NETRADYNE_CAMERA, P.REAR_CAMERA, P.CAMERA_MONITOR,
-    P.WARNING_LAMP, P.BACKUP_ALARM, P.SEATBELT_ALARM, P.HORN,
-    P.USB_PORT, P.PHONE_CHARGER, P.DELIVERY_DEVICE_CRADLE, P.PHONE_CRADLE,
-    P.COOLANT, P.BRAKE_FLUID, P.POWER_STEERING_FLUID,
-    P.DEF_FLUID, P.ENGINE_OIL, P.GEAR_OIL,
-    P.INSPECTION_STICKER, P.REGISTRATION_STICKER,
-    # ── DVIC-specific NO_POSITION additions ──
-    P.SUSPENSION,           # whole-vehicle leaning check
-    P.HOOD_LATCH,           # singular front part
-    P.FUEL_CAP,             # singular front/side part
-    P.INSURANCE_DOC,        # paper documentation
-    P.REGISTRATION_DOC,     # paper documentation
-    P.SHELF,                # interior cargo area
-    P.SPARE_FUSE,           # in-cab safety gear
-    P.REFLECTIVE_TRIANGLE,  # in-cab safety gear
-    P.AIR_PRESSURE_GAUGE,   # dashboard gauge
-    P.VEHICLE_INTERIOR,     # whole-cabin cleanliness
-    P.DEVICE_ON_WINDSHIELD, # accessory mounted on windshield
-]
-PART_VALIDITY_ROWS.extend((p, [], False, True) for p in NO_POSITION_PARTS)
-
-
-# ─────────────────────────────────────────────────────
-# defect_details_schema seed (truncated subset — full set in DB)
-# Each tuple: (part, defect_type, json_schema_dict)
-# ─────────────────────────────────────────────────────
-EMPTY_SCHEMA: dict = {}
-
-# Compact helper: expand a part + list of types → rows.
-# Severity-related arguments are accepted but ignored (kept for backward compat
-# with the existing call sites until they're rewritten).
-def _flat(part, types, default_sev=None, schema=None):
-    out = []
-    s = schema if schema is not None else EMPTY_SCHEMA
-    for t in types:
-        out.append((part, t, s))
-    return out
-
-
-DETAILS_SCHEMA_ROWS = []
-
-# tire — most common defect types + structured low_tread
-DETAILS_SCHEMA_ROWS.extend(_flat(P.TIRE, [
-    T.FLAT, T.SIDEWALL_DAMAGE, T.OBJECT_EMBEDDED, T.EXPOSED_WIRE, T.BULGE,
-    T.LEAKING, T.MISSING,
-]))
-DETAILS_SCHEMA_ROWS.append((
-    P.TIRE, T.LOW_TREAD,
-    {
-        "type": "object",
-        "required": ["tread_depth_32nds"],
-        "properties": {"tread_depth_32nds": {"type": "integer", "minimum": 0, "maximum": 10}},
-        "additionalProperties": False,
-    },
-))
-
-# rim, wheel_nut, mounting_equipment
-DETAILS_SCHEMA_ROWS.extend(_flat(P.RIM, [T.DAMAGED, T.CRACKED, T.BENT, T.RUSTED]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.WHEEL_NUT, [T.MISSING, T.LOOSE, T.DAMAGED, T.RUSTED]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.MOUNTING_EQUIPMENT, [
-    T.STUD_BROKEN, T.HUB_CAP_MISSING, T.LOOSE, T.DAMAGED, T.OTHER_DAMAGE,
-]))
-
-# Lights — most accept not_working, missing, damaged
-LIGHT_PARTS = [
-    P.HEADLIGHT, P.TAIL_LIGHT, P.TURN_SIGNAL, P.HAZARD_LIGHT,
-    P.MARKER_LIGHT, P.LICENSE_PLATE_LIGHT,
-    P.CABIN_LIGHT, P.CARGO_LIGHT, P.STEPWELL_LIGHT, P.MIRROR_LIGHT,
-]
-for part in LIGHT_PARTS:
-    DETAILS_SCHEMA_ROWS.extend(_flat(
-        part, [T.NOT_WORKING, T.INTERMITTENT, T.FLICKERING, T.MISSING, T.DAMAGED, T.CRACKED, T.COVER_CRACKED, T.COVER_MISSING]
-    ))
-
-# Windshield + wipers
-DETAILS_SCHEMA_ROWS.append((
-    P.WINDSHIELD, T.CRACKED,
-    {
-        "type": "object",
-        "required": ["in_drivers_line_of_sight"],
-        "properties": {"in_drivers_line_of_sight": {"type": "boolean"}},
-        "additionalProperties": False,
-    },
-))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.WINDSHIELD, [T.ZIP_TIED_OR_TAPED, T.OTHER_DAMAGE]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.WIPER_BLADE, [T.NOT_WORKING, T.TORN, T.MISSING, T.DAMAGED]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.WASHER_SYSTEM, [T.NOT_WORKING, T.LEAKING, T.EMPTY]))
-
-# Mirrors
-DETAILS_SCHEMA_ROWS.extend(_flat(P.SIDE_MIRROR, [
-    T.CRACKED, T.BROKEN, T.MISSING, T.DAMAGED, T.LOOSE, T.MISALIGNED,
-]))
-
-# Body & steps
-BODY_PARTS = [P.BUMPER, P.FENDER, P.HOOD, P.SIDE_PANEL, P.FLOOR_PANEL, P.SIDE_STEP, P.REAR_STEP]
-for part in BODY_PARTS:
-    DETAILS_SCHEMA_ROWS.extend(_flat(part, [
-        T.DAMAGED, T.CRACKED, T.BROKEN, T.BENT, T.MISSING, T.LOOSE, T.HANGING, T.RUSTED,
-    ]))
-
-# Doors & windows
-DOOR_PARTS = [P.EXTERIOR_DOOR, P.SLIDING_SIDE_DOOR, P.BULKHEAD_DOOR, P.REAR_CARGO_DOOR, P.ROLL_UP_DOOR]
-for part in DOOR_PARTS:
-    DETAILS_SCHEMA_ROWS.extend(_flat(part, [
-        T.WONT_OPEN, T.WONT_CLOSE, T.WONT_LOCK, T.WONT_UNLOCK, T.WONT_LATCH,
-        T.STUCK, T.OFF_TRACK, T.DAMAGED, T.MISALIGNED,
-    ]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.WINDOW, [
-    T.CRACKED, T.BROKEN, T.WONT_OPEN, T.WONT_CLOSE, T.STUCK,
-]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.DOOR_HARDWARE, [T.DAMAGED, T.MISSING, T.LOOSE, T.NEEDS_GREASE]))
-
-# Interior
-DETAILS_SCHEMA_ROWS.extend(_flat(P.DRIVER_SEAT, [T.DAMAGED, T.TORN, T.LOOSE, T.STUCK, T.MOUNT_DAMAGED]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.PASSENGER_SEAT, [T.DAMAGED, T.TORN, T.LOOSE, T.STUCK, T.MOUNT_DAMAGED]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.SEATBELT, [T.NOT_WORKING, T.WONT_RETRACT, T.FRAYED, T.DAMAGED, T.MISSING]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.SEATBELT_BUCKLE, [T.NOT_WORKING, T.WONT_LATCH, T.DAMAGED, T.MISSING]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.SUN_VISOR, [T.DAMAGED, T.MISSING, T.LOOSE, T.BROKEN]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.INTERIOR_CLEANLINESS, [T.DIRTY]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.INTERIOR_LOOSE_OBJECTS, [T.HAS_LOOSE_OBJECTS]))
-
-# Fire extinguisher (compliance dual-listed)
-DETAILS_SCHEMA_ROWS.append((
-    P.FIRE_EXTINGUISHER, T.EXPIRED,
-    {
-        "type": "object",
-        "properties": {"expiration_date": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"}},
-        "additionalProperties": False,
-    },
-))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.FIRE_EXTINGUISHER, [T.MISSING, T.DAMAGED, T.UNSECURED]))
-
-# Brakes & steering
-DETAILS_SCHEMA_ROWS.extend(_flat(P.PARKING_BRAKE, [T.NOT_WORKING, T.NEEDS_ADJUSTMENT, T.STUCK]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.SERVICE_BRAKE, [T.NOT_WORKING, T.NEEDS_DIAGNOSTIC, T.NOISE, T.PULLS_LEFT, T.PULLS_RIGHT]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.STEERING_WHEEL, [T.VIBRATION, T.PULLS_LEFT, T.PULLS_RIGHT, T.NOISE, T.OFF_CENTER]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.ALIGNMENT, [T.PULLS_LEFT, T.PULLS_RIGHT, T.OFF_CENTER, T.NEEDS_ADJUSTMENT]))
-
-# HVAC
-DETAILS_SCHEMA_ROWS.extend(_flat(P.AC, [T.NO_COLD_AIR, T.NOT_WORKING, T.INTERMITTENT, T.NOISE]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.HEATER, [T.NO_HEAT, T.NOT_WORKING, T.INTERMITTENT]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.DEFROSTER, [T.NOT_WORKING, T.INTERMITTENT]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.CABIN_FAN, [T.NOT_WORKING, T.NOISE, T.INTERMITTENT]))
-
-# Cameras & electronics
-CAMERA_PARTS = [P.NETRADYNE_CAMERA, P.REAR_CAMERA, P.SIDE_CAMERA]
-for part in CAMERA_PARTS:
-    DETAILS_SCHEMA_ROWS.extend(_flat(part, [
-        T.NOT_WORKING, T.HANGING, T.DISCONNECTED, T.LOOSE, T.DAMAGED, T.MISSING,
-    ]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.CAMERA_MONITOR, [
-    T.NOT_WORKING, T.MISSING, T.BROKEN, T.UNSECURED, T.DAMAGED,
-]))
-
-# Warning lamp — structured details
-DETAILS_SCHEMA_ROWS.append((
-    P.WARNING_LAMP, T.ON_OR_FLASHING,
-    {
-        "type": "object",
-        "required": ["lamp_type", "state"],
-        "properties": {
-            "lamp_type": {
-                "type": "array",
-                "minItems": 1,
-                "uniqueItems": True,
-                "items": {"enum": [
-                    "check_engine", "oil", "tire_pressure", "brake", "abs", "airbag",
-                    "battery", "coolant", "def", "glow_plug", "service_due", "other",
-                ]},
-            },
-            "state": {"enum": ["on", "flashing"]},
-        },
-        "additionalProperties": False,
-    },
-))
-
-DETAILS_SCHEMA_ROWS.extend(_flat(P.HORN, [T.NOT_WORKING, T.INTERMITTENT]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.BACKUP_ALARM, [T.NOT_WORKING, T.INTERMITTENT]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.SEATBELT_ALARM, [T.NOT_WORKING, T.INTERMITTENT]))
-
-DETAILS_SCHEMA_ROWS.extend(_flat(P.USB_PORT, [T.NOT_WORKING, T.LOOSE, T.DAMAGED]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.PHONE_CHARGER, [T.NOT_WORKING, T.LOOSE, T.DAMAGED, T.MISSING]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.DELIVERY_DEVICE_CRADLE, [T.MISSING, T.DAMAGED, T.LOOSE, T.MOUNT_DAMAGED]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.PHONE_CRADLE, [T.MISSING, T.DAMAGED, T.LOOSE, T.MOUNT_DAMAGED]))
-
-# Fluids
-FLUID_PARTS = [P.COOLANT, P.BRAKE_FLUID, P.POWER_STEERING_FLUID, P.DEF_FLUID, P.ENGINE_OIL, P.GEAR_OIL]
-for part in FLUID_PARTS:
-    DETAILS_SCHEMA_ROWS.extend(_flat(part, [T.LOW_FLUID, T.EMPTY, T.LEAKING]))
-
-# Compliance — expirations have structured details
-DETAILS_SCHEMA_ROWS.append((
-    P.INSPECTION_STICKER, T.EXPIRED,
-    {
-        "type": "object",
-        "properties": {"expiration_month": {"type": "string", "pattern": r"^\d{4}-\d{2}$"}},
-        "additionalProperties": False,
-    },
-))
-DETAILS_SCHEMA_ROWS.append((
-    P.REGISTRATION_STICKER, T.EXPIRED,
-    {
-        "type": "object",
-        "properties": {"expiration_month": {"type": "string", "pattern": r"^\d{4}-\d{2}$"}},
-        "additionalProperties": False,
-    },
-))
-DETAILS_SCHEMA_ROWS.append((
-    P.LICENSE_PLATE, T.EXPIRED,
-    {
-        "type": "object",
-        "properties": {"expiration_date": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"}},
-        "additionalProperties": False,
-    },
-))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.LICENSE_PLATE, [T.MISSING, T.ILLEGIBLE, T.WRONG_VEHICLE]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.INSPECTION_STICKER, [T.MISSING, T.ILLEGIBLE]))
-DETAILS_SCHEMA_ROWS.extend(_flat(P.REGISTRATION_STICKER, [T.MISSING, T.ILLEGIBLE]))
-
-# Under vehicle
-DETAILS_SCHEMA_ROWS.extend(_flat(P.UNDERCARRIAGE_OBJECT, [T.OTHER_DAMAGE]))
-
-
-# ─────────────────────────────────────────────────────
-# DVIC template auto-coverage
+# RULES — (part × defect_type) catalog with per-class applicability.
 #
-# Every (part, defect_type) combo declared in seed_dvic_template.py MUST be in
-# the catalog allow-list — otherwise the wizard can record a defect that the
-# server then rejects with "defect_type X is not allowed on part Y" (the bug
-# this block was added to prevent). Curated rows above take precedence; the
-# loop only fills gaps. Re-run `python -m app.cli seed-defect-catalog` after
-# editing either seed.
+# Tuple form:
+#   (part, defect_type, applicable_classes, classification, valid_positions,
+#    position_required, allow_null_position, details_schema, threshold,
+#    notes_default, group_override)
+#
+# `group_override` lets a rule deviate from `part_group_default[part]`.
+# Most rules pass `None` and inherit.
 # ─────────────────────────────────────────────────────
-def _ensure_dvic_coverage():
-    from app.seed_dvic_template import DVIC_ROWS
 
-    seen = {(part, dt) for part, dt, _ in DETAILS_SCHEMA_ROWS}
-    added: list[tuple] = []
-    for r in DVIC_ROWS:
-        key = (r["part_enum"], r["defect_type_enum"])
-        if key in seen:
-            continue
-        seen.add(key)
-        # Use the DVIC template's details_schema if present so the validator's
-        # required-fields check matches what the wizard collected.
-        schema = r.get("details_schema") or EMPTY_SCHEMA
-        added.append((r["part_enum"], r["defect_type_enum"], schema))
-    return added
+RuleSpec = tuple[
+    P,                       # part
+    T,                       # defect_type
+    tuple[VC, ...],          # applicable classes
+    C | None,                # classification (None = needs_review)
+    list[str],               # valid_positions
+    bool,                    # position_required
+    bool,                    # allow_null_position
+    dict,                    # details_schema (empty dict = none)
+    dict,                    # threshold (empty dict = none)
+    str | None,              # notes_default
+    G | None,                # group_override (None inherits from part default)
+]
+
+RULES: list[RuleSpec] = [
+    # ── Tires ─────────────────────────────────────────
+    (P.TIRE, T.LOW_TREAD, ALL_CLASSES, C.SEV2,
+     FOUR_CORNER, True, False, TREAD_DEPTH_SCHEMA, {}, None, None),
+    (P.TIRE, T.FLAT, ALL_CLASSES, C.ULC,
+     FOUR_CORNER, True, False, {}, {}, "Vehicle is unable to leave compound.", None),
+    (P.TIRE, T.SIDEWALL_DAMAGE, ALL_CLASSES, C.SEV1,
+     FOUR_CORNER, True, False, {}, {}, None, None),
+    (P.TIRE, T.OBJECT_EMBEDDED, ALL_CLASSES, C.SEV2,
+     FOUR_CORNER, True, False, {}, {}, None, None),
+
+    # ── Lights ────────────────────────────────────────
+    (P.HEADLIGHT, T.NOT_WORKING, ALL_CLASSES, C.SEV1,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+    (P.HEADLIGHT, T.CRACKED, ALL_CLASSES, C.SEV3,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+    (P.TAIL_LIGHT, T.NOT_WORKING, ALL_CLASSES, C.SEV1,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+    (P.TAIL_LIGHT, T.CRACKED, ALL_CLASSES, C.SEV3,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+    (P.TURN_SIGNAL, T.NOT_WORKING, ALL_CLASSES, C.SEV1,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+    (P.HAZARD_LIGHT, T.NOT_WORKING, ALL_CLASSES, C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.LICENSE_PLATE_LIGHT, T.NOT_WORKING, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {}, None, None),
+    (P.MARKER_LIGHT, T.NOT_WORKING, DOT_ONLY, C.SEV2,
+     LEFT_RIGHT, True, False, {}, {},
+     "DOT-only check; required on step vans + box trucks.", None),
+
+    # ── Windshield + Wipers ───────────────────────────
+    (P.WINDSHIELD, T.CRACKED, ALL_CLASSES, None,  # severity depends on LOS
+     [], False, True, WINDSHIELD_LOS_SCHEMA, {},
+     "If `in_drivers_line_of_sight=true`, vehicle is grounded (Sev1).", None),
+    (P.WIPER_BLADE, T.DAMAGED, ALL_CLASSES, C.SEV3,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+    (P.WIPER_BLADE, T.MISSING, ALL_CLASSES, C.SEV2,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+
+    # ── Mirrors ───────────────────────────────────────
+    (P.SIDE_MIRROR, T.CRACKED, ALL_CLASSES, C.SEV2,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+    (P.SIDE_MIRROR, T.BROKEN, ALL_CLASSES, C.SEV1,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+
+    # ── Body ──────────────────────────────────────────
+    (P.BUMPER, T.DAMAGED, ALL_CLASSES, C.ADVISORY,
+     FRONT_REAR, True, False, {}, {}, None, None),
+    (P.FENDER, T.DAMAGED, ALL_CLASSES, C.ADVISORY,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+    (P.HOOD, T.DAMAGED, ICE_ONLY, C.SEV3,
+     [], False, True, {}, {}, None, None),
+
+    # ── Doors ─────────────────────────────────────────
+    (P.EXTERIOR_DOOR, T.WONT_CLOSE, ALL_CLASSES, C.SEV1,
+     DOOR_POSITIONS, True, False, {}, {}, None, None),
+    (P.SLIDING_SIDE_DOOR, T.WONT_OPEN, ALL_CLASSES, C.SEV2,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+    (P.REAR_CARGO_DOOR, T.WONT_CLOSE, ALL_CLASSES, C.SEV1,
+     [], False, True, {}, {}, None, None),
+
+    # ── Interior ──────────────────────────────────────
+    (P.SEATBELT, T.FRAYED, ALL_CLASSES, C.SEV1,
+     DRIVER_PASSENGER, True, False, {}, {}, None, None),
+    (P.SEATBELT, T.WONT_RETRACT, ALL_CLASSES, C.SEV2,
+     DRIVER_PASSENGER, True, False, {}, {}, None, None),
+    (P.SEATBELT_BUCKLE, T.BROKEN, ALL_CLASSES, C.SEV1,
+     DRIVER_PASSENGER, True, False, {}, {}, None, None),
+    (P.DRIVER_SEAT, T.DAMAGED, ALL_CLASSES, C.ADVISORY,
+     [], False, True, {}, {}, None, None),
+
+    # ── Brakes + Steering ─────────────────────────────
+    (P.SERVICE_BRAKE, T.NOT_WORKING, ALL_CLASSES, C.ULC,
+     [], False, True, {}, {}, "Vehicle unable to leave compound.", None),
+    (P.SERVICE_BRAKE, T.NOISE, ALL_CLASSES, C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.PARKING_BRAKE, T.NOT_WORKING, ALL_CLASSES, C.SEV1,
+     [], False, True, {}, {}, None, None),
+    (P.STEERING_WHEEL, T.VIBRATION, ALL_CLASSES, C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.ALIGNMENT, T.PULLS_LEFT, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {}, None, None),
+    (P.ALIGNMENT, T.PULLS_RIGHT, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {}, None, None),
+
+    # ── Cameras + Warning lamp (ICE variant) ──────────
+    (P.WARNING_LAMP, T.ON_OR_FLASHING, ICE_ONLY, None,
+     [], False, True, WARNING_LAMP_SCHEMA_ICE, {},
+     "Severity depends on lamp_type — service_due is Advisory; brake/airbag are Sev1.", None),
+    # ── Warning lamp (EV variant — no oil/coolant/def/glow_plug) ─
+    (P.WARNING_LAMP, T.ON_OR_FLASHING, EV_ONLY, None,
+     [], False, True, WARNING_LAMP_SCHEMA_EV, {},
+     "EV warning lamps — no ICE-specific lamp types.", G.AMR),
+    (P.REAR_CAMERA, T.NOT_WORKING, ALL_CLASSES, C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.SIDE_CAMERA, T.NOT_WORKING, ALL_CLASSES, C.SEV2,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+    (P.CAMERA_MONITOR, T.NOT_WORKING, ALL_CLASSES, C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.NETRADYNE_CAMERA, T.NOT_WORKING, ALL_CLASSES, C.SEV2,
+     [], False, True, {}, {}, None, None),
+
+    # ── HVAC ──────────────────────────────────────────
+    (P.AC, T.NO_COLD_AIR, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {}, None, None),
+    (P.HEATER, T.NO_HEAT, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {}, None, None),
+
+    # ── Fluids (ICE only) ─────────────────────────────
+    (P.ENGINE_OIL, T.LEAKING, ICE_ONLY, C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.ENGINE_OIL, T.LOW_FLUID, ICE_ONLY, C.SEV3,
+     [], False, True, {}, {}, None, None),
+    (P.COOLANT, T.LEAKING, ICE_ONLY, C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.BRAKE_FLUID, T.LEAKING, ALL_CLASSES, C.SEV1,
+     [], False, True, {}, {}, "Brake fluid leak grounds the vehicle.", None),
+
+    # ── Compliance ────────────────────────────────────
+    (P.INSPECTION_STICKER, T.EXPIRED, ALL_CLASSES, C.SEV2,
+     [], False, True, EXP_MONTH_SCHEMA, {}, None, None),
+    (P.REGISTRATION_STICKER, T.EXPIRED, ALL_CLASSES, C.SEV2,
+     [], False, True, EXP_MONTH_SCHEMA, {}, None, None),
+    (P.LICENSE_PLATE, T.MISSING, ALL_CLASSES, C.SEV1,
+     [Pos.FRONT.value, Pos.REAR.value], False, True,
+     {}, {}, None, None),
+    (P.FIRE_EXTINGUISHER, T.MISSING, ALL_CLASSES, C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.FIRE_EXTINGUISHER, T.EXPIRED, ALL_CLASSES, C.SEV3,
+     [], False, True, EXP_DATE_SCHEMA, {}, None, None),
+
+    # ── DOT-only ──────────────────────────────────────
+    (P.MUD_FLAP, T.MISSING, DOT_ONLY, C.SEV2,
+     [Pos.DRIVER_SIDE.value, Pos.PASSENGER_SIDE.value], False, True,
+     {}, {}, None, None),
+    (P.DOT_DECAL, T.MISSING, DOT_ONLY, C.SEV2,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+    (P.PRIME_DECAL, T.MISSING, DOT_ONLY, C.ADVISORY,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+    (P.AIR_PRESSURE_GAUGE, T.NOT_WORKING, DOT_ONLY, C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.PAPER_DOCUMENT, T.MISSING, DOT_ONLY, C.SEV2,
+     [], False, True, {}, {},
+     "DOT trucks must carry insurance + registration paper docs.", None),
+    (P.REFLECTIVE_TRIANGLES, T.MISSING, DOT_ONLY, C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.SPARE_FUSES, T.MISSING, DOT_ONLY, C.SEV3,
+     [], False, True, {}, {}, None, None),
+
+    # ── EV-only ───────────────────────────────────────
+    (P.CHARGING_PORT_CAP, T.DAMAGED, EV_ONLY, C.SEV3,
+     [Pos.DRIVER_SIDE.value, Pos.PASSENGER_SIDE.value], False, True,
+     {}, {}, None, None),
+    (P.EV_CENTER_DISPLAY, T.NOT_WORKING, EV_ONLY, C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.HIGH_VOLTAGE_CABLE, T.DAMAGED, EV_ONLY, C.SEV1,
+     [], False, True, {}, {},
+     "Exposed/damaged high-voltage cable grounds the EV immediately.", None),
+    (P.AVAS_SPEAKER, T.NOT_WORKING, EV_ONLY, C.SEV2,
+     [], False, True, {}, {}, None, None),
+
+    # ── PDF-driven backfills ──────────────────────────
+    # (additional rules referenced by Cargo + DOT DVIC seed below)
+    (P.INTERIOR_CLEANLINESS, T.DIRTY, ALL_CLASSES, C.ADVISORY,
+     [], False, True, {}, {},
+     "Trash, dust, or grime accumulating in the cab/cargo area.", None),
+    (P.INTERIOR_CLEANLINESS, T.ODOR, ALL_CLASSES, C.ADVISORY,
+     [], False, True, {}, {}, None, None),
+    (P.INTERIOR_LOOSE_OBJECTS, T.HAS_LOOSE_OBJECTS, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {},
+     "Loose objects or spilled liquid that compromise safe driving.", None),
+    (P.SUSPENSION, T.MISALIGNED, ALL_CLASSES, C.SEV2,
+     [], False, True, {}, {},
+     "Noticeable leaning when parked — suspension misalignment.", None),
+    (P.UNDERCARRIAGE_OBJECT, T.HANGING, ALL_CLASSES, C.SEV1,
+     [Pos.FRONT.value, Pos.REAR.value, Pos.DRIVER_SIDE.value, Pos.PASSENGER_SIDE.value],
+     False, True, {}, {}, None, None),
+    (P.LICENSE_PLATE, T.DAMAGED, ALL_CLASSES, C.SEV3,
+     [Pos.FRONT.value, Pos.REAR.value], False, True, {}, {}, None, None),
+    (P.LICENSE_PLATE, T.EXPIRED, ALL_CLASSES, C.SEV2,
+     [Pos.FRONT.value, Pos.REAR.value], False, True, EXP_DATE_SCHEMA, {},
+     "Temporary tag past expiration date.", None),
+    (P.WIPER_BLADE, T.NOT_WORKING, ALL_CLASSES, C.SEV2,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+    (P.WASHER_SYSTEM, T.NOT_WORKING, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {}, None, None),
+    (P.WASHER_SYSTEM, T.EMPTY, ALL_CLASSES, C.ADVISORY,
+     [], False, True, {}, {},
+     "Wiper fluid reservoir empty.", None),
+    (P.HORN, T.NOT_WORKING, ALL_CLASSES, C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.SEATBELT_ALARM, T.NOT_WORKING, ALL_CLASSES, C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.BACKUP_ALARM, T.NOT_WORKING, ALL_CLASSES, C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.DELIVERY_DEVICE_CRADLE, T.DAMAGED, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {}, None, None),
+    (P.DELIVERY_DEVICE_CRADLE, T.MISSING, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {}, None, None),
+    (P.DASHBOARD_ILLUMINATION, T.NOT_WORKING, ALL_CLASSES, C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.WINDSHIELD, T.NON_APPROVED, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {},
+     "Device or accessory mounted on windshield (non-approved).", None),
+    # Doors that aren't part of the V2.2 §10.3 examples but appear in the PDF
+    (P.BULKHEAD_DOOR, T.WONT_OPEN, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {},
+     "Interior sliding/bulkhead door cannot open or close.", None),
+    (P.EXTERIOR_DOOR, T.WONT_OPEN, ALL_CLASSES, C.SEV2,
+     [Pos.DRIVER_SIDE.value, Pos.PASSENGER_SIDE.value, Pos.REAR.value],
+     False, True, {}, {},
+     "Door cannot open, close, lock, or unlock from inside the vehicle.", None),
+    # Body and step items (PDF "Items attached to the body of the vehicle")
+    (P.SIDE_STEP, T.DAMAGED, ALL_CLASSES, C.SEV3,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+    (P.REAR_STEP, T.DAMAGED, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {}, None, None),
+    (P.LIFT_GATE, T.DAMAGED, DOT_ONLY, C.SEV2,
+     [], False, True, {}, {}, None, None),
+    # DOT-specific PDF items
+    (P.PERIODIC_INSPECTION_STICKER, T.EXPIRED, DOT_ONLY, C.SEV2,
+     [], False, True, EXP_MONTH_SCHEMA, {},
+     "DOT/CA BIT/State inspection sticker expired or illegible.", None),
+    (P.FUEL_CAP, T.MISSING, DOT_ONLY, C.SEV2,
+     [Pos.DRIVER_SIDE.value, Pos.PASSENGER_SIDE.value], False, True,
+     {}, {}, None, None),
+    (P.MUD_FLAP, T.DAMAGED, DOT_ONLY, C.SEV3,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+    (P.DOT_DECAL, T.DAMAGED, DOT_ONLY, C.SEV3,
+     LEFT_RIGHT, True, False, {}, {},
+     "Amazon DOT decal damaged, dirty, or not visible.", None),
+    (P.PRIME_DECAL, T.DAMAGED, DOT_ONLY, C.ADVISORY,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+    (P.BATTERY_COVER, T.MISSING, (VC.BOX_TRUCK_DOT,), C.SEV2,
+     [], False, True, {}, {},
+     "Battery cover missing or bolts not present (Box Trucks only).", None),
+    (P.AIR_PRESSURE_GAUGE, T.OVER_PRESSURE, DOT_ONLY, C.SEV2,
+     [], False, True, {}, {},
+     "Air pressure gauge reads over 120 PSI.", None),
+
+    # Generic "any lights/covers cracked" — referenced by every section's
+    # catch-all check ("Any lights or light covers are cracked..."). One rule
+    # per anchor part used as the section's stand-in.
+    (P.HEADLIGHT, T.COVER_CRACKED, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {},
+     "Generic catch-all for any front-side light cover cracked / missing.", None),
+    (P.TAIL_LIGHT, T.COVER_CRACKED, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {},
+     "Generic catch-all for any back-side light cover cracked / missing.", None),
+    # Wheel-nut/rim/mounting damage — appears front + back, driver + passenger.
+    (P.WHEEL_NUT, T.DAMAGED, ALL_CLASSES, C.SEV1,
+     FOUR_CORNER, True, False, {}, {}, None, None),
+    # Side mirror — extra defect types beyond CRACKED/BROKEN
+    (P.SIDE_MIRROR, T.NOT_ADJUSTABLE, ALL_CLASSES, C.SEV3,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+    (P.SIDE_MIRROR, T.LOOSE, ALL_CLASSES, C.SEV3,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+
+    # Mirror light (turn signal mounted on side mirror) — additional defects
+    (P.MIRROR_LIGHT, T.NOT_WORKING, ALL_CLASSES, C.SEV2,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+    (P.MIRROR_LIGHT, T.COVER_CRACKED, ALL_CLASSES, C.SEV3,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+
+    # Exterior door damage variants (PDF "Doors: dent, scratch, misaligned, missing panel")
+    (P.EXTERIOR_DOOR, T.DAMAGED, ALL_CLASSES, C.SEV3,
+     [Pos.DRIVER_SIDE.value, Pos.PASSENGER_SIDE.value, Pos.REAR.value],
+     False, True, {}, {},
+     "Door dent, scratch, paint damage.", None),
+    (P.EXTERIOR_DOOR, T.MISALIGNED, ALL_CLASSES, C.SEV2,
+     [Pos.DRIVER_SIDE.value, Pos.PASSENGER_SIDE.value, Pos.REAR.value],
+     False, True, {}, {}, None, None),
+    (P.SIDE_PANEL, T.MISSING, ALL_CLASSES, C.SEV1,
+     LEFT_RIGHT, True, False, {}, {},
+     "Door or side panel missing.", None),
+    (P.SIDE_PANEL, T.DAMAGED, ALL_CLASSES, C.SEV3,
+     LEFT_RIGHT, True, False, {}, {},
+     "Side panel dent, scratch, paint damage.", None),
+
+    # State Inspection sticker — separate from periodic_inspection (DOT-only)
+    # Use inspection_sticker (already in catalog) for state inspection — extend
+    # with damaged variant.
+    (P.INSPECTION_STICKER, T.DAMAGED, ALL_CLASSES, C.SEV2,
+     [], False, True, {}, {},
+     "State inspection sticker damaged or illegible.", None),
+    (P.INSPECTION_STICKER, T.MISSING, ALL_CLASSES, C.SEV2,
+     [], False, True, {}, {}, None, None),
+
+    # Netradyne hanging — separate defect from "not_working"
+    (P.NETRADYNE_CAMERA, T.HANGING, ALL_CLASSES, C.SEV2,
+     [], False, True, {}, {},
+     "Netradyne camera hanging or disconnected from bracket.", G.NETRADYNE),
+
+    # Tail light cover cracked + position picker (PDF says back side, but covers
+    # are on each rear corner)
+    (P.TAIL_LIGHT, T.CRACKED, ALL_CLASSES, C.SEV3,
+     LEFT_RIGHT, True, False, {}, {}, None, None),
+
+    # Box Truck additions (NOVABODY/core insert_box_truck_dvic_template.py)
+    (P.LOW_AIR_WARNING, T.ON_OR_FLASHING, DOT_ONLY, C.SEV2,
+     [], False, True, {}, {},
+     "Air pressure gauge reads below DOT minimum (79 psi / 5.5 kg cm²).", None),
+    (P.SEATBELT, T.MISSING, ALL_CLASSES, C.SEV1,
+     [Pos.DRIVER.value, Pos.PASSENGER.value], False, True, {}, {},
+     "Seatbelt missing, torn, frayed, or not retracting.", None),
+    (P.FLOOR_PANEL, T.DAMAGED, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {},
+     "Cargo floor panel or shelving missing/damaged/loose/zip-tied.", None),
+    (P.EXTERIOR_DOOR, T.WONT_LOCK, ALL_CLASSES, C.SEV2,
+     [Pos.DRIVER_SIDE.value, Pos.PASSENGER_SIDE.value, Pos.REAR.value], False, True, {}, {},
+     "Exterior door cannot lock/unlock from inside the cab.", None),
+    (P.WINDSHIELD, T.OBSTRUCTED, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {},
+     "Device or accessory mounted on the windshield obstructing view.", None),
+]
 
 
-DETAILS_SCHEMA_ROWS.extend(_ensure_dvic_coverage())
+# ─────────────────────────────────────────────────────
+# Helpers exposed for the CLI seed command
+# ─────────────────────────────────────────────────────
+def get_part_group_defaults() -> list[tuple[P, G, str | None]]:
+    return PART_GROUP_DEFAULTS
 
 
-def get_seed_data():
-    """Convenience accessor used by the CLI seed command."""
-    return {
-        "part_system": PART_SYSTEM_ROWS,
-        "part_validity": PART_VALIDITY_ROWS,
-        "details_schema": DETAILS_SCHEMA_ROWS,
-    }
+def get_part_systems() -> list[tuple[P, S, bool, str | None]]:
+    return PART_SYSTEMS
+
+
+def get_rules() -> list[RuleSpec]:
+    return RULES
+
+
+def expand_applicability(rule: RuleSpec) -> list[dict]:
+    """Expand one RuleSpec into one applicability dict per applicable class."""
+    (
+        _part, _defect_type, classes, classification, valid_positions,
+        position_required, allow_null_position, details_schema, threshold,
+        notes_default, _group_override,
+    ) = rule
+    out: list[dict] = []
+    for vc in classes:
+        out.append({
+            "vehicle_class": vc,
+            "valid_positions": list(valid_positions),
+            "position_required": position_required,
+            "allow_null_position": allow_null_position,
+            "threshold": dict(threshold),
+            "classification": classification,
+            "details_schema": dict(details_schema),
+            "notes": notes_default,  # for Fase 1 we don't override per-class
+            "needs_review": classification is None,
+        })
+    return out

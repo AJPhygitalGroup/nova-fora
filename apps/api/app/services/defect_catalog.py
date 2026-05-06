@@ -1,16 +1,13 @@
-"""Defect catalog service — assembly + validation.
+"""Defect catalog assembly (V2.2 — junction-split).
 
-Two responsibilities:
-  1. Build the full CatalogResponse from the 3 reference tables.
-     Cached in-memory per process; refreshed on startup or via admin call.
-  2. Validate v2 defect creates against catalog rules before insert.
+Builds the per-vehicle-class CatalogResponse from:
+  - DefectRule × DefectApplicability (filtered by vehicle_class)
+  - DefectPartSystem (UI grouping)
+  - PART_LABELS / TYPE_LABELS / POSITION_LABELS / SYSTEM_LABELS (display)
 
-The catalog rarely changes (config, not data). Caching saves the ~250-row
-fan-out on every wizard load.
+The catalog rarely changes — frontend caches per vehicle_class per session.
 """
 from __future__ import annotations
-
-from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -20,14 +17,17 @@ from app.defect_labels import (
     POSITION_LABELS,
     SYSTEM_LABELS,
     TYPE_LABELS,
+    VEHICLE_CLASS_LABELS,
 )
 from app.models.defect_catalog import (
-    DefectDetailsSchema,
+    DefectApplicability,
     DefectPart,
     DefectPartSystem,
-    DefectPartValidity,
     DefectPosition,
+    DefectRule,
     DefectSystem,
+    DefectType,
+    VehicleClass,
 )
 from app.schemas.defect_catalog import (
     CatalogResponse,
@@ -39,23 +39,31 @@ from app.schemas.defect_catalog import (
 )
 
 
-# ─────────────────────────────────────────────────────
-# Catalog assembly
-# ─────────────────────────────────────────────────────
-async def build_catalog(session: AsyncSession) -> CatalogResponse:
-    """Assemble the full catalog from reference tables. ~50 KB output."""
-    # Fetch all reference rows in parallel-friendly serial calls (small data)
+async def build_catalog(
+    session: AsyncSession, vehicle_class: VehicleClass
+) -> CatalogResponse:
+    """Assemble the catalog filtered for one vehicle_class.
+
+    Returns parts (with their per-class allowed defect types + positions),
+    systems, and a parts-by-primary-system index for fast tile rendering.
+    """
+    # Fetch reference rows
     part_systems = (
         await session.execute(select(DefectPartSystem))
     ).scalars().all()
-    part_validities = (
-        await session.execute(select(DefectPartValidity))
-    ).scalars().all()
-    details_schemas = (
-        await session.execute(select(DefectDetailsSchema))
-    ).scalars().all()
 
-    # Index by part for fast lookup
+    # Active applicability rows for this class, joined with their rules
+    applicability_rows = (
+        await session.execute(
+            select(DefectRule, DefectApplicability)
+            .join(DefectApplicability, DefectApplicability.rule_id == DefectRule.id)
+            .where(DefectApplicability.vehicle_class == vehicle_class.value)
+            .where(DefectRule.is_active == True)  # noqa: E712
+            .where(DefectApplicability.is_active == True)  # noqa: E712
+        )
+    ).all()
+
+    # Index appearances by part
     appearances_by_part: dict[DefectPart, list[PartAppearance]] = {}
     for ps in part_systems:
         appearances_by_part.setdefault(ps.part, []).append(
@@ -66,152 +74,102 @@ async def build_catalog(session: AsyncSession) -> CatalogResponse:
             )
         )
 
-    validity_by_part: dict[DefectPart, DefectPartValidity] = {
-        v.part: v for v in part_validities
-    }
-
+    # Index defect types by part
     types_by_part: dict[DefectPart, list[DefectTypeInfo]] = {}
-    for ds in details_schemas:
-        labels = TYPE_LABELS.get(ds.defect_type, {"label": ds.defect_type.value, "icon": "❓"})
-        type_info = DefectTypeInfo(
-            id=ds.defect_type,
-            label=labels["label"],
-            icon=labels["icon"],
-            details_schema=ds.json_schema or {},
-            requires_details=bool(ds.json_schema),
-        )
-        types_by_part.setdefault(ds.part, []).append(type_info)
+    for rule, app in applicability_rows:
+        # Build PositionInfo[] from the per-class valid_positions
+        valid_positions: list[PositionInfo] = []
+        for pos_str in app.valid_positions or []:
+            try:
+                pos_enum = DefectPosition(pos_str)
+            except ValueError:
+                continue
+            pos_labels = POSITION_LABELS.get(
+                pos_enum, {"label": pos_str, "icon": "•"}
+            )
+            valid_positions.append(
+                PositionInfo(
+                    id=pos_enum,
+                    label=pos_labels["label"],
+                    icon=pos_labels["icon"],
+                )
+            )
 
-    # Alphabetical ordering inside each part
-    for part_id, ts in types_by_part.items():
+        type_enum = (
+            rule.defect_type
+            if isinstance(rule.defect_type, DefectType)
+            else DefectType(rule.defect_type)
+        )
+        type_labels = TYPE_LABELS.get(
+            type_enum, {"label": type_enum.value, "icon": "❓"}
+        )
+        type_info = DefectTypeInfo(
+            id=type_enum,
+            label=type_labels["label"],
+            icon=type_labels["icon"],
+            details_schema=app.details_schema or {},
+            requires_details=bool(app.details_schema),
+            classification=app.classification,
+            group=rule.group,
+            valid_positions=valid_positions,
+            position_required=app.position_required,
+            allow_null_position=app.allow_null_position,
+            threshold=app.threshold or {},
+            notes=app.notes,  # NB: per-class override; falls back to rule.notes_default in UI
+            needs_review=app.needs_review,
+        )
+        part_enum = (
+            rule.part
+            if isinstance(rule.part, DefectPart)
+            else DefectPart(rule.part)
+        )
+        types_by_part.setdefault(part_enum, []).append(type_info)
+
+    # Alphabetical inside each part
+    for ts in types_by_part.values():
         ts.sort(key=lambda t: t.label)
 
-    # Build PartInfo list — only parts with at least one defect type are surfaced
+    # Build PartInfo list — only parts with ≥1 applicability row are surfaced
     parts: list[PartInfo] = []
     for part_id in DefectPart:
         if part_id not in types_by_part:
-            continue  # part has no allowed defect types yet — skip from catalog
+            continue
         labels = PART_LABELS.get(part_id, {"label": part_id.value, "icon": "❓"})
-        validity = validity_by_part.get(part_id)
-        valid_positions: list[PositionInfo] = []
-        if validity and validity.valid_positions_csv:
-            for pos_str in validity.valid_positions_csv.split(","):
-                if not pos_str:
-                    continue
-                try:
-                    pos_enum = DefectPosition(pos_str)
-                except ValueError:
-                    continue
-                pos_labels = POSITION_LABELS.get(pos_enum, {"label": pos_str, "icon": "•"})
-                valid_positions.append(
-                    PositionInfo(id=pos_enum, label=pos_labels["label"], icon=pos_labels["icon"])
-                )
         parts.append(
             PartInfo(
                 id=part_id,
                 label=labels["label"],
                 icon=labels["icon"],
                 appearances=appearances_by_part.get(part_id, []),
-                valid_positions=valid_positions,
-                position_required=validity.position_required if validity else False,
                 defect_types=types_by_part[part_id],
             )
         )
     parts.sort(key=lambda p: p.label)
 
-    # Systems list
+    # Systems
     systems: list[SystemInfo] = []
     for sys_id in DefectSystem:
         labels = SYSTEM_LABELS.get(sys_id, {"label": sys_id.value, "icon": "❓"})
         systems.append(SystemInfo(id=sys_id, label=labels["label"], icon=labels["icon"]))
 
-    # parts_by_system index (primary systems only — most relevant for tile rendering)
-    parts_by_system: dict[DefectSystem, list[DefectPart]] = {s: [] for s in DefectSystem}
+    # parts_by_system (primary only)
+    parts_by_system: dict[DefectSystem, list[DefectPart]] = {
+        s: [] for s in DefectSystem
+    }
     for part in parts:
-        for app in part.appearances:
-            if app.is_primary:
-                parts_by_system[app.system].append(part.id)
+        for app_ in part.appearances:
+            if app_.is_primary:
+                parts_by_system[app_.system].append(part.id)
                 break
 
+    vc_label = VEHICLE_CLASS_LABELS.get(vehicle_class, {}).get(
+        "label", vehicle_class.value
+    )
+
     return CatalogResponse(
+        vehicle_class=vehicle_class,
+        vehicle_class_label=vc_label,
         systems=systems,
         parts=parts,
         parts_by_system=parts_by_system,
     )
-
-
-# ─────────────────────────────────────────────────────
-# v2 defect validation
-# ─────────────────────────────────────────────────────
-class CatalogValidationError(Exception):
-    """Raised when a v2 defect create fails catalog validation.
-    Caller (route) translates to HTTP 400 with the message."""
-
-
-async def validate_v2_defect(
-    session: AsyncSession,
-    part: DefectPart,
-    position: DefectPosition | None,
-    defect_type: Any,  # DefectType — typing relaxed to support enum-or-string
-    details: dict,
-) -> None:
-    """Validate a v2 defect against catalog rules.
-
-    Checks:
-      1. (part, defect_type) exists in defect_details_schema (allow-list).
-      2. Position obeys defect_part_validity rules.
-      3. (Future) details JSON validates against the schema.
-         For now we only check required keys exist when schema declares them.
-
-    Raises CatalogValidationError on any failure.
-    """
-    # 1. Lookup the (part, defect_type) row in the allow-list
-    type_value = defect_type.value if hasattr(defect_type, "value") else str(defect_type)
-    part_value = part.value if hasattr(part, "value") else str(part)
-
-    schema_row = (
-        await session.execute(
-            select(DefectDetailsSchema)
-            .where(DefectDetailsSchema.part == part)
-            .where(DefectDetailsSchema.defect_type == defect_type)
-        )
-    ).scalar_one_or_none()
-    if schema_row is None:
-        raise CatalogValidationError(
-            f"defect_type '{type_value}' is not allowed on part '{part_value}'"
-        )
-
-    # 2. Position validity
-    validity = (
-        await session.execute(
-            select(DefectPartValidity).where(DefectPartValidity.part == part)
-        )
-    ).scalar_one_or_none()
-
-    if validity is None:
-        raise CatalogValidationError(f"no validity rule registered for part '{part_value}'")
-
-    valid_positions = [
-        DefectPosition(p) for p in validity.valid_positions_csv.split(",") if p
-    ]
-    if position is None:
-        if validity.position_required:
-            raise CatalogValidationError(
-                f"position is required for part '{part_value}'"
-            )
-    else:
-        if position not in valid_positions:
-            valid_str = ", ".join(p.value for p in valid_positions) or "none"
-            raise CatalogValidationError(
-                f"position '{position.value}' is not valid for part '{part_value}' "
-                f"(valid: {valid_str})"
-            )
-
-    # 3. Details — minimal validation: if schema declares 'required', ensure those keys are present.
-    json_schema = schema_row.json_schema or {}
-    required_fields = json_schema.get("required") or []
-    for key in required_fields:
-        if key not in details:
-            raise CatalogValidationError(
-                f"details.{key} is required for ('{part_value}', '{type_value}')"
-            )

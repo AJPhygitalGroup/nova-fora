@@ -1,19 +1,19 @@
-"""Defect model — v2 standalone `defects` table per the Notion 'Defect Data
-Schema' spec (post-2026-04-28 consensus with Mohammed).
+"""Defect model — V2.2 standalone `defects` table.
 
-Differences from the legacy `reported_defects` table this gradually replaces:
+Spec: `docs/defect-schema-v2.2-spec.md` §4.3. The legacy `reported_defects`
+table is dropped in the V2.2 migration (no data migration — fresh start).
+
+Properties:
   - Vehicle is mandatory; `inspection_id` is OPTIONAL (defects can come from
-    off-inspection sources — driver report, vendor report, mechanic walkaround).
-  - `source` enum records how the defect entered the system.
-  - CHECK constraint enforces `source = 'inspection'` ↔ `inspection_id IS NOT NULL`.
-  - No workflow `status` column — workflow lives in a separate `defect_status`
-    spec/table (see Notion §2 'Excluded fields').
-  - No legacy free-text columns (section / part / description / category) —
-    every row uses the structured (part, position, defect_type, details) shape.
-
-The legacy `reported_defects` table coexists during the migration period;
-new writes target this table. Backfill from reported_defects via
-`python -m app.cli backfill-defects`.
+    off-inspection sources per `DefectSource`).
+  - CHECK constraint: `source = 'inspection'` ↔ `inspection_id IS NOT NULL`.
+  - No workflow `status` column — workflow lives in a separate (future)
+    `defect_status` table per spec §2.
+  - Severity (`DefectClassification`) and routing (`DefectGroup`) are NOT
+    stored on the row — derive at read time via JOIN with `defect_applicability`
+    and `defect_rule`. Per-row severity overrides land in a future table.
+  - All structured: (part, position, defect_type, details). No free-text
+    columns beyond `notes`.
 """
 from datetime import datetime
 from enum import Enum
@@ -27,12 +27,18 @@ from app.models.base import timestamp_column, utc_now
 
 
 class DefectSource(str, Enum):
-    """How the defect entered the system. Notion spec §2.1."""
+    """How the defect entered the system. V2.2 spec §3.
 
-    INSPECTION = "inspection"                  # structured DVIC walkaround — inspection_id required
-    DRIVER_REPORT = "driver_report"            # driver flagged between scheduled inspections
-    VENDOR_REPORT = "vendor_report"            # vendor surfaced during unrelated work
-    MECHANIC_WALKAROUND = "mechanic_walkaround"  # informal vendor spot-check, not a DVIC
+    `inspection` requires `inspection_id` — enforced by CHECK constraint.
+    All other sources require `inspection_id` to be NULL.
+    """
+
+    INSPECTION = "inspection"                    # structured DVIC walkaround
+    MAINTENANCE_REQUEST = "maintenance_request"  # ticket from DSP / fleet ops
+    DRIVER_REPORT = "driver_report"              # driver flagged outside DVIC
+    CUSTOMER_REPORT = "customer_report"          # external complaint
+    SHOP_FINDING = "shop_finding"                # vendor surfaced during repair work
+    OTHER = "other"                              # catchall for ad-hoc entries
 
 
 class Defect(SQLModel, table=True):
@@ -77,7 +83,7 @@ class Defect(SQLModel, table=True):
             sa.Enum(
                 DefectSource,
                 native_enum=False,
-                length=30,
+                length=25,  # longest value: 'maintenance_request' = 19 chars
                 values_callable=lambda e: [m.value for m in e],
             ),
             nullable=False,
@@ -136,5 +142,9 @@ class Defect(SQLModel, table=True):
 
     @property
     def id_str(self) -> str:
-        """Frontend-compatible ID: DEF-XXXXXX. Distinct from legacy FD-XXX."""
-        return f"DEF-{self.id:06d}" if self.id is not None else ""
+        """Frontend-compatible ID: FD-XXX (3 digits min, expands as needed).
+
+        V2.2 reuses the FD- prefix that the demo frontend has wired in
+        components and mock data. The legacy DEF-XXXXXX prefix from the V2
+        partial implementation is retired with this migration."""
+        return f"FD-{self.id:03d}" if self.id is not None else ""

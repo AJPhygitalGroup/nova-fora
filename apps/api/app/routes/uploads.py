@@ -21,7 +21,8 @@ from sqlmodel import select
 
 from app.auth.dependencies import get_current_user
 from app.db import get_session
-from app.models.inspection import Inspection, ReportedDefect
+from app.models.defect import Defect
+from app.models.inspection import Inspection
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
 from app.models.work_order import WorkOrder
@@ -80,16 +81,34 @@ async def _check_parent_access(
     if kind == UploadKind.DEFECT:
         did = _parse_defect_id(parent_id)
         defect = (
-            await session.execute(select(ReportedDefect).where(ReportedDefect.id == did))
+            await session.execute(select(Defect).where(Defect.id == did))
         ).scalar_one_or_none()
         if defect is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "defect not found")
-        insp = (
-            await session.execute(
-                select(Inspection).where(Inspection.id == defect.inspection_id)
-            )
-        ).scalar_one_or_none()
-        _require_inspection_scope(insp, current)
+        # V2.2: defects can be off-inspection (inspection_id NULL). For
+        # those, scope by the parent vehicle's DSP rather than an inspection.
+        if defect.inspection_id is not None:
+            insp = (
+                await session.execute(
+                    select(Inspection).where(Inspection.id == defect.inspection_id)
+                )
+            ).scalar_one_or_none()
+            _require_inspection_scope(insp, current)
+        else:
+            vehicle = (
+                await session.execute(
+                    select(Vehicle).where(Vehicle.id == defect.vehicle_id)
+                )
+            ).scalar_one_or_none()
+            if vehicle is None:
+                raise HTTPException(
+                    status.HTTP_500_INTERNAL_SERVER_ERROR, "dangling vehicle"
+                )
+            if (
+                current.role == UserRole.DSP_OWNER
+                and vehicle.dsp_id != current.organization_id
+            ):
+                raise HTTPException(status.HTTP_403_FORBIDDEN, "not your defect")
         return ("defects", defect.id)
 
     if kind == UploadKind.INSPECTION:

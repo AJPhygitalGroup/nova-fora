@@ -1,22 +1,80 @@
-"""Human-readable labels + emoji per enum value.
+"""Human-readable labels + emoji per enum value (V2.2 schema).
 
-Drives the inspector wizard tile rendering. Treated as reference data
-(versioned alongside the enums per the spec §13).
-
-Labels are English by default. i18n hook (post-launch): replace with a
-function that takes a locale and returns the right string. Spanish
-support is on the post-Jun 15 backlog.
+Drives the inspector wizard tile rendering. Labels are English by default
+— i18n hook is post-Jun 15 backlog (replace with locale-aware function).
 """
-from app.models.defect_catalog import DefectPart as P
-from app.models.defect_catalog import DefectPosition as Pos
-from app.models.defect_catalog import DefectSystem as S
-from app.models.defect_catalog import DefectType as T
-from app.models.defect_catalog import DvicSection as DS
-from app.models.defect_catalog import AssetType as AT
+from app.models.defect_catalog import (
+    DefectClassification as C,
+    DefectGroup as G,
+    DefectPart as P,
+    DefectPosition as Pos,
+    DefectSystem as S,
+    DefectType as T,
+    VehicleClass as VC,
+)
 
 
 # ─────────────────────────────────────────────────────
-# Systems (13)
+# Vehicle classes (5) — Amazon fleet shorthand
+# ─────────────────────────────────────────────────────
+VEHICLE_CLASS_LABELS: dict[VC, dict[str, str]] = {
+    VC.CUSTOM_DELIVERY_VAN: {
+        "label": "CDV",
+        "icon": "🚐",
+        "description": "Custom Delivery Van — Stellantis/Ram CDV",
+    },
+    VC.REGULAR_CARGO_VAN: {
+        "label": "Cargo",
+        "icon": "🚐",
+        "description": "Cargo van — Sprinter, Transit, ProMaster (non-DOT)",
+    },
+    VC.STEP_VAN_DOT: {
+        "label": "SV",
+        "icon": "🚚",
+        "description": "Step Van — DOT regulated, air-brake checks",
+    },
+    VC.ELECTRIC_VEHICLE: {
+        "label": "EV",
+        "icon": "⚡",
+        "description": "Electric — Rivian EDV, EV powertrain checks",
+    },
+    VC.BOX_TRUCK_DOT: {
+        "label": "AMXL",
+        "icon": "🚛",
+        "description": "Box truck — Amazon XL, DOT + heavy duty",
+    },
+}
+
+
+# ─────────────────────────────────────────────────────
+# Classifications (5) — severity tier
+# ─────────────────────────────────────────────────────
+CLASSIFICATION_LABELS: dict[C, dict[str, str]] = {
+    C.SEV1: {"label": "Sev 1", "icon": "🔴", "description": "Immediate ground / safety critical"},
+    C.SEV2: {"label": "Sev 2", "icon": "🟠", "description": "High priority repair within 24h"},
+    C.SEV3: {"label": "Sev 3", "icon": "🟡", "description": "Schedule for repair within 7 days"},
+    C.ULC: {"label": "ULC", "icon": "⛔", "description": "Unable to leave compound — immediate"},
+    C.ADVISORY: {"label": "Advisory", "icon": "ℹ️", "description": "Informational, no urgent action"},
+}
+
+
+# ─────────────────────────────────────────────────────
+# Groups (8) — operational routing
+# ─────────────────────────────────────────────────────
+GROUP_LABELS: dict[G, dict[str, str]] = {
+    G.AMR: {"label": "AMR", "icon": "🔧", "description": "Automotive maintenance & repair"},
+    G.BODY: {"label": "Body", "icon": "🚐", "description": "Body shop"},
+    G.CMR: {"label": "CMR", "icon": "🛠️", "description": "Commercial Motor Repair"},
+    G.CNMR: {"label": "CNMR", "icon": "📋", "description": "Commercial Non-Motor Repair"},
+    G.PM: {"label": "PM", "icon": "📅", "description": "Preventive Maintenance"},
+    G.TIRES: {"label": "Tires", "icon": "🛞", "description": "Tire shop"},
+    G.DETAILING: {"label": "Detailing", "icon": "🧽", "description": "Cleaning & detail"},
+    G.NETRADYNE: {"label": "Netradyne", "icon": "📷", "description": "Netradyne camera support"},
+}
+
+
+# ─────────────────────────────────────────────────────
+# Systems (15)
 # ─────────────────────────────────────────────────────
 SYSTEM_LABELS: dict[S, dict[str, str]] = {
     S.TIRES_WHEELS: {"label": "Tires & Wheels", "icon": "🛞"},
@@ -27,16 +85,18 @@ SYSTEM_LABELS: dict[S, dict[str, str]] = {
     S.DOORS_WINDOWS: {"label": "Doors & Windows", "icon": "🚪"},
     S.INTERIOR: {"label": "Interior", "icon": "💺"},
     S.BRAKES_STEERING: {"label": "Brakes & Steering", "icon": "🛑"},
+    S.AIR_BRAKE: {"label": "Air Brake", "icon": "💨"},
     S.HVAC: {"label": "HVAC", "icon": "❄️"},
     S.CAMERAS_ELECTRONICS: {"label": "Cameras & Electronics", "icon": "📷"},
-    S.FLUIDS_UNDER_HOOD: {"label": "Fluids Under the Hood", "icon": "🛢️"},
+    S.FLUIDS_UNDER_HOOD: {"label": "Fluids Under Hood", "icon": "🛢️"},
     S.COMPLIANCE: {"label": "Compliance", "icon": "📋"},
     S.UNDER_VEHICLE: {"label": "Under Vehicle", "icon": "🔍"},
+    S.EV_POWERTRAIN: {"label": "EV Powertrain", "icon": "⚡"},
 }
 
 
 # ─────────────────────────────────────────────────────
-# Parts (70)
+# Parts (105)
 # ─────────────────────────────────────────────────────
 PART_LABELS: dict[P, dict[str, str]] = {
     # tires_wheels
@@ -55,13 +115,14 @@ PART_LABELS: dict[P, dict[str, str]] = {
     P.CARGO_LIGHT: {"label": "Cargo light", "icon": "📦"},
     P.STEPWELL_LIGHT: {"label": "Stepwell light", "icon": "🪜"},
     P.MIRROR_LIGHT: {"label": "Mirror light", "icon": "🔅"},
+    P.CLEARANCE_MARKER_LIGHT: {"label": "Clearance marker light", "icon": "🔆"},
     # windshield_wipers
     P.WINDSHIELD: {"label": "Windshield", "icon": "🪟"},
     P.WIPER_BLADE: {"label": "Wiper blade", "icon": "🧹"},
     P.WASHER_SYSTEM: {"label": "Washer system", "icon": "💦"},
     # mirrors
     P.SIDE_MIRROR: {"label": "Side mirror", "icon": "🪞"},
-    # body_steps
+    # body_steps / frame
     P.BUMPER: {"label": "Bumper", "icon": "🚐"},
     P.FENDER: {"label": "Fender", "icon": "🛡️"},
     P.HOOD: {"label": "Hood", "icon": "📐"},
@@ -69,6 +130,11 @@ PART_LABELS: dict[P, dict[str, str]] = {
     P.FLOOR_PANEL: {"label": "Floor panel", "icon": "▭"},
     P.SIDE_STEP: {"label": "Side step", "icon": "🪜"},
     P.REAR_STEP: {"label": "Rear step", "icon": "🪜"},
+    P.TRIM: {"label": "Trim", "icon": "📏"},
+    P.SIDE_MOLDING: {"label": "Side molding", "icon": "📏"},
+    P.CAB_DOOR: {"label": "Cab door", "icon": "🚪"},
+    P.FRAME_RAIL: {"label": "Frame rail", "icon": "🚧"},
+    P.CARGO_SHELF: {"label": "Cargo shelf", "icon": "📚"},
     # doors_windows
     P.EXTERIOR_DOOR: {"label": "Exterior door", "icon": "🚪"},
     P.SLIDING_SIDE_DOOR: {"label": "Sliding side door", "icon": "🚪"},
@@ -84,13 +150,35 @@ PART_LABELS: dict[P, dict[str, str]] = {
     P.SEATBELT_BUCKLE: {"label": "Seatbelt buckle", "icon": "🔗"},
     P.SUN_VISOR: {"label": "Sun visor", "icon": "🕶️"},
     P.INTERIOR_CLEANLINESS: {"label": "Interior cleanliness", "icon": "🧽"},
-    P.INTERIOR_LOOSE_OBJECTS: {"label": "Loose objects", "icon": "📋"},
-    P.FIRE_EXTINGUISHER: {"label": "Fire extinguisher", "icon": "🧯"},
+    P.INTERIOR_LOOSE_OBJECTS: {"label": "Interior loose objects", "icon": "📋"},
     # brakes_steering
     P.PARKING_BRAKE: {"label": "Parking brake", "icon": "🅿️"},
     P.SERVICE_BRAKE: {"label": "Service brake", "icon": "🛑"},
     P.STEERING_WHEEL: {"label": "Steering wheel", "icon": "🎯"},
     P.ALIGNMENT: {"label": "Alignment", "icon": "↔️"},
+    # air_brake (DOT only)
+    P.SLACK_ADJUSTER: {"label": "Slack adjuster", "icon": "🔧"},
+    P.BRAKE_CHAMBER: {"label": "Brake chamber", "icon": "🛢️"},
+    P.BRAKE_LINING: {"label": "Brake lining", "icon": "🛑"},
+    P.BRAKE_DRUM: {"label": "Brake drum", "icon": "🥁"},
+    P.AIR_COMPRESSOR: {"label": "Air compressor", "icon": "💨"},
+    P.AIR_TANK: {"label": "Air tank", "icon": "🛢️"},
+    P.AIR_LINE: {"label": "Air line", "icon": "🪢"},
+    P.LOW_AIR_WARNING: {"label": "Low air warning", "icon": "⚠️"},
+    # under_vehicle / suspension
+    P.SUSPENSION: {"label": "Suspension", "icon": "🔧"},
+    P.COIL_SPRING: {"label": "Coil spring", "icon": "🌀"},
+    P.LEAF_SPRING: {"label": "Leaf spring", "icon": "📏"},
+    P.AIR_BAG: {"label": "Air bag", "icon": "🎈"},
+    P.SHOCK_ABSORBER: {"label": "Shock absorber", "icon": "🔧"},
+    P.TORQUE_ARM: {"label": "Torque arm", "icon": "🔧"},
+    P.TIE_ROD: {"label": "Tie rod", "icon": "🔗"},
+    P.DRAG_LINK: {"label": "Drag link", "icon": "🔗"},
+    P.BALL_JOINT: {"label": "Ball joint", "icon": "⚪"},
+    P.PITMAN_ARM: {"label": "Pitman arm", "icon": "🔧"},
+    P.POWER_STEERING: {"label": "Power steering", "icon": "🎯"},
+    P.U_BOLT: {"label": "U-bolt", "icon": "🔩"},
+    P.UNDERCARRIAGE_OBJECT: {"label": "Undercarriage object", "icon": "🔍"},
     # hvac
     P.AC: {"label": "A/C", "icon": "❄️"},
     P.HEATER: {"label": "Heater", "icon": "🔥"},
@@ -109,6 +197,12 @@ PART_LABELS: dict[P, dict[str, str]] = {
     P.PHONE_CHARGER: {"label": "Phone charger", "icon": "🔋"},
     P.DELIVERY_DEVICE_CRADLE: {"label": "Delivery device cradle", "icon": "📱"},
     P.PHONE_CRADLE: {"label": "Phone cradle", "icon": "📱"},
+    P.DASHBOARD_ILLUMINATION: {"label": "Dashboard illumination", "icon": "💡"},
+    # ev_powertrain
+    P.EV_CENTER_DISPLAY: {"label": "EV center display", "icon": "🖥️"},
+    P.HIGH_VOLTAGE_CABLE: {"label": "High-voltage cable", "icon": "⚡"},
+    P.CHARGING_PORT_CAP: {"label": "Charging port cap", "icon": "🔌"},
+    P.AVAS_SPEAKER: {"label": "AVAS speaker", "icon": "🔊"},
     # fluids_under_hood
     P.COOLANT: {"label": "Coolant", "icon": "💧"},
     P.BRAKE_FLUID: {"label": "Brake fluid", "icon": "🛑"},
@@ -116,39 +210,30 @@ PART_LABELS: dict[P, dict[str, str]] = {
     P.DEF_FLUID: {"label": "DEF fluid", "icon": "🧪"},
     P.ENGINE_OIL: {"label": "Engine oil", "icon": "🛢️"},
     P.GEAR_OIL: {"label": "Gear oil", "icon": "⚙️"},
-    # compliance
+    P.FUEL_CAP: {"label": "Fuel cap", "icon": "⛽"},
+    P.BATTERY_12V: {"label": "12V battery", "icon": "🔋"},
+    P.BATTERY_COVER: {"label": "Battery cover", "icon": "🔋"},
+    # compliance / safety
     P.LICENSE_PLATE: {"label": "License plate", "icon": "🪪"},
     P.INSPECTION_STICKER: {"label": "Inspection sticker", "icon": "🏷️"},
     P.REGISTRATION_STICKER: {"label": "Registration sticker", "icon": "🏷️"},
-    # under_vehicle
-    P.UNDERCARRIAGE_OBJECT: {"label": "Undercarriage object", "icon": "🔍"},
-    # ── DVIC additions (Apr 2026 PDFs) ──
-    P.SUSPENSION: {"label": "Suspension", "icon": "🔧"},
-    P.UNDERBODY_OBJECT: {"label": "Underbody object", "icon": "🪝"},
-    P.FLUID_LEAK: {"label": "Fluid leak", "icon": "💦"},
-    P.HOOD_LATCH: {"label": "Hood latch", "icon": "🔒"},
-    P.LIFT_GATE: {"label": "Lift gate", "icon": "🚪"},
-    P.BACKUP_CAMERA: {"label": "Backup camera", "icon": "📹"},
-    P.SIDE_VIEW_CAMERA: {"label": "Side view camera", "icon": "📹"},
-    P.CARGO_STEP: {"label": "Cargo step", "icon": "🪜"},
-    P.FUEL_CAP: {"label": "Fuel cap", "icon": "⛽"},
-    P.MUD_FLAP: {"label": "Mud flap", "icon": "🟫"},
-    P.BATTERY_COVER: {"label": "Battery cover", "icon": "🔋"},
-    P.AMAZON_DOT_DECAL: {"label": "Amazon DOT decal", "icon": "📋"},
+    P.DOT_DECAL: {"label": "DOT decal", "icon": "📋"},
     P.PRIME_DECAL: {"label": "Prime decal", "icon": "📦"},
-    P.INSURANCE_DOC: {"label": "Insurance document", "icon": "📄"},
-    P.REGISTRATION_DOC: {"label": "Registration document", "icon": "📄"},
-    P.SHELF: {"label": "Shelf", "icon": "📚"},
-    P.SPARE_FUSE: {"label": "Spare fuses", "icon": "🔌"},
-    P.REFLECTIVE_TRIANGLE: {"label": "Reflective triangle", "icon": "🔺"},
+    P.PAPER_DOCUMENT: {"label": "Paper document", "icon": "📄"},
+    P.PERIODIC_INSPECTION_STICKER: {"label": "Periodic inspection sticker", "icon": "🏷️"},
+    P.UNAPPROVED_STICKER: {"label": "Unapproved sticker", "icon": "🚫"},
+    P.FIRE_EXTINGUISHER: {"label": "Fire extinguisher", "icon": "🧯"},
+    P.REFLECTIVE_TRIANGLES: {"label": "Reflective triangles", "icon": "🔺"},
+    P.SPARE_FUSES: {"label": "Spare fuses", "icon": "🔌"},
     P.AIR_PRESSURE_GAUGE: {"label": "Air pressure gauge", "icon": "💨"},
-    P.VEHICLE_INTERIOR: {"label": "Vehicle interior", "icon": "🚐"},
-    P.DEVICE_ON_WINDSHIELD: {"label": "Device on windshield", "icon": "📱"},
+    # attached
+    P.LIFT_GATE: {"label": "Lift gate", "icon": "🚪"},
+    P.MUD_FLAP: {"label": "Mud flap", "icon": "🟫"},
 }
 
 
 # ─────────────────────────────────────────────────────
-# Defect types (~50)
+# Defect types (62)
 # ─────────────────────────────────────────────────────
 TYPE_LABELS: dict[T, dict[str, str]] = {
     # function
@@ -217,35 +302,14 @@ TYPE_LABELS: dict[T, dict[str, str]] = {
     # cleanliness
     T.DIRTY: {"label": "Dirty", "icon": "🧽"},
     T.HAS_LOOSE_OBJECTS: {"label": "Has loose objects", "icon": "📦"},
-    # mount / bracket
+    # mount / pressure / approval / catchall
     T.MOUNT_DAMAGED: {"label": "Mount damaged", "icon": "🔩"},
-    # ── DVIC additions (Apr 2026 PDFs) ──
-    T.LEANING: {"label": "Leaning", "icon": "🪜"},
-    T.HAS_OBJECTS_UNDERNEATH: {"label": "Has objects underneath", "icon": "🪝"},
-    T.ACTIVE_LEAK_ON_GROUND: {"label": "Active leak on ground", "icon": "💦"},
-    T.ITEMS_LOOSE_OR_HELD_WITH_TAPE: {"label": "Loose / held with tape", "icon": "🧷"},
-    T.EXCESSIVELY_DIRTY: {"label": "Excessively dirty", "icon": "🟫"},
-    T.NOT_VISIBLE: {"label": "Not visible", "icon": "👁️‍🗨️"},
-    T.HAS_ODOR: {"label": "Has odor", "icon": "👃"},
-    T.HAS_TRASH_OR_GRIME: {"label": "Trash or grime", "icon": "🗑️"},
-    T.HAS_SPILLED_LIQUID: {"label": "Spilled liquid", "icon": "💦"},
-    T.SQUEAKING: {"label": "Squeaking", "icon": "🔊"},
-    T.GRINDING: {"label": "Grinding", "icon": "⚙️"},
-    T.LEAKING_AIR: {"label": "Leaking air", "icon": "💨"},
-    T.WEAK: {"label": "Weak", "icon": "📉"},
-    T.STIFF: {"label": "Stiff", "icon": "🪨"},
-    T.NEEDS_ALIGNMENT: {"label": "Needs alignment", "icon": "📐"},
-    T.READS_OVER_120_PSI: {"label": "Reads over 120 PSI", "icon": "🔥"},
-    T.DEVICE_MOUNTED: {"label": "Device mounted", "icon": "📱"},
-    T.OBSTRUCTED: {"label": "Obstructed", "icon": "🚫"},
-    T.NOT_IN_GREEN_ZONE: {"label": "Not in green zone", "icon": "🔴"},
-    T.NOT_MOUNTED: {"label": "Not mounted", "icon": "🚫"},
-    T.BATTERY_COVER_MISSING: {"label": "Battery cover missing", "icon": "🔋"},
-    T.BOLTS_MISSING: {"label": "Bolts missing", "icon": "🔩"},
-    T.CRACKED_OR_HOLE: {"label": "Cracked / hole", "icon": "💥"},
-    T.CANNOT_BE_ADJUSTED: {"label": "Cannot be adjusted", "icon": "🔧"},
-    T.EXPOSED_INTERIOR: {"label": "Exposed interior (metal/spring/cushion)", "icon": "🪡"},
-    # catchall
+    T.OVER_PRESSURE: {"label": "Over pressure", "icon": "💨"},
+    T.NON_APPROVED: {"label": "Non-approved", "icon": "🚫"},
+    T.OBSTRUCTED: {"label": "Obstructed", "icon": "🚧"},
+    T.PAINT_CHIP: {"label": "Paint chip", "icon": "🎨"},
+    T.NOT_ADJUSTABLE: {"label": "Not adjustable", "icon": "🔧"},
+    T.ODOR: {"label": "Odor", "icon": "👃"},
     T.OTHER_DAMAGE: {"label": "Other damage", "icon": "❓"},
 }
 
@@ -266,68 +330,4 @@ POSITION_LABELS: dict[Pos, dict[str, str]] = {
     Pos.PASSENGER: {"label": "Passenger", "icon": "🚺"},
     Pos.UPPER: {"label": "Upper", "icon": "⬆️"},
     Pos.LOWER: {"label": "Lower", "icon": "⬇️"},
-}
-
-
-# ─────────────────────────────────────────────────────
-# DVIC physical sections (6) — drives the new wizard's first tile picker
-# ─────────────────────────────────────────────────────
-DVIC_SECTION_LABELS: dict[DS, dict[str, str]] = {
-    DS.GENERAL: {
-        "label": "General",
-        "icon": "📋",
-        "description": "Documentation, cleanliness, safety accessories",
-    },
-    DS.FRONT_SIDE: {
-        "label": "Front Side",
-        "icon": "🔦",
-        "description": "Headlights, hazard light, front suspension, hood",
-    },
-    DS.BACK_SIDE: {
-        "label": "Back Side",
-        "icon": "🔴",
-        "description": "Tail lights, license plate light, lift gate, rear body",
-    },
-    DS.DRIVER_SIDE: {
-        "label": "Driver Side",
-        "icon": "⬅️",
-        "description": "Driver-side tires, mirror, body, decals, mud flap",
-    },
-    DS.PASSENGER_SIDE: {
-        "label": "Passenger Side",
-        "icon": "➡️",
-        "description": "Passenger-side tires, mirror, body, decals, mud flap",
-    },
-    DS.IN_CAB: {
-        "label": "In Cab",
-        "icon": "💺",
-        "description": "Wipers, brakes, HVAC, steering, dash, interior doors, windshield",
-    },
-}
-
-
-# ─────────────────────────────────────────────────────
-# Asset types — vehicle classifications driving template selection
-# ─────────────────────────────────────────────────────
-ASSET_TYPE_LABELS: dict[AT, dict[str, str]] = {
-    AT.EXTRA_LARGE_CARGO_VAN: {
-        "label": "Extra Large Cargo Van",
-        "icon": "🚐",
-        "description": "Ford Transit 350, Mercedes Sprinter 3500 — non-DOT",
-    },
-    AT.LARGE_CARGO_VAN: {
-        "label": "Large Cargo Van",
-        "icon": "🚐",
-        "description": "Ford Transit 250, Ram ProMaster 1500 — non-DOT",
-    },
-    AT.STEP_VAN_MEDIUM: {
-        "label": "Step Van (Medium)",
-        "icon": "🚚",
-        "description": "Box truck — DOT regulated, 4/32 front tread, fuel cap, decals",
-    },
-    AT.STEP_VAN_LARGE: {
-        "label": "Step Van (Large)",
-        "icon": "🚛",
-        "description": "Large box truck — DOT regulated + battery cover check",
-    },
 }

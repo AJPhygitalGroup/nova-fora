@@ -1,35 +1,105 @@
-"""Defect catalog enums + reference tables.
+"""Defect catalog enums + reference tables — V2.2 schema.
 
-Implements the v2 Defect Data Schema (Notion spec). The catalog drives:
-  - Mobile wizard tile rendering (systems → parts → positions → types → details)
-  - Server-side validation of (part, position, defect_type) combos
-  - Severity derivation per (part, defect_type) (override-able per row)
+Implements the V2.2 Defect Data Schema (`docs/defect-schema-v2.2-spec.md`,
+sourced from DFS Portal). The catalog drives:
+  - Mobile wizard tile rendering filtered by vehicle_class
+  - Server-side validation of (part, position, defect_type) per class
+  - Severity (DefectClassification) + operational routing (DefectGroup)
+    derivation per (part, defect_type, vehicle_class)
 
-Storage strategy:
-  Reference tables (defect_part_system, defect_part_validity,
-  defect_details_schema) are seeded from app code on startup or via a
-  CLI command. Updating them is a config change, not a migration.
+Storage strategy — Path B (CLAUDE.md conventions):
+  - VARCHAR enums via `sa.Enum(..., native_enum=False)` so adding values
+    is a code change, not an ALTER TYPE migration (CLAUDE.md rule #2).
+  - Junction split: DefectRule × DefectApplicability replaces V1's flat
+    DefectDetailsSchema + DefectPartValidity.
+  - Position arrays stored as `ARRAY(VARCHAR)` — service layer parses
+    against the DefectPosition enum on read.
 
-Enum values are stored as VARCHAR in Postgres (SQLModel + sa.Enum with
-native_enum=False) so adding values doesn't require ALTER TYPE downtime.
+Deviation from V2.2 enum literals: vehicle_class uses descriptive names
+(custom_delivery_van, regular_cargo_van, step_van_dot, electric_vehicle,
+box_truck_dot) instead of V2.2's short names (cdv, cargo_van, ev_rivian,
+box_truck). Mapping in `docs/defect-schema-v2.2-spec.md` Appendix A.
 """
+from datetime import datetime
 from enum import Enum
 
 import sqlalchemy as sa
-from sqlalchemy import Column
+from sqlalchemy import Column, ForeignKey, UniqueConstraint
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlmodel import Field, SQLModel
 
 from app.models.base import timestamp_column, utc_now
 
 
 # ─────────────────────────────────────────────────────
-# Enums
+# Enums (stored as VARCHAR per CLAUDE.md rule #2)
 # ─────────────────────────────────────────────────────
+class VehicleClass(str, Enum):
+    """5 vehicle classes that drive catalog applicability.
+
+    Replaces V1's AssetType. Mapped from Amazon fleet shorthand:
+      CDV   → custom_delivery_van
+      Cargo → regular_cargo_van
+      SV    → step_van_dot
+      EV    → electric_vehicle
+      AMXL  → box_truck_dot
+    """
+
+    CUSTOM_DELIVERY_VAN = "custom_delivery_van"
+    REGULAR_CARGO_VAN = "regular_cargo_van"
+    STEP_VAN_DOT = "step_van_dot"
+    ELECTRIC_VEHICLE = "electric_vehicle"
+    BOX_TRUCK_DOT = "box_truck_dot"
+
+
+class DefectClassification(str, Enum):
+    """Severity tier per (part, defect_type, vehicle_class).
+    Stored on `defect_applicability.classification`. Nullable until
+    severity research lands; pair with `needs_review = true` when null.
+    """
+
+    SEV1 = "Sev1"
+    SEV2 = "Sev2"
+    SEV3 = "Sev3"
+    ULC = "ULC"            # Unable to leave compound — immediate ground
+    ADVISORY = "Advisory"
+
+
+class DefectGroup(str, Enum):
+    """Operational routing bucket. Determines which work-order queue
+    a converted defect lands in. Stored on `defect_rule.group` and
+    seeded with defaults from `part_group_default`.
+    """
+
+    AMR = "AMR"             # General automotive maintenance & repair
+    BODY = "Body"
+    CMR = "CMR"             # Commercial Motor Repair
+    CNMR = "CNMR"           # Commercial Non-Motor Repair
+    PM = "PM"               # Preventive Maintenance
+    TIRES = "Tires"
+    DETAILING = "Detailing"
+    NETRADYNE = "Netradyne"
+
+
+class DvicSection(str, Enum):
+    """6 physical sections from the Amazon DVIC PDF.
+
+    Drives the section-first inspector wizard (one tile per section, then
+    items grouped by part_category within). Maps the inspector's physical
+    walk around the vehicle: General → Front → Back → Driver → Passenger → Cab.
+    """
+
+    GENERAL = "general"
+    FRONT_SIDE = "front_side"
+    BACK_SIDE = "back_side"
+    DRIVER_SIDE = "driver_side"
+    PASSENGER_SIDE = "passenger_side"
+    IN_CAB = "in_cab"
+
+
 class DefectSystem(str, Enum):
-    """[LEGACY] 13 abstract groupings retained for the existing v2 catalog
-    (DefectPartSystem cross-references). Phased out in favor of DvicSection
-    once the DvicTemplate-driven wizard rolls out — but kept active so v2
-    defects from before that migration keep rendering correctly."""
+    """15 systems for inspector UI navigation. Not stored on defect rows
+    — only used to render tile groupings in the wizard."""
 
     TIRES_WHEELS = "tires_wheels"
     LIGHTS = "lights"
@@ -39,49 +109,17 @@ class DefectSystem(str, Enum):
     DOORS_WINDOWS = "doors_windows"
     INTERIOR = "interior"
     BRAKES_STEERING = "brakes_steering"
+    AIR_BRAKE = "air_brake"             # DOT only (V2.2)
     HVAC = "hvac"
     CAMERAS_ELECTRONICS = "cameras_electronics"
     FLUIDS_UNDER_HOOD = "fluids_under_hood"
     COMPLIANCE = "compliance"
     UNDER_VEHICLE = "under_vehicle"
-
-
-class DvicSection(str, Enum):
-    """6 physical sections matching the Amazon DVIC PDF structure.
-
-    The new wizard groups parts FIRST by section (where on the vehicle the
-    inspector is currently standing) instead of by abstract category. Each
-    DvicTemplateItem belongs to exactly one section.
-    """
-
-    GENERAL = "general"                # documentation, cleanliness, safety accessories
-    FRONT_SIDE = "front_side"          # front lights, front suspension, hood latch
-    BACK_SIDE = "back_side"            # tail/license/hazard lights, back body, lift gate
-    DRIVER_SIDE = "driver_side"        # driver tires, mirrors, side decals, mud flap
-    PASSENGER_SIDE = "passenger_side"  # mirror image of driver side
-    IN_CAB = "in_cab"                  # wipers, brakes, HVAC, steering, dash, doors, windshield
-
-
-class AssetType(str, Enum):
-    """Vehicle classifications that drive which DVIC template is loaded.
-
-    DOT-regulated step vans (STEP_VAN_*) get extra checks: documentation,
-    fire extinguisher, fuel cap, mud flaps, Amazon DOT decals, air pressure
-    gauge, etc. Non-DOT cargo vans skip those.
-
-    Mapped 1:1 with Amazon's `Asset type` field on the DVIR header.
-    """
-
-    EXTRA_LARGE_CARGO_VAN = "extra_large_cargo_van"  # Ford Transit 350, Sprinter 3500
-    LARGE_CARGO_VAN = "large_cargo_van"              # Transit 250, ProMaster 1500
-    STEP_VAN_MEDIUM = "step_van_medium"              # box truck — DOT
-    STEP_VAN_LARGE = "step_van_large"                # large box truck — DOT
-    ELECTRIC_DELIVERY_VEHICLE = "electric_delivery_vehicle"  # Rivian EDV — non-DOT, cargo-van checklist
+    EV_POWERTRAIN = "ev_powertrain"     # EV only (V2.2)
 
 
 class DefectPart(str, Enum):
-    """70 parts a defect can be reported on. Most belong to one primary
-    system but several appear in two (lookup via defect_part_system table)."""
+    """105 part values per V2.2 §3."""
 
     # tires_wheels
     TIRE = "tire"
@@ -99,13 +137,14 @@ class DefectPart(str, Enum):
     CARGO_LIGHT = "cargo_light"
     STEPWELL_LIGHT = "stepwell_light"
     MIRROR_LIGHT = "mirror_light"
+    CLEARANCE_MARKER_LIGHT = "clearance_marker_light"
     # windshield_wipers
     WINDSHIELD = "windshield"
     WIPER_BLADE = "wiper_blade"
     WASHER_SYSTEM = "washer_system"
     # mirrors
     SIDE_MIRROR = "side_mirror"
-    # body_steps
+    # body_steps / frame
     BUMPER = "bumper"
     FENDER = "fender"
     HOOD = "hood"
@@ -113,6 +152,11 @@ class DefectPart(str, Enum):
     FLOOR_PANEL = "floor_panel"
     SIDE_STEP = "side_step"
     REAR_STEP = "rear_step"
+    TRIM = "trim"
+    SIDE_MOLDING = "side_molding"
+    CAB_DOOR = "cab_door"
+    FRAME_RAIL = "frame_rail"
+    CARGO_SHELF = "cargo_shelf"
     # doors_windows
     EXTERIOR_DOOR = "exterior_door"
     SLIDING_SIDE_DOOR = "sliding_side_door"
@@ -129,12 +173,34 @@ class DefectPart(str, Enum):
     SUN_VISOR = "sun_visor"
     INTERIOR_CLEANLINESS = "interior_cleanliness"
     INTERIOR_LOOSE_OBJECTS = "interior_loose_objects"
-    FIRE_EXTINGUISHER = "fire_extinguisher"
     # brakes_steering
     PARKING_BRAKE = "parking_brake"
     SERVICE_BRAKE = "service_brake"
     STEERING_WHEEL = "steering_wheel"
     ALIGNMENT = "alignment"
+    # air_brake (DOT only)
+    SLACK_ADJUSTER = "slack_adjuster"
+    BRAKE_CHAMBER = "brake_chamber"
+    BRAKE_LINING = "brake_lining"
+    BRAKE_DRUM = "brake_drum"
+    AIR_COMPRESSOR = "air_compressor"
+    AIR_TANK = "air_tank"
+    AIR_LINE = "air_line"
+    LOW_AIR_WARNING = "low_air_warning"
+    # under_vehicle / suspension
+    SUSPENSION = "suspension"
+    COIL_SPRING = "coil_spring"
+    LEAF_SPRING = "leaf_spring"
+    AIR_BAG = "air_bag"
+    SHOCK_ABSORBER = "shock_absorber"
+    TORQUE_ARM = "torque_arm"
+    TIE_ROD = "tie_rod"
+    DRAG_LINK = "drag_link"
+    BALL_JOINT = "ball_joint"
+    PITMAN_ARM = "pitman_arm"
+    POWER_STEERING = "power_steering"
+    U_BOLT = "u_bolt"
+    UNDERCARRIAGE_OBJECT = "undercarriage_object"
     # hvac
     AC = "ac"
     HEATER = "heater"
@@ -153,6 +219,12 @@ class DefectPart(str, Enum):
     PHONE_CHARGER = "phone_charger"
     DELIVERY_DEVICE_CRADLE = "delivery_device_cradle"
     PHONE_CRADLE = "phone_cradle"
+    DASHBOARD_ILLUMINATION = "dashboard_illumination"
+    # ev_powertrain
+    EV_CENTER_DISPLAY = "ev_center_display"
+    HIGH_VOLTAGE_CABLE = "high_voltage_cable"
+    CHARGING_PORT_CAP = "charging_port_cap"
+    AVAS_SPEAKER = "avas_speaker"
     # fluids_under_hood
     COOLANT = "coolant"
     BRAKE_FLUID = "brake_fluid"
@@ -160,62 +232,46 @@ class DefectPart(str, Enum):
     DEF_FLUID = "def_fluid"
     ENGINE_OIL = "engine_oil"
     GEAR_OIL = "gear_oil"
-    # compliance
+    FUEL_CAP = "fuel_cap"
+    BATTERY_12V = "battery_12v"
+    BATTERY_COVER = "battery_cover"
+    # compliance / safety
     LICENSE_PLATE = "license_plate"
     INSPECTION_STICKER = "inspection_sticker"
     REGISTRATION_STICKER = "registration_sticker"
-    # under_vehicle
-    UNDERCARRIAGE_OBJECT = "undercarriage_object"
-    # ── DVIC-specific additions (Cargo + DOT PDFs, Apr 2026) ──
-    SUSPENSION = "suspension"               # noticeable leaning of vehicle
-    UNDERBODY_OBJECT = "underbody_object"   # loose/hanging objects underneath
-    FLUID_LEAK = "fluid_leak"               # active non-clear fluid leaking on ground
-    HOOD_LATCH = "hood_latch"               # DOT — front body
-    LIFT_GATE = "lift_gate"                 # DOT — back body
-    BACKUP_CAMERA = "backup_camera"         # back body
-    SIDE_VIEW_CAMERA = "side_view_camera"   # driver/passenger side body
-    CARGO_STEP = "cargo_step"               # driver/passenger side body
-    FUEL_CAP = "fuel_cap"                   # DOT — driver side charging port
-    MUD_FLAP = "mud_flap"                   # DOT — driver/passenger back tire
-    BATTERY_COVER = "battery_cover"         # DOT box trucks only
-    AMAZON_DOT_DECAL = "amazon_dot_decal"   # DOT — driver/passenger side body
-    PRIME_DECAL = "prime_decal"             # DOT — driver/passenger side body
-    INSURANCE_DOC = "insurance_doc"         # DOT general — paper documentation
-    REGISTRATION_DOC = "registration_doc"   # DOT general
-    SHELF = "shelf"                         # interior shelves
-    SPARE_FUSE = "spare_fuse"               # DOT general safety
-    REFLECTIVE_TRIANGLE = "reflective_triangle"  # DOT general safety
-    AIR_PRESSURE_GAUGE = "air_pressure_gauge"    # DOT in-cab brakes
-    VEHICLE_INTERIOR = "vehicle_interior"   # generic — cleanliness/loose/odor
-    DEVICE_ON_WINDSHIELD = "device_on_windshield"  # for windshield-mounted accessory check
+    DOT_DECAL = "dot_decal"
+    PRIME_DECAL = "prime_decal"
+    PAPER_DOCUMENT = "paper_document"
+    PERIODIC_INSPECTION_STICKER = "periodic_inspection_sticker"
+    UNAPPROVED_STICKER = "unapproved_sticker"
+    FIRE_EXTINGUISHER = "fire_extinguisher"
+    REFLECTIVE_TRIANGLES = "reflective_triangles"
+    SPARE_FUSES = "spare_fuses"
+    AIR_PRESSURE_GAUGE = "air_pressure_gauge"
+    # attached
+    LIFT_GATE = "lift_gate"
+    MUD_FLAP = "mud_flap"
 
 
 class DefectPosition(str, Enum):
-    """Where on the vehicle. Not every part takes a position (e.g. windshield).
-    Per-part validity stored in defect_part_validity table."""
+    """12 positions per V2.2 §3."""
 
-    # 4-corner (tires/wheels)
     DRIVER_FRONT = "driver_front"
     PASSENGER_FRONT = "passenger_front"
     DRIVER_REAR = "driver_rear"
     PASSENGER_REAR = "passenger_rear"
-    # left/right (lights, mirrors, fenders, etc.)
     DRIVER_SIDE = "driver_side"
     PASSENGER_SIDE = "passenger_side"
-    # front/back (bumpers, undercarriage objects)
     FRONT = "front"
     REAR = "rear"
-    # interior driver/passenger (seatbelts, seats, sun visors)
     DRIVER = "driver"
     PASSENGER = "passenger"
-    # vertical (rare — kept for forward-compat)
     UPPER = "upper"
     LOWER = "lower"
 
 
 class DefectType(str, Enum):
-    """What's wrong with the part. ~50 values. Per-part validity stored in
-    defect_details_schema (presence of a (part, defect_type) row = allowed)."""
+    """62 defect types per V2.2 §3."""
 
     # function
     NOT_WORKING = "not_working"
@@ -283,35 +339,14 @@ class DefectType(str, Enum):
     # cleanliness
     DIRTY = "dirty"
     HAS_LOOSE_OBJECTS = "has_loose_objects"
-    # mount / bracket
+    # mount / pressure / approval / catchall
     MOUNT_DAMAGED = "mount_damaged"
-    # ── DVIC-specific additions (Apr 2026 PDFs) ──
-    LEANING = "leaning"                     # suspension — vehicle visibly leaning
-    HAS_OBJECTS_UNDERNEATH = "has_objects_underneath"  # underbody — loose/hanging
-    ACTIVE_LEAK_ON_GROUND = "active_leak_on_ground"    # fluid_leak
-    ITEMS_LOOSE_OR_HELD_WITH_TAPE = "items_loose_or_held_with_tape"  # body items zip-tied/taped
-    EXCESSIVELY_DIRTY = "excessively_dirty"  # decals — not visible due to dirt
-    NOT_VISIBLE = "not_visible"              # decals — covered or otherwise not visible
-    HAS_ODOR = "has_odor"                    # vehicle interior
-    HAS_TRASH_OR_GRIME = "has_trash_or_grime"  # vehicle interior
-    HAS_SPILLED_LIQUID = "has_spilled_liquid"  # vehicle interior — could compromise safety
-    SQUEAKING = "squeaking"                  # foot brake
-    GRINDING = "grinding"                    # foot brake
-    LEAKING_AIR = "leaking_air"              # foot brake
-    WEAK = "weak"                            # foot/parking brake
-    STIFF = "stiff"                          # foot/parking brake / steering
-    NEEDS_ALIGNMENT = "needs_alignment"      # steering
-    READS_OVER_120_PSI = "reads_over_120_psi"  # DOT air pressure gauge
-    DEVICE_MOUNTED = "device_mounted"        # windshield — accessory mounted
-    OBSTRUCTED = "obstructed"                # camera/monitor — view blocked
-    NOT_IN_GREEN_ZONE = "not_in_green_zone"  # fire extinguisher pressure dial
-    NOT_MOUNTED = "not_mounted"              # fire extinguisher / cradle
-    BATTERY_COVER_MISSING = "battery_cover_missing"  # DOT box truck battery
-    BOLTS_MISSING = "bolts_missing"          # battery / mounting
-    CRACKED_OR_HOLE = "cracked_or_hole"      # lights/covers — cracked leaving hole/void
-    CANNOT_BE_ADJUSTED = "cannot_be_adjusted"  # side mirrors / driver seat
-    EXPOSED_INTERIOR = "exposed_interior"    # driver seat — exposed metal/wire/spring/spring/torn cushion
-    # catchall
+    OVER_PRESSURE = "over_pressure"
+    NON_APPROVED = "non_approved"
+    OBSTRUCTED = "obstructed"
+    PAINT_CHIP = "paint_chip"
+    NOT_ADJUSTABLE = "not_adjustable"
+    ODOR = "odor"
     OTHER_DAMAGE = "other_damage"
 
 
@@ -333,14 +368,12 @@ def _enum_col(name: str, enum_cls, length: int, nullable: bool = False, **kw):
 
 
 class DefectPartSystem(SQLModel, table=True):
-    """Maps a part to one or more systems it appears under.
+    """Maps a part to one or more systems for inspector UI navigation.
 
-    Composite PK (part, system). Exactly one row per part has is_primary=True.
-    Used to:
-      - render the same part under multiple system tiles (mirror_light shows
-        in both Lights and Mirrors)
-      - decide which system a defect rolls up to in dashboards (the primary)
-      - apply UI grouping ('exterior', 'cabin_cargo', etc.) inside a system
+    Composite PK (part, system). Exactly one row per part has is_primary=True
+    (enforced by partial unique index in the migration). Used to render the
+    same part under multiple system tiles when it logically belongs to more
+    than one (mirror_light shows under both Lights and Mirrors).
     """
 
     __tablename__ = "defect_part_system"
@@ -355,154 +388,389 @@ class DefectPartSystem(SQLModel, table=True):
     display_group: str | None = Field(default=None, max_length=50)
 
 
-class DefectPartValidity(SQLModel, table=True):
-    """Position rules per part.
-
-    valid_positions: the enum values that may be passed for this part.
-    position_required: if True, position must be set (e.g. tire = 4 corners).
-    allow_null_position: convenience flag for fast checks; equals
-                         (not position_required) but explicit for clarity.
+class PartGroupDefault(SQLModel, table=True):
+    """Default operational DefectGroup per part. Read by the
+    `defect_rule_fill_group` semantics in the seed/CLI layer to populate
+    DefectRule.group when the caller leaves it unset.
     """
 
-    __tablename__ = "defect_part_validity"
+    __tablename__ = "part_group_default"
 
     part: DefectPart = Field(
         sa_column=_enum_col("part", DefectPart, 40, primary_key=True, index=True)
     )
-    # Stored as comma-separated strings for portability. Service-layer parses
-    # back into the DefectPosition enum on read. (Postgres array column would
-    # also work — chose simple text for cross-DB friendliness.)
-    valid_positions_csv: str = Field(default="", max_length=300, nullable=False)
+    group: DefectGroup = Field(
+        sa_column=_enum_col("group", DefectGroup, 20, nullable=False)
+    )
+    rationale: str | None = Field(default=None, max_length=500)
+    updated_at: datetime = Field(
+        default_factory=utc_now, sa_column=timestamp_column("updated_at")
+    )
+
+
+class DefectRule(SQLModel, table=True):
+    """Canonical (part × defect_type) rule. One row per logical defect
+    identity, regardless of vehicle class. Per-class details live in
+    DefectApplicability.
+
+    UNIQUE (part, defect_type) — adding a rule that already exists is an
+    application bug; service layer should pre-check.
+    """
+
+    __tablename__ = "defect_rule"
+    __table_args__ = (
+        UniqueConstraint("part", "defect_type", name="defect_rule_part_type_uq"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+
+    part: DefectPart = Field(
+        sa_column=_enum_col("part", DefectPart, 40, nullable=False, index=True)
+    )
+    defect_type: DefectType = Field(
+        sa_column=_enum_col("defect_type", DefectType, 40, nullable=False, index=True)
+    )
+    group: DefectGroup = Field(
+        sa_column=_enum_col("group", DefectGroup, 20, nullable=False, index=True)
+    )
+
+    # Notes that apply to every vehicle_class for this rule. Per-class
+    # overrides go on DefectApplicability.notes.
+    notes_default: str | None = Field(default=None, max_length=2000)
+
+    is_active: bool = Field(default=True, nullable=False, index=True)
+
+    created_at: datetime = Field(
+        default_factory=utc_now, sa_column=timestamp_column("created_at")
+    )
+    updated_at: datetime = Field(
+        default_factory=utc_now, sa_column=timestamp_column("updated_at")
+    )
+
+
+class DefectApplicability(SQLModel, table=True):
+    """A DefectRule applied to a specific vehicle_class with per-class details.
+
+    Together with DefectRule, replaces V1's flat DefectDetailsSchema +
+    DefectPartValidity. Halves storage and removes drift risk when a rule
+    applies identically to all classes.
+
+    The presence of a row here is the allow-list — service layer rejects
+    writes for `(rule.part, rule.defect_type, vehicle.vehicle_class)`
+    tuples with no applicability row.
+    """
+
+    __tablename__ = "defect_applicability"
+    __table_args__ = (
+        UniqueConstraint("rule_id", "vehicle_class", name="defect_applicability_rule_class_uq"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+
+    rule_id: int = Field(
+        sa_column=Column(
+            "rule_id",
+            sa.Integer,
+            ForeignKey("defect_rule.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
+    )
+    vehicle_class: VehicleClass = Field(
+        sa_column=_enum_col("vehicle_class", VehicleClass, 30, nullable=False, index=True)
+    )
+
+    # Position rules. Stored as ARRAY(VARCHAR(30)) — service layer parses
+    # values back into the DefectPosition enum on read.
+    valid_positions: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(
+            "valid_positions",
+            ARRAY(sa.String(30)),
+            nullable=False,
+            server_default="{}",
+        ),
+    )
     position_required: bool = Field(default=False, nullable=False)
     allow_null_position: bool = Field(default=True, nullable=False)
 
+    # Per-class threshold (e.g. {"min_tread_32nds": 4} for steer tires on
+    # step_van_dot). JSONB so we can index by JSON path later.
+    threshold: dict = Field(
+        default_factory=dict,
+        sa_column=Column("threshold", JSONB, nullable=False, server_default="{}"),
+    )
 
-class DefectDetailsSchema(SQLModel, table=True):
-    """JSON Schema (draft-07) per (part, defect_type) pair.
+    # Severity tier for this (rule, class). Nullable until severity research
+    # lands — pair with `needs_review = true` to flag for triage.
+    classification: DefectClassification | None = Field(
+        default=None,
+        sa_column=_enum_col("classification", DefectClassification, 20, nullable=True),
+    )
 
-    The presence of a row here is also the allow-list — a write of a
-    (part, defect_type) combo that has no row gets rejected by the service
-    layer. An empty dict ({}) means no follow-up needed.
+    # JSON Schema (draft-07) for the `details` JSON on Defect rows.
+    # Empty `{}` means any object passes.
+    details_schema: dict = Field(
+        default_factory=dict,
+        sa_column=Column("details_schema", JSONB, nullable=False, server_default="{}"),
+    )
+
+    # Per-class override of DefectRule.notes_default. NULL → fall through.
+    notes: str | None = Field(default=None, max_length=2000)
+
+    is_active: bool = Field(default=True, nullable=False, index=True)
+    needs_review: bool = Field(default=True, nullable=False, index=True)
+
+    created_at: datetime = Field(
+        default_factory=utc_now, sa_column=timestamp_column("created_at")
+    )
+    updated_at: datetime = Field(
+        default_factory=utc_now, sa_column=timestamp_column("updated_at")
+    )
+
+
+# ─────────────────────────────────────────────────────
+# Source-rule tables (V2.2 §5.5) — verbatim DVIC text + regulatory metadata
+# ─────────────────────────────────────────────────────
+class InspectionRuleSource(str, Enum):
+    """Origin of an inspection rule. Amazon = canonical DVIC PDF item;
+    DSP = local addition by a delivery service partner.
     """
 
-    __tablename__ = "defect_details_schema"
-
-    part: DefectPart = Field(
-        sa_column=_enum_col("part", DefectPart, 40, primary_key=True, index=True)
-    )
-    defect_type: DefectType = Field(
-        sa_column=_enum_col("defect_type", DefectType, 40, primary_key=True, index=True)
-    )
-    json_schema: dict = Field(
-        default_factory=dict,
-        sa_column=Column("json_schema", sa.JSON, nullable=False, server_default="{}"),
-    )
+    AMAZON = "Amazon"
+    DSP = "DSP"
 
 
-# ─────────────────────────────────────────────────────
-# DvicTemplateItem — 1 row per checklist line in the Amazon DVIC PDFs
-# ─────────────────────────────────────────────────────
+class InspectionRuleLine(str, Enum):
+    """Reporting line classification — secondary axis to DefectGroup.
+    Used by reports (e.g., "all Mechanical defects this week") that don't
+    care about operational routing.
+    """
+
+    MECHANICAL = "Mechanical"
+    ELECTRICAL = "Electrical"
+    BODY = "Body"
+    TIRES = "Tires"
+    FLUIDS = "Fluids"
+    DOCUMENTATION = "Documentation"
+    CLEANLINESS = "Cleanliness"
+    SAFETY = "Safety"
+
+
 class DvicTemplateItem(SQLModel, table=True):
-    """One line item from the Amazon DVIC checklist.
+    """Verbatim PDF-shaped DVIC checklist line, mapped to a V2.2 catalog rule.
 
-    Together these rows form a "template" for a given asset_type. The
-    inspection wizard pulls them filtered by `asset_types` (which contains
-    the vehicle's asset_type), groups by `section` then `part_category`,
-    and renders each as a tile.
+    The Amazon DVIC PDFs organize defects by physical section (General /
+    Front Side / Back Side / Driver Side / Passenger Side / In Cab) and
+    `part_category` (e.g. "Lights and light covers", "Side mirrors"), with
+    a verbatim description per check ("Headlight is not working").
 
-    When the inspector marks an item unsatisfactory, the wizard creates a
-    ReportedDefect with:
-      part_enum         = this row's `part_enum`
-      defect_type_enum  = this row's `defect_type_enum`
-      position          = inspector's pick from `position_options` (or
-                          this row's pre-set `position` if not user-picked)
-      details           = inspector's input for `sub_positions` /
-                          `details_schema` (e.g. tread_depth_32nds, beam_type)
-      severity          = `default_severity` unless overridden
+    Each PDF row becomes one DvicTemplateItem here, pointing at the
+    underlying V2.2 (part, defect_type) rule. The wizard reads these rows
+    to render its 6-tile section-first UX while the actual defect (when
+    committed) is a normal `defects` row referencing the same rule.
 
-    The same conceptual check (e.g. "headlight is not working") gets ONE row
-    here even though the inspector picks driver/passenger + low/high beam at
-    runtime — the sub-position dimensions are encoded in `sub_positions` JSON
-    and resolved into `details` on the defect.
+    A single rule like `tire / low_tread` produces multiple DvicTemplateItem
+    rows — one per (vehicle_class, position, section) combination — because
+    the PDF lists tires under both Driver Side ("Front tire / Back tire")
+    and Passenger Side. The `position` column captures driver_front /
+    passenger_front / driver_rear / passenger_rear etc. for those cases.
 
-    Asset_types is TEXT[] so rows shared by Cargo + DOT (most of them) only
-    need 1 row tagged with both asset types.
+    UNIQUE (vehicle_class, section, part_category, rule_id, position) —
+    same combo can't appear twice. NULLS NOT DISTINCT so two NULL positions
+    on the same rule still collide (used at the Postgres level via the
+    migration's functional index).
     """
 
     __tablename__ = "dvic_template_item"
 
     id: int | None = Field(default=None, primary_key=True)
 
-    # Which asset types this check applies to. Postgres TEXT[].
-    # Stored as comma-separated string for cross-DB friendliness — service
-    # layer parses on read. Migration uses ARRAY(VARCHAR) on PG.
-    asset_types_csv: str = Field(
-        max_length=300, nullable=False, index=True,
-        description="Comma-separated AssetType values: 'extra_large_cargo_van,large_cargo_van'",
+    vehicle_class: VehicleClass = Field(
+        sa_column=_enum_col("vehicle_class", VehicleClass, 30, nullable=False, index=True)
     )
-
-    # Section + sub-grouping (matches PDF column 1 + 2)
     section: DvicSection = Field(
         sa_column=_enum_col("section", DvicSection, 25, nullable=False, index=True)
     )
     part_category: str = Field(
-        max_length=60, nullable=False,
-        description="PDF row group: 'Lights and light covers', 'Side mirrors', etc.",
+        max_length=100, nullable=False,
+        description="PDF column 1 group: 'Lights and light covers', 'Side mirrors', etc."
     )
 
-    # The defect to record
-    part_enum: DefectPart = Field(
-        sa_column=_enum_col("part_enum", DefectPart, 40, nullable=False, index=True)
-    )
-    defect_type_enum: DefectType = Field(
-        sa_column=_enum_col("defect_type_enum", DefectType, 40, nullable=False)
+    # FK to V2.2 rule. Cascades on rule delete (rare — rules are deactivated,
+    # not deleted in practice).
+    rule_id: int = Field(
+        sa_column=Column(
+            "rule_id",
+            sa.Integer,
+            ForeignKey("defect_rule.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
     )
 
-    # Pre-set position (e.g. always front/rear/etc) OR the inspector picks
-    # from `position_options`. If both null → no position dimension.
+    # Position when the PDF disambiguates (e.g. Driver Side > Front tire vs
+    # Back tire). NULL when the inspector picks at runtime (or the rule has
+    # no positional dimension).
     position: DefectPosition | None = Field(
         default=None,
         sa_column=_enum_col("position", DefectPosition, 30, nullable=True),
     )
-    # Comma-separated DefectPosition values inspector may pick from. Empty = no choice.
-    position_options_csv: str = Field(default="", max_length=200, nullable=False)
 
-    # Sub-position dimensions (e.g. headlight low_beam vs high_beam).
-    # JSON: [{"key": "low_beam", "label": "Low beam"},
-    #        {"key": "high_beam", "label": "High beam"}]
-    # Inspector picks ONE; stored in defect.details under the key shape's name.
-    sub_positions: dict | None = Field(
-        default=None,
-        sa_column=Column("sub_positions", sa.JSON, nullable=True),
-        description="Inline picker dimensions beyond physical position (beam type, "
-                    "tread location, seatbelt component, brake symptom, etc.). Null if none.",
+    description: str = Field(
+        max_length=500, nullable=False,
+        description="Verbatim PDF text — shown to inspector. e.g. "
+                    "'Tire has insufficient tread (Less than 2/32 or 1.6mm) ...'"
     )
 
-    # Exact PDF text — shown in the wizard UI
-    description: str = Field(max_length=500, nullable=False)
+    # Whether the photo gate is mandatory for this template item.
+    #   True (default)  — visual/structural defects (cracks, leaks, dents, etc.)
+    #   False           — sensory/audio defects (odor, brake noise, no AC, etc.)
+    # Set per-template-item so the same rule can require photos in one flow
+    # and not in another (rare; usually all items for a rule share this).
+    photo_required: bool = Field(default=True, nullable=False)
 
-    # JSON Schema (draft-07) for any extra `details` input beyond sub_positions
-    # E.g. tire low_tread → {tread_depth_32nds: {type: "integer", minimum: 0, maximum: 32}}
-    details_schema: dict | None = Field(
-        default=None,
-        sa_column=Column("details_schema", sa.JSON, nullable=True),
-    )
+    # Whether this item only applies to Amazon-branded vehicles. The wizard
+    # filters out items with requires_branding=true when the vehicle's
+    # ownership is OWNER or RENTED (no DOT decal USDOT2881058 nor Prime decal
+    # on those vans). Default False so the flag is opt-in per item.
+    requires_branding: bool = Field(default=False, nullable=False)
 
-    # Display order within (section, part_category)
+    # Display order within (vehicle_class, section, part_category)
     ordering: int = Field(default=0, nullable=False)
 
     is_active: bool = Field(default=True, nullable=False, index=True)
 
-    created_at: __import__("datetime").datetime = Field(
+    created_at: datetime = Field(
         default_factory=utc_now, sa_column=timestamp_column("created_at")
     )
+    updated_at: datetime = Field(
+        default_factory=utc_now, sa_column=timestamp_column("updated_at")
+    )
 
-    @property
-    def asset_types(self) -> list[str]:
-        """Parsed asset_types from the CSV column."""
-        return [s.strip() for s in self.asset_types_csv.split(",") if s.strip()]
 
-    @property
-    def position_options(self) -> list[str]:
-        """Parsed position_options from the CSV column."""
-        return [s.strip() for s in self.position_options_csv.split(",") if s.strip()]
+class InspectionRule(SQLModel, table=True):
+    """A single source rule from the Amazon DVIC PDF (or a DSP addition).
+
+    Holds the verbatim PDF text + regulatory metadata (RSI, VSA, line) +
+    optional Notion back-link. Bridges to (part, defect_type) tuples via
+    InspectionRuleTarget — one source rule can cover several catalog tuples
+    (e.g. "Headlight is dim, blinking, or not working" → 3 targets).
+
+    Relationship to DvicTemplateItem:
+      - DvicTemplateItem drives the wizard UX (per vehicle_class × section ×
+        position). A single InspectionRule typically backs N DvicTemplateItem
+        rows (one per vehicle_class it applies to + one per position split).
+      - InspectionRule answers: "what was the source PDF text + regulatory
+        flags for this finding?" — back-trackable for audits.
+    """
+
+    __tablename__ = "inspection_rule"
+
+    id: int | None = Field(default=None, primary_key=True)
+
+    # Verbatim PDF/DSP text — what the inspector reads on the form.
+    defect_text: str = Field(max_length=2000, nullable=False)
+
+    source: InspectionRuleSource = Field(
+        sa_column=_enum_col("source", InspectionRuleSource, 10, nullable=False, index=True)
+    )
+
+    # PDF section the rule appears in. NULL when the rule is a DSP-local
+    # addition that doesn't fit the Amazon section grid.
+    section: DvicSection | None = Field(
+        default=None,
+        sa_column=_enum_col("section", DvicSection, 25, nullable=True, index=True),
+    )
+
+    # Free-form list of part hints from the source PDF. Validated server-side
+    # against DefectPart on write — lets us import imperfect source text
+    # without a CHECK trigger and report bad rows on validation.
+    parts: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(
+            "parts", ARRAY(sa.String(40)),
+            nullable=False, server_default="{}",
+        ),
+    )
+
+    # Severity hint from the source rule. Authoritative severity per
+    # vehicle_class still lives on DefectApplicability.classification — this
+    # is the original PDF cell, kept for audit and to seed applicability.
+    classification: DefectClassification | None = Field(
+        default=None,
+        sa_column=_enum_col("classification", DefectClassification, 20, nullable=True),
+    )
+    group: DefectGroup | None = Field(
+        default=None,
+        sa_column=_enum_col("group", DefectGroup, 20, nullable=True),
+    )
+    line: InspectionRuleLine | None = Field(
+        default=None,
+        sa_column=_enum_col("line", InspectionRuleLine, 20, nullable=True),
+    )
+
+    # Regulatory flags from V2.2 spec.
+    rsi: bool = Field(default=False, nullable=False)
+    vsa: bool = Field(default=False, nullable=False)
+
+    # Back-link to source page (Notion, Confluence, internal wiki…).
+    # UNIQUE so re-importing from the same source doesn't duplicate.
+    notion_id: str | None = Field(
+        default=None, max_length=100,
+        sa_column=Column("notion_id", sa.String(100), unique=True, nullable=True, index=True),
+    )
+
+    # Vehicle classes this rule applies to. ARRAY(VARCHAR) so we don't need
+    # a separate join table — cardinality is at most 5.
+    vehicle_class: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(
+            "vehicle_class", ARRAY(sa.String(30)),
+            nullable=False, server_default="{}",
+            index=True,
+        ),
+    )
+
+    is_active: bool = Field(default=True, nullable=False, index=True)
+
+    created_at: datetime = Field(
+        default_factory=utc_now, sa_column=timestamp_column("created_at")
+    )
+    updated_at: datetime = Field(
+        default_factory=utc_now, sa_column=timestamp_column("updated_at")
+    )
+
+
+class InspectionRuleTarget(SQLModel, table=True):
+    """Bridge: InspectionRule → many (part, defect_type) catalog tuples.
+
+    Lets one PDF line ("Headlight is dim, blinking, or not working") map to
+    several DefectRule rows. Uses the (part, defect_type) natural key rather
+    than rule_id FK — historical InspectionRule rows survive even if a
+    DefectRule is deactivated and re-keyed.
+
+    Composite PK (rule_id, part, defect_type). Cascades on rule delete.
+    """
+
+    __tablename__ = "inspection_rule_target"
+
+    rule_id: int = Field(
+        sa_column=Column(
+            "rule_id",
+            sa.Integer,
+            ForeignKey("inspection_rule.id", ondelete="CASCADE"),
+            primary_key=True,
+            index=True,
+        ),
+    )
+    part: DefectPart = Field(
+        sa_column=_enum_col("part", DefectPart, 40, primary_key=True, index=True)
+    )
+    defect_type: DefectType = Field(
+        sa_column=_enum_col("defect_type", DefectType, 40, primary_key=True, index=True)
+    )
+
+    created_at: datetime = Field(
+        default_factory=utc_now, sa_column=timestamp_column("created_at")
+    )

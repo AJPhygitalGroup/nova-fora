@@ -1,8 +1,10 @@
-"""Pydantic schemas for /defects/v2 — see Notion 'Defect Data Schema' spec.
+"""Pydantic schemas for /defects (V2.2).
 
-These shapes serve the new standalone `defects` table only. Legacy
-`reported_defects` schemas live in app/schemas/inspection.py and stay
-unchanged until that table is retired.
+V2.2 §4.3 — Defect rows carry vehicle_id + optional inspection_id, the
+structured (part, position, defect_type, details) tuple, and source.
+Severity (`classification`) and operational routing (`group`) are derived
+on read via JOIN with `defect_applicability` and `defect_rule` — they are
+not stored on the Defect row itself.
 """
 from datetime import datetime
 
@@ -12,14 +14,13 @@ from app.models.defect import Defect, DefectSource
 
 
 class DefectV2Create(BaseModel):
-    """POST /defects/v2 body. See Notion §2 + §2.1.
+    """POST /defects body.
 
     Frontend may pass `vehicle_id` / `inspection_id` as either bare ints
     or with the prefixed string IDs (`VAN-XXXX`, `INS-XXXXX`).
 
     `source = 'inspection'` requires `inspection_id` to be set; any other
-    source requires it to be NULL. The route layer enforces this in addition
-    to the DB CHECK constraint so the user gets a clear 400 instead of a 500.
+    source requires it to be NULL.
     """
 
     vehicle_id: str = Field(..., description="Int or 'VAN-XXXX'")
@@ -44,11 +45,11 @@ class DefectV2Create(BaseModel):
 
 
 class DefectV2Update(BaseModel):
-    """PATCH /defects/v2/{id} body — only mutable fields.
+    """PATCH /defects/{id} body — only mutable fields.
 
-    `(part, position, defect_type)` is immutable post-create — to correct a
-    misclassified defect, delete and re-create. Workflow status updates do
-    NOT belong here (that's a future `defect_status` table).
+    `(part, position, defect_type)` is immutable post-create — to correct
+    a misclassified defect, delete and re-create. Workflow status updates
+    do NOT belong here (future `defect_status` table).
     """
 
     notes: str | None = None
@@ -58,21 +59,27 @@ class DefectV2Update(BaseModel):
 
 
 class DefectV2Response(BaseModel):
-    id: str                          # DEF-XXXXXX
-    vehicle_id: str                  # VAN-0004
-    fleet_id: str                    # PR005
-    plate: str                       # license plate
-    dsp_id: str | None = None        # DSP-XXXX (org id_str, derived via vehicle.dsp_id)
-    dsp: str | None = None           # org name
-    inspection_id: str | None = None  # INS-XXXXX or null
+    id: str                              # FD-XXX
+    vehicle_id: str                      # VAN-0004
+    fleet_id: str                        # PR005
+    plate: str                           # license plate
+    vehicle_class: str                   # e.g. "regular_cargo_van"
+    dsp_id: str | None = None            # DSP-XXXX
+    dsp: str | None = None               # org name
+    inspection_id: str | None = None     # INS-XXXXX or null
     source: DefectSource
     part: str
     position: str | None = None
     defect_type: str
     details: dict
     notes: str | None = None
+
+    # Derived from defect_applicability (read-time JOIN)
+    classification: str | None = None    # Sev1/Sev2/Sev3/ULC/Advisory
+    group: str | None = None             # AMR/Body/CMR/CNMR/PM/Tires/Detailing/Netradyne
+
     reported_by_id: int
-    reported_by: str | None = None   # reporter.full_name
+    reported_by: str | None = None
     reported_at: datetime
     created_at: datetime
     updated_at: datetime
@@ -88,12 +95,19 @@ class DefectV2Response(BaseModel):
         inspection_id_str: str | None,
         reporter,
         org=None,
+        classification: str | None = None,
+        group: str | None = None,
     ) -> "DefectV2Response":
         return cls(
             id=d.id_str,
             vehicle_id=vehicle.id_str,
             fleet_id=vehicle.fleet_id,
             plate=vehicle.plate,
+            vehicle_class=(
+                vehicle.vehicle_class.value
+                if hasattr(vehicle.vehicle_class, "value")
+                else str(vehicle.vehicle_class)
+            ),
             dsp_id=org.id_str if org else None,
             dsp=org.name if org else None,
             inspection_id=inspection_id_str,
@@ -103,6 +117,8 @@ class DefectV2Response(BaseModel):
             defect_type=d.defect_type,
             details=d.details or {},
             notes=d.notes,
+            classification=classification,
+            group=group,
             reported_by_id=d.reported_by_id,
             reported_by=reporter.full_name if reporter else None,
             reported_at=d.reported_at,

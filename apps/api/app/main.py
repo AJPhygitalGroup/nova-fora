@@ -8,10 +8,10 @@ from app.routes import (
     auth,
     defect_catalog,
     defects,
-    defects_v2,
     directory,
     dvic_template,
     health,
+    inspection_rules,
     inspections,
     uploads,
     vehicles,
@@ -37,15 +37,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         print(f"[nova-api] WARN: ensure_bucket() failed: {e}")
 
-    # Re-sync the defect catalog + DVIC template on every boot. Both seeds
-    # are idempotent (UPSERT keyed by enum values), so re-running is safe
-    # and gives us self-healing config-as-code: any change committed to
-    # seed_defect_catalog.py / seed_dvic_template.py applies automatically
-    # at next deploy. Wrapped in try/except so a transient DB hiccup
-    # doesn't block boot — the catalog will simply be stale until the next
-    # successful run, and /health stays up.
+    # Re-sync the V2.2 defect catalog (defect_rule + defect_applicability +
+    # defect_part_system + part_group_default) on every boot. Idempotent
+    # UPSERT — safe to re-run. Wrapped in try/except so a transient DB
+    # hiccup doesn't block boot.
     #
-    # Set SKIP_BOOT_SEED=1 to opt out (e.g. in a one-off debug shell).
+    # Set SKIP_BOOT_SEED=1 to opt out (e.g. one-off debug shell).
     if not settings.skip_boot_seed:
         try:
             from app.cli import cmd_seed_defect_catalog, cmd_seed_dvic_template
@@ -101,9 +98,9 @@ app.include_router(auth.router)
 app.include_router(vehicles.router)
 app.include_router(inspections.router)
 app.include_router(defects.router)
-app.include_router(defects_v2.router)
 app.include_router(defect_catalog.router)
 app.include_router(dvic_template.router)
+app.include_router(inspection_rules.router)
 app.include_router(work_orders.router)
 app.include_router(directory.router)
 app.include_router(uploads.router)

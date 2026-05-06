@@ -25,11 +25,15 @@ from sqlmodel import func, select
 
 from app.auth.dependencies import get_current_user
 from app.db import get_session
+from app.defect_labels import PART_LABELS, POSITION_LABELS, TYPE_LABELS
 from app.models.base import utc_now
-from app.models.inspection import (
-    DefectStatus,
-    Inspection,
-    ReportedDefect,
+from app.models.defect import Defect
+from app.models.defect_catalog import (
+    DefectApplicability,
+    DefectPart,
+    DefectPosition,
+    DefectRule,
+    DefectType,
 )
 from app.models.organization import OrgType, Organization
 from app.models.photo import Photo
@@ -41,7 +45,6 @@ from app.models.work_order import (
     WorkOrderItem,
     WorkOrderStatus,
 )
-from app.schemas.inspection import DefectResponse
 from app.schemas.photo import (
     PhotoCommitRequest,
     PhotoListResponse,
@@ -233,10 +236,10 @@ async def _load_user_full_name(session: AsyncSession, user_id: int | None) -> st
 async def _build_item_response(
     session: AsyncSession, item: WorkOrderItem
 ) -> WorkOrderItemResponse:
-    """Hydrate a WO item with denormalized defect display fields."""
+    """Hydrate a WO item with denormalized V2.2 Defect display fields."""
     defect = (
         await session.execute(
-            select(ReportedDefect).where(ReportedDefect.id == item.defect_id)
+            select(Defect).where(Defect.id == item.defect_id)
         )
     ).scalar_one_or_none()
 
@@ -251,21 +254,56 @@ async def _build_item_response(
     if defect is None:
         return out
 
-    # Reuse DefectResponse.from_defect() for label resolution, then strip
-    # what we need into the WOI response.
-    parent_id_str = f"INS-{defect.inspection_id:05d}"
-    drsp = DefectResponse.from_defect(defect, parent_id_str)
-    out.defect_section = drsp.section
-    out.defect_part = drsp.part
-    out.defect_description = drsp.description
-    out.defect_status = drsp.status.value if hasattr(drsp.status, "value") else str(drsp.status)
-    out.defect_is_v2 = drsp.is_v2
-    out.defect_part_label = drsp.part_label
-    out.defect_part_icon = drsp.part_icon
-    out.defect_position_label = drsp.position_label
-    out.defect_type_label = drsp.defect_type_label
-    out.defect_type_icon = drsp.defect_type_icon
-    out.defect_details = drsp.details
+    # Resolve labels from the static dictionaries
+    try:
+        part_enum = DefectPart(defect.part)
+        part_lbl = PART_LABELS.get(part_enum, {})
+    except ValueError:
+        part_lbl = {}
+    try:
+        type_enum = DefectType(defect.defect_type)
+        type_lbl = TYPE_LABELS.get(type_enum, {})
+    except ValueError:
+        type_lbl = {}
+    pos_lbl = {}
+    if defect.position:
+        try:
+            pos_enum = DefectPosition(defect.position)
+            pos_lbl = POSITION_LABELS.get(pos_enum, {})
+        except ValueError:
+            pass
+
+    # Pull classification + group from defect_applicability via JOIN with rule.
+    vehicle = (
+        await session.execute(select(Vehicle).where(Vehicle.id == defect.vehicle_id))
+    ).scalar_one_or_none()
+    classification, group = None, None
+    if vehicle is not None:
+        cg_row = (
+            await session.execute(
+                select(DefectRule.group, DefectApplicability.classification)
+                .join(DefectApplicability, DefectApplicability.rule_id == DefectRule.id)
+                .where(DefectRule.part == defect.part)
+                .where(DefectRule.defect_type == defect.defect_type)
+                .where(DefectApplicability.vehicle_class == vehicle.vehicle_class.value)
+            )
+        ).first()
+        if cg_row is not None:
+            g, c = cg_row
+            group = g.value if hasattr(g, "value") else g
+            classification = c.value if hasattr(c, "value") else c
+
+    out.defect_part = defect.part
+    out.defect_part_label = part_lbl.get("label")
+    out.defect_part_icon = part_lbl.get("icon")
+    out.defect_position = defect.position
+    out.defect_position_label = pos_lbl.get("label")
+    out.defect_type = defect.defect_type
+    out.defect_type_label = type_lbl.get("label")
+    out.defect_type_icon = type_lbl.get("icon")
+    out.defect_details = defect.details if defect.details else None
+    out.defect_classification = classification
+    out.defect_group = group
     return out
 
 
@@ -356,13 +394,14 @@ async def _resolve_defect_bundle(
     expected_dsp_id: int | None,
     expected_vehicle_id: int | None,
     excluding_wo_id: int | None = None,
-) -> tuple[list[ReportedDefect], int, int]:
+) -> tuple[list[Defect], int, int]:
     """Loads defects referenced in items, validates:
       - all exist
       - all belong to same vehicle
       - all belong to same dsp
-      - none already attached to another WO (UNIQUE(defect_id) would error
-        but we want a friendly 400 with an explanatory message).
+      - none already attached to another WO.
+
+    V2.2: defects carry vehicle_id directly; dsp_id is derived via Vehicle JOIN.
 
     Returns (defects_in_input_order, vehicle_id, dsp_id).
     """
@@ -371,16 +410,15 @@ async def _resolve_defect_bundle(
 
     defect_ids = [_parse_defect_id(it.defect_id) for it in items]
 
-    # Load defects + their parent inspection (for vehicle/dsp linkage)
     rows = (
         await session.execute(
-            select(ReportedDefect, Inspection)
-            .join(Inspection, ReportedDefect.inspection_id == Inspection.id)
-            .where(ReportedDefect.id.in_(defect_ids))
+            select(Defect, Vehicle)
+            .join(Vehicle, Defect.vehicle_id == Vehicle.id)
+            .where(Defect.id.in_(defect_ids))
         )
     ).all()
-    by_id: dict[int, tuple[ReportedDefect, Inspection]] = {
-        d.id: (d, ins) for d, ins in rows
+    by_id: dict[int, tuple[Defect, Vehicle]] = {
+        d.id: (d, v) for d, v in rows
     }
 
     missing = [did for did in defect_ids if did not in by_id]
@@ -391,8 +429,8 @@ async def _resolve_defect_bundle(
         )
 
     # Same vehicle & DSP
-    vehicle_ids = {ins.vehicle_id for _, ins in by_id.values()}
-    dsp_ids = {ins.dsp_id for _, ins in by_id.values()}
+    vehicle_ids = {v.id for _, v in by_id.values()}
+    dsp_ids = {v.dsp_id for _, v in by_id.values()}
     if len(vehicle_ids) > 1:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
@@ -494,7 +532,8 @@ async def create_work_order(
     session.add(wo)
     await session.flush()  # need wo.id for items
 
-    # Create items + flip defects to converted_to_wo
+    # Create items. V2.2: workflow status lives in a separate (future)
+    # `defect_status` table; we don't mutate the Defect row here.
     for it_in, defect in zip(body.items, defects, strict=True):
         item = WorkOrderItem(
             work_order_id=wo.id,
@@ -505,7 +544,6 @@ async def create_work_order(
             created_at=now,
         )
         session.add(item)
-        defect.status = DefectStatus.CONVERTED_TO_WO
         defect.updated_at = now
         session.add(defect)
 
@@ -726,47 +764,23 @@ async def update_status(
         wo.started_at = now
     elif body.status == WorkOrderStatus.COMPLETED:
         wo.completed_at = now
-        # Roll up to defects (mark any still-pending items as resolved upstream)
-        items = (
-            await session.execute(
-                select(WorkOrderItem).where(WorkOrderItem.work_order_id == wo.id)
-            )
-        ).scalars().all()
-        for it in items:
-            d = (
-                await session.execute(
-                    select(ReportedDefect).where(ReportedDefect.id == it.defect_id)
-                )
-            ).scalar_one_or_none()
-            if d:
-                # Defect lifecycle ends here; we keep status converted_to_wo since
-                # there's no terminal "fixed" state in DefectStatus today.
-                d.updated_at = now
-                session.add(d)
+        # V2.2: workflow status lives in a future `defect_status` table — no
+        # row mutation here.
     elif body.status == WorkOrderStatus.DECLINED:
         if not body.decline_reason:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, "decline_reason required"
             )
         wo.decline_reason = body.decline_reason
-        # Free up the bundled defects (revert to acknowledged so DSP can re-route)
-        # AND delete the WorkOrderItem rows so the UNIQUE(defect_id) constraint
-        # doesn't block re-bundling. The WO row stays for audit.
+        # Free up the bundled defects by deleting the WorkOrderItem rows (so
+        # UNIQUE(defect_id) doesn't block re-bundling). The WO row stays for
+        # audit. V2.2: no defect.status mutation — that lives in defect_status.
         items = (
             await session.execute(
                 select(WorkOrderItem).where(WorkOrderItem.work_order_id == wo.id)
             )
         ).scalars().all()
         for it in items:
-            d = (
-                await session.execute(
-                    select(ReportedDefect).where(ReportedDefect.id == it.defect_id)
-                )
-            ).scalar_one_or_none()
-            if d:
-                d.status = DefectStatus.ACKNOWLEDGED
-                d.updated_at = now
-                session.add(d)
             await session.delete(it)
         wo.item_count = 0
     elif body.status == WorkOrderStatus.CANCELED:
@@ -781,15 +795,6 @@ async def update_status(
             )
         ).scalars().all()
         for it in items:
-            d = (
-                await session.execute(
-                    select(ReportedDefect).where(ReportedDefect.id == it.defect_id)
-                )
-            ).scalar_one_or_none()
-            if d:
-                d.status = DefectStatus.ACKNOWLEDGED
-                d.updated_at = now
-                session.add(d)
             await session.delete(it)
         wo.item_count = 0
 
@@ -940,7 +945,7 @@ async def add_items(
             created_at=now,
         )
         session.add(item)
-        defect.status = DefectStatus.CONVERTED_TO_WO
+        # V2.2: workflow status lives in defect_status (future); no defect mutation.
         defect.updated_at = now
         session.add(defect)
 
@@ -1002,18 +1007,9 @@ async def remove_item(
             "cannot remove the last item — cancel the WO instead",
         )
 
-    # Revert the defect to acknowledged
-    defect = (
-        await session.execute(
-            select(ReportedDefect).where(ReportedDefect.id == item.defect_id)
-        )
-    ).scalar_one_or_none()
+    # V2.2: defect workflow status lives in future defect_status — no
+    # mutation here. Just unlink by deleting the item row.
     now = utc_now()
-    if defect:
-        defect.status = DefectStatus.ACKNOWLEDGED
-        defect.updated_at = now
-        session.add(defect)
-
     await session.delete(item)
     wo.item_count = max(0, wo.item_count - 1)
     wo.updated_at = now

@@ -190,6 +190,8 @@ async def create_vehicle(
         make=body.make,
         model=body.model,
         mileage=body.mileage,
+        vehicle_class=body.vehicle_class,
+        ownership=body.ownership,
     )
     session.add(vehicle)
     try:

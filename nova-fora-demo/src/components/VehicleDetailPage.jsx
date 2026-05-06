@@ -8,7 +8,41 @@ import {
 import { workOrdersData, preventiveMaintenanceJobs } from '../data/mockData';
 import Badge from './ui/Badge';
 
-const VEHICLE_CLASSES = ['Branded Cargo', 'Step Van', 'Rental', 'Owned'];
+// V2.2 vehicle types — drive the DVIC; map 1:1 to the backend enum.
+const VEHICLE_TYPES = [
+  { value: 'regular_cargo_van',   label: 'Branded Cargo Van' },
+  { value: 'custom_delivery_van', label: 'Custom Delivery Van (CDV)' },
+  { value: 'step_van_dot',        label: 'Step Van (DOT)' },
+  { value: 'box_truck_dot',       label: 'Box Truck (AMXL)' },
+  { value: 'electric_vehicle',    label: 'Electric Vehicle' },
+];
+const OWNERSHIPS = [
+  { value: 'branded', label: 'Branded' },
+  { value: 'owner',   label: 'Owner'   },
+  { value: 'rented',  label: 'Rented'  },
+];
+const VEHICLE_TYPE_LABEL = Object.fromEntries(
+  VEHICLE_TYPES.map(({ value, label }) => [value, label]),
+);
+const OWNERSHIP_LABEL = Object.fromEntries(
+  OWNERSHIPS.map(({ value, label }) => [value, label]),
+);
+// Best-effort migration from legacy display strings → new enum values
+const LEGACY_VEHICLE_CLASS_TO_TYPE = {
+  'Branded Cargo': 'regular_cargo_van',
+  'Step Van':      'step_van_dot',
+  'Box Truck':     'box_truck_dot',
+  'Rental':        'regular_cargo_van',
+  'Owned':         'regular_cargo_van',
+};
+const LEGACY_VEHICLE_CLASS_TO_OWNERSHIP = {
+  'Branded Cargo': 'branded',
+  'Step Van':      'branded',
+  'Box Truck':     'branded',
+  'Rental':        'rented',
+  'Owned':         'owner',
+};
+
 const FMC_OPTIONS = ['Wheels', 'Element', 'Rented/Owned', 'Holman', 'Enterprise Fleet', 'Other'];
 const MAKES = ['Ford', 'Mercedes', 'Ram', 'Chevrolet', 'Isuzu'];
 
@@ -47,30 +81,57 @@ function buildMileageHistory(vehicleId, currentMileage) {
   return out;
 }
 
+// Translate a vehicle row (which may carry a legacy display string for
+// vehicleClass) into form state with V2.2-aligned enum values.
+function vehicleToForm(v) {
+  if (!v) return {};
+  const vehicleClass =
+    VEHICLE_TYPE_LABEL[v.vehicleClass]
+      ? v.vehicleClass
+      : (LEGACY_VEHICLE_CLASS_TO_TYPE[v.vehicleClass] || 'regular_cargo_van');
+  const ownership =
+    v.ownership
+    || LEGACY_VEHICLE_CLASS_TO_OWNERSHIP[v.vehicleClass]
+    || 'branded';
+  return { ...v, vehicleClass, ownership };
+}
+
 export default function VehicleDetailPage({ vehicle, fleet, user, readOnly, onBack, onSave, onDelete, onNavigate, onLocationChange }) {
-  const [form, setForm] = useState({ ...vehicle });
+  const [form, setForm] = useState(() => vehicleToForm(vehicle));
   const [activeTab, setActiveTab] = useState('service');
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   // Sync form when vehicle prop changes (Previous/Next navigation)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useMemo(() => { setForm({ ...vehicle }); setEditing(false); }, [vehicle.fleetId]);
+  useMemo(() => { setForm(vehicleToForm(vehicle)); setEditing(false); setSaveError(null); }, [vehicle.fleetId]);
 
   const currentIndex = fleet.findIndex((v) => v.fleetId === vehicle.fleetId);
   const prev = currentIndex > 0 ? fleet[currentIndex - 1] : null;
   const next = currentIndex < fleet.length - 1 ? fleet[currentIndex + 1] : null;
 
-  const update = (k, v) => setForm({ ...form, [k]: v });
+  const update = (k, v) => {
+    setForm({ ...form, [k]: v });
+    if (saveError) setSaveError(null);
+  };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setSaving(true);
-    setTimeout(() => {
-      onSave?.(form);
-      setSaving(false);
+    setSaveError(null);
+    try {
+      await onSave?.(form);
       setEditing(false);
-    }, 500);
+    } catch (err) {
+      const detail = err?.detail || err?.message || 'Save failed';
+      const cleaned = typeof detail === 'string'
+        ? detail.replace(/^body\.[a-z_]+:\s*/i, '')
+        : 'Save failed — check the form fields and try again.';
+      setSaveError(cleaned);
+    } finally {
+      setSaving(false);
+    }
   };
 
   // Data sources per vehicle
@@ -152,7 +213,14 @@ export default function VehicleDetailPage({ vehicle, fleet, user, readOnly, onBa
                 <span className="font-mono text-navy-400">{vehicle.vin}</span>
               </div>
               <div className="flex items-center gap-2 text-[11px] text-navy-400 mt-1 flex-wrap">
-                <Badge variant={vehicle.vehicleClass === 'Rental' ? 'purple' : vehicle.vehicleClass === 'Owned' ? 'blue' : 'gold'}>{vehicle.vehicleClass}</Badge>
+                <Badge variant="gold">
+                  {VEHICLE_TYPE_LABEL[vehicle.vehicleClass] || vehicle.vehicleClass}
+                </Badge>
+                {(vehicle.ownership || LEGACY_VEHICLE_CLASS_TO_OWNERSHIP[vehicle.vehicleClass]) && (
+                  <span className="text-[11px] text-navy-400">
+                    · {OWNERSHIP_LABEL[vehicle.ownership || LEGACY_VEHICLE_CLASS_TO_OWNERSHIP[vehicle.vehicleClass]]}
+                  </span>
+                )}
                 <span>·</span>
                 <span>{vehicle.fmc}</span>
                 <span>·</span>
@@ -213,11 +281,24 @@ export default function VehicleDetailPage({ vehicle, fleet, user, readOnly, onBa
                       {['White', 'Blue', 'Silver', 'Black', 'Gray'].map((c) => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
-                  <div>
-                    <label className="text-[10px] font-semibold text-navy-300 mb-1 block uppercase tracking-wide">Vehicle Class</label>
+                  <div className="col-span-2">
+                    <label className="text-[10px] font-semibold text-navy-300 mb-1 block uppercase tracking-wide">
+                      Vehicle Type
+                      <span className="ml-1 normal-case font-normal text-navy-500">— drives the inspection checklist</span>
+                    </label>
                     <select value={form.vehicleClass} onChange={(e) => update('vehicleClass', e.target.value)}
                       className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue cursor-pointer">
-                      {VEHICLE_CLASSES.map((c) => <option key={c} value={c}>{c}</option>)}
+                      {VEHICLE_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold text-navy-300 mb-1 block uppercase tracking-wide">
+                      Ownership
+                      <span className="ml-1 normal-case font-normal text-navy-500">— Branded carries DOT + Prime decals</span>
+                    </label>
+                    <select value={form.ownership} onChange={(e) => update('ownership', e.target.value)}
+                      className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue cursor-pointer">
+                      {OWNERSHIPS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
                   </div>
                   <div>
@@ -228,6 +309,16 @@ export default function VehicleDetailPage({ vehicle, fleet, user, readOnly, onBa
                     </select>
                   </div>
                 </fieldset>
+
+                {saveError && (
+                  <div className="mt-3 flex items-start gap-2 px-3 py-2.5 rounded-lg bg-accent-red/10 border border-accent-red/30 text-xs text-accent-red">
+                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-semibold mb-0.5">Couldn't save</div>
+                      <div className="text-accent-red/90">{saveError}</div>
+                    </div>
+                  </div>
+                )}
 
                 {!readOnly && editing && (
                   <div className="flex items-center justify-between mt-4 pt-3 border-t border-navy-800 flex-wrap gap-2">

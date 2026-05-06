@@ -22,6 +22,7 @@ import {
 import {
   inspections as inspectionsApi,
   vehicles as vehiclesApi,
+  defects as defectsApi,
   APIError,
 } from '../api/client';
 import PhotoUploader from './ui/PhotoUploader';
@@ -329,7 +330,7 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
   const handleRemoveDefect = async (defect) => {
     if (!confirm(`Remove "${defect.partLabel || defect.part || 'defect'}"?`)) return;
     try {
-      await inspectionsApi.removeDefect(inspectionId, defect.id);
+      await defectsApi.delete(defect.id);
       setDefects((prev) => prev.filter((d) => d.id !== defect.id));
     } catch (err) {
       alert(`Remove failed: ${err?.detail || err?.message || 'unknown'}`);
@@ -509,7 +510,9 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
     return (
       <DvicWizard
         inspectionId={inspectionId}
-        assetType={vehicle?.assetType || 'extra_large_cargo_van'}
+        vehicleId={vehicle?.id}
+        vehicleClass={vehicle?.vehicleClass || 'regular_cargo_van'}
+        ownership={vehicle?.ownership || 'branded'}
         defects={defects}
         onCommitted={handleDefectCommitted}
         onRemoveDefect={handleRemoveDefect}

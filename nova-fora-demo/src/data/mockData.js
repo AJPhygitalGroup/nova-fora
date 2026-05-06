@@ -73,10 +73,13 @@ export const demoAccounts = [
 // defects table that used to sit under Home as a sub-tab. Vendors & site
 // admins still have `snapshot` as a top-level tab.
 export const rolePermissions = {
+  // DSP fleet owner sees their own vans → "My Fleet".
   dsp_owner:    ['dvic', 'defects', 'vehicles', 'body', 'scorecard', 'admin'],
-  vendor_admin: ['dvic', 'snapshot', 'work_orders', 'vehicles', 'body', 'scorecard', 'admin'],
-  technician:   ['dvic', 'work_orders', 'vehicles', 'admin'],
-  site_admin:   ['dvic', 'defects', 'snapshot', 'vehicles', 'work_orders', 'body', 'scorecard', 'admin', 'ghost'],
+  // Vendor admins / techs / site admins service multiple DSPs → "My DSPs"
+  // (a list of assigned DSPs that drills down into each DSP's vans).
+  vendor_admin: ['dvic', 'snapshot', 'work_orders', 'my_dsps', 'body', 'scorecard', 'admin'],
+  technician:   ['dvic', 'work_orders', 'my_dsps', 'admin'],
+  site_admin:   ['dvic', 'defects', 'snapshot', 'my_dsps', 'work_orders', 'body', 'scorecard', 'admin', 'ghost'],
 };
 
 // ============================================================

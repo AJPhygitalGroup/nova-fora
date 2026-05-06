@@ -1,21 +1,16 @@
 """Internal CLI commands. Run with: python -m app.cli <command>
 
 Available commands:
-  seed                   Seed 4 demo users + 3 orgs (idempotent).
-  seed-vehicles          Seed 8 Ribrell 21 vehicles (from 2026-04-15 scrape).
-  seed-inspections       Seed 8 inspections for those vehicles.
-  seed-defect-catalog    Seed defect_part_system, defect_part_validity,
-                          defect_details_schema reference tables (v2 spec).
-  seed-dvic-template     Seed dvic_template_item rows (transcribed from
-                          Amazon DVIC Cargo + DOT PDFs, Apr 2026).
-  backfill-defects       Copy v2-tagged rows from reported_defects → defects
-                          (idempotent). Run after the 20260428_1500 migration.
+  seed                   Seed orgs + users (idempotent).
+  seed-vehicles          Seed 8 Safety First LLC vehicles.
+  seed-defect-catalog    Seed V2.2 catalog: part_group_default,
+                          defect_part_system, defect_rule, defect_applicability
+                          (idempotent UPSERT).
+  seed-dvic-template     Seed dvic_template_item rows from the Amazon DVIC
+                          PDFs (Cargo + DOT). Idempotent UPSERT keyed by
+                          (vehicle_class, section, part_category, rule_id, position).
   create-service-user <email> <full_name> <org_id> <role>
-                         Create a new user (e.g. for a Slack bot or other
-                          machine integration). Generates a random password
-                          and prints it ONCE — capture it before exiting.
-                          org_id accepts NF-006 / V-005 / DSP-0004 / int.
-                          role: site_admin | dsp_owner | vendor_admin | technician.
+                         Create a new user with a generated password.
   reset-password <email> <new_password>   Admin override for lost passwords.
 """
 import asyncio
@@ -25,16 +20,10 @@ from sqlmodel import select
 
 from app.auth.hashing import hash_password
 from app.db import AsyncSessionLocal
-from app.models.base import utc_now
-from app.models.inspection import (
-    Inspection,
-    InspectionResult,
-    OdometerSource,
-    ReportedDefect,
-)
 from app.models.organization import OrgType, Organization
 from app.models.user import User, UserRole, UserStatus
 from app.models.vehicle import Vehicle
+
 
 # ─────────────────────────────────────────────────────
 # Demo seed data — matches nova-fora-demo/src/data/mockData.js
@@ -43,37 +32,28 @@ from app.models.vehicle import Vehicle
 DEMO_PASSWORD = "nova2026!"  # All 4 demo users share this. Tell them on first login.
 
 ORG_SEED = [
-    {
-        "key": "ribrell21",
-        "name": "Ribrell 21",
-        "org_type": OrgType.DSP,
-        "phone": None,
-        "address": None,
-    },
-    {
-        "key": "dulles_midas",
-        "name": "Dulles Midas",
-        "org_type": OrgType.VENDOR,
-        "phone": None,
-        "address": None,
-    },
-    {
-        "key": "nova_fora",
-        "name": "Nova Fora",
-        "org_type": OrgType.PLATFORM,
-        "phone": None,
-        "address": None,
-    },
+    # DSPs (5) — Safety First is the primary one with all 8 demo vans.
+    # The other 4 are placeholders so vendor/tech/admin users can see a
+    # populated "My DSPs" list. They start empty (no vans) and DSP owners
+    # would seed their own fleets in real onboarding.
+    {"key": "safety_first", "name": "Safety First LLC", "org_type": OrgType.DSP},
+    {"key": "ceiba_routes", "name": "Ceiba Routes", "org_type": OrgType.DSP},
+    {"key": "totl_logistics", "name": "TOTL Logistics", "org_type": OrgType.DSP},
+    {"key": "summit_express", "name": "Summit Express", "org_type": OrgType.DSP},
+    {"key": "redmond_routes", "name": "Redmond Routes", "org_type": OrgType.DSP},
+    # Vendor + platform
+    {"key": "dulles_midas", "name": "Dulles Midas", "org_type": OrgType.VENDOR},
+    {"key": "nova_fora", "name": "Nova Fora", "org_type": OrgType.PLATFORM},
 ]
 
 
 USER_SEED = [
     {
-        "email": "tamika@ribrell21.com",
-        "full_name": "Tamika Gambrell",
-        "org_key": "ribrell21",
+        "email": "jon@safetyfirst.com",
+        "full_name": "Jon Doe",
+        "org_key": "safety_first",
         "role": UserRole.DSP_OWNER,
-        "avatar": "TG",
+        "avatar": "JD",
         "station": "DSE4",
     },
     {
@@ -106,7 +86,6 @@ USER_SEED = [
 async def cmd_seed() -> None:
     """Insert demo orgs + users if not already present. Idempotent."""
     async with AsyncSessionLocal() as session:
-        # Orgs (upsert by name)
         org_by_key: dict[str, Organization] = {}
         for spec in ORG_SEED:
             existing = (
@@ -121,15 +100,14 @@ async def cmd_seed() -> None:
             new_org = Organization(
                 name=spec["name"],
                 org_type=spec["org_type"],
-                phone=spec["phone"],
-                address=spec["address"],
+                phone=None,
+                address=None,
             )
             session.add(new_org)
-            await session.flush()  # populate id
+            await session.flush()
             org_by_key[spec["key"]] = new_org
             print(f"[seed] org created: {spec['name']} (id={new_org.id}, {new_org.id_str})")
 
-        # Users (upsert by email)
         hashed_default = hash_password(DEMO_PASSWORD)
         for spec in USER_SEED:
             existing_user = (
@@ -157,52 +135,73 @@ async def cmd_seed() -> None:
 
         await session.commit()
     print(f"\n✅ Seed complete. Demo password: {DEMO_PASSWORD}")
-    print("Login as: tamika@ribrell21.com / olger@dullesmidas.com / david@dullesmidas.com / maria@novafora.com")
 
 
 # ─────────────────────────────────────────────────────
-# Vehicle seed — from the real 2026-04-15 Ribrell 21 scrape
-# (see Ribrell21_Inspections_2026-04-15.xlsx + generate_ribrell_excel.py).
-# VINs are synthetic but pass the 17-char / no-I-O-Q format check.
+# Vehicle seed — Safety First LLC (8 cargo vans, all regular_cargo_van class)
 # ─────────────────────────────────────────────────────
 
-VEHICLE_SEED_RIBRELL = [
-    # (fleet_id, vin, plate, year, make, model, mileage)
-    ("PR013", "1FMCU9GD5MUA00013", "WA-3K13-AZ", 2021, "Mercedes", "Sprinter 2500", 86209),
-    ("PR021", "1FMCU9GD5MUA00021", "WA-3K21-AZ", 2021, "Mercedes", "Sprinter 2500", 91248),
-    ("PR016", "1FMCU9GD5MUA00016", "WA-3K16-AZ", 2021, "Mercedes", "Sprinter 2500", 95073),
-    ("PR005", "1FMCU9GD5MUA00005", "WA-3K05-AZ", 2020, "Ford",     "Transit 250",  83646),
-    ("PR025", "1FMCU9GD5MUA00025", "WA-3K25-AZ", 2022, "Ram",      "ProMaster 2500", 84267),
-    ("PR026", "1FMCU9GD5MUA00026", "WA-3K26-AZ", 2022, "Ram",      "ProMaster 2500", 0),  # pending WO
-    ("PR004", "1FMCU9GD5MUA00004", "WA-3K04-AZ", 2020, "Ford",     "Transit 250",  90708),
-    ("PR006", "1FMCU9GD5MUA00006", "WA-3K06-AZ", 2020, "Ford",     "Transit 250",  99597),
+VEHICLE_SEED_SAFETY_FIRST = [
+    # (fleet_id, vin, plate, year, make, model, mileage, vehicle_class, ownership)
+    # Branded Cargo Vans (the bulk of the fleet)
+    ("SF013", "1FMCU9GD5MUA00013", "WA-3K13-AZ", 2021, "Mercedes", "Sprinter 2500", 86209,
+     "regular_cargo_van",   "branded"),
+    ("SF021", "1FMCU9GD5MUA00021", "WA-3K21-AZ", 2021, "Mercedes", "Sprinter 2500", 91248,
+     "regular_cargo_van",   "branded"),
+    ("SF016", "1FMCU9GD5MUA00016", "WA-3K16-AZ", 2021, "Mercedes", "Sprinter 2500", 95073,
+     "regular_cargo_van",   "branded"),
+    ("SF005", "1FMCU9GD5MUA00005", "WA-3K05-AZ", 2020, "Ford",     "Transit 250",  83646,
+     "regular_cargo_van",   "branded"),
+    # CDV — physically distinct (purpose-built), shares Cargo DVIC, branded
+    ("SF025", "1FMCU9GD5MUA00025", "WA-3K25-AZ", 2022, "Ram",      "ProMaster 2500", 84267,
+     "custom_delivery_van", "branded"),
+    # Owner-financed cargo van (no DOT/Prime decals)
+    ("SF026", "1FMCU9GD5MUA00026", "WA-3K26-AZ", 2022, "Ram",      "ProMaster 2500", 0,
+     "regular_cargo_van",   "owner"),
+    # Rented cargo van (no DOT/Prime decals)
+    ("SF004", "1FMCU9GD5MUA00004", "WA-3K04-AZ", 2020, "Ford",     "Transit 250",  90708,
+     "regular_cargo_van",   "rented"),
+    # Step Van DOT — DOT-regulated, branded
+    ("SF006", "1FMCU9GD5MUA00006", "WA-3K06-AZ", 2020, "Ford",     "Transit 250",  99597,
+     "step_van_dot",        "branded"),
+    # Box Truck (AMXL) — DOT-regulated, branded
+    ("SF030", "1FMCU9GD5MUA00030", "WA-3K30-AZ", 2023, "Isuzu",    "NPR HD",       42150,
+     "box_truck_dot",       "branded"),
 ]
 
 
 async def cmd_seed_vehicles() -> None:
-    """Create 8 vehicles for Ribrell 21 (idempotent)."""
+    """Create 8 vehicles for Safety First LLC (idempotent)."""
     async with AsyncSessionLocal() as session:
-        ribrell = (
+        dsp = (
             await session.execute(
-                select(Organization).where(Organization.name == "Ribrell 21")
+                select(Organization).where(Organization.name == "Safety First LLC")
             )
         ).scalar_one_or_none()
-        if ribrell is None:
-            print("ERROR: Organization 'Ribrell 21' not found. Run 'seed' first.")
+        if dsp is None:
+            print("ERROR: Organization 'Safety First LLC' not found. Run 'seed' first.")
             sys.exit(1)
 
         created = 0
         skipped = 0
-        for (fleet_id, vin, plate, year, make, model, mileage) in VEHICLE_SEED_RIBRELL:
+        for row in VEHICLE_SEED_SAFETY_FIRST:
+            (fleet_id, vin, plate, year, make, model, mileage,
+             vehicle_class, ownership) = row
             existing = (
                 await session.execute(select(Vehicle).where(Vehicle.vin == vin))
             ).scalar_one_or_none()
             if existing:
-                print(f"[seed-vehicles] exists: {fleet_id} (vin={vin})")
+                # UPDATE existing rows so re-runs pick up new vehicle_class /
+                # ownership values without needing a wipe.
+                existing.vehicle_class = vehicle_class
+                existing.ownership = ownership
+                session.add(existing)
+                print(f"[seed-vehicles] updated: {fleet_id} → "
+                      f"{vehicle_class} / {ownership}")
                 skipped += 1
                 continue
             v = Vehicle(
-                dsp_id=ribrell.id,
+                dsp_id=dsp.id,
                 fleet_id=fleet_id,
                 vin=vin,
                 plate=plate,
@@ -210,10 +209,13 @@ async def cmd_seed_vehicles() -> None:
                 make=make,
                 model=model,
                 mileage=mileage,
+                vehicle_class=vehicle_class,
+                ownership=ownership,
             )
             session.add(v)
             await session.flush()
-            print(f"[seed-vehicles] created: {fleet_id} (id={v.id}, {v.id_str})")
+            print(f"[seed-vehicles] created: {fleet_id} ({v.id_str}) "
+                  f"{vehicle_class} / {ownership}")
             created += 1
 
         await session.commit()
@@ -221,169 +223,182 @@ async def cmd_seed_vehicles() -> None:
 
 
 # ─────────────────────────────────────────────────────
-# Inspection seed — 2026-04-15 Ribrell 21 scrape
-# Synthetic defects modeled after what a typical DVIC morning looks like.
+# Defect catalog seed (V2.2 — junction split)
+#
+# UPSERT keyed by natural keys:
+#   part_group_default       (PK part)
+#   defect_part_system       (composite PK part+system)
+#   defect_rule              (UNIQUE part+defect_type)
+#   defect_applicability     (UNIQUE rule_id+vehicle_class)
+#
+# Orphan handling: rows in DB whose key is no longer in the seed get
+# is_active=False (preserves audit; doesn't hard-delete since defects may
+# reference them historically).
 # ─────────────────────────────────────────────────────
+async def cmd_seed_dvic_template() -> None:
+    """Idempotent UPSERT of dvic_template_item rows from the Amazon DVIC PDFs.
 
-from datetime import datetime, timezone
+    Reads `seed_dvic_template.TEMPLATES_BY_CLASS` and for each
+    (vehicle_class, row), looks up the corresponding `defect_rule.id` by
+    (part, defect_type), then UPSERTs the row keyed by
+    (vehicle_class, section, part_category, rule_id, position).
 
-INSPECTION_SEED_RIBRELL = [
-    # (fleet_id, mileage, utc_submitted_at, defects[])
-    # Each defect: (section, part, desc, category)
-    (
-        "PR013", 86209, "2026-04-15T07:15:23Z",
-        [
-            ("2. Driver Side", "Rear bumper", "Minor scrape on rear bumper", "Body"),
-        ],
-    ),
-    (
-        "PR021", 91248, "2026-04-15T07:16:42Z",
-        [],  # clean
-    ),
-    (
-        "PR016", 95073, "2026-04-15T07:17:10Z",
-        [
-            ("1. Front Side", "Windshield", "Chip near driver vision area — spreading", "Glass"),
-            ("3. Passenger Side", "Side mirror", "Mirror glass cracked", "Body"),
-        ],
-    ),
-    (
-        "PR005", 83646, "2026-04-15T07:23:20Z",
-        [
-            ("4. Rear", "Brake lights", "Left brake light intermittent", "Lighting"),
-        ],
-    ),
-    (
-        "PR025", 84267, "2026-04-15T07:31:01Z",
-        [],  # clean
-    ),
-    (
-        "PR026", 0, "2026-04-15T07:31:17Z",
-        [
-            ("6. Brakes", "Rear brake pads", "Grinding sound on hard stops", "Brakes"),
-        ],
-    ),
-    (
-        "PR004", 90708, "2026-04-15T07:32:18Z",
-        [],  # clean
-    ),
-    (
-        "PR006", 99597, "2026-04-15T07:41:35Z",
-        [
-            ("7. Tires", "Front left tire", "Tread at 3/32 — due for replacement", "Tires"),
-            ("5. In-Cab", "Seatbelt", "Retractor sticks", "Safety"),
-        ],
-    ),
-]
+    Prerequisite: `seed-defect-catalog` must run first so the rules exist.
+    """
+    from app.models.defect_catalog import DefectRule, DvicTemplateItem
+    from app.models.base import utc_now
+    from app.seed_dvic_template import get_templates
 
+    templates = get_templates()
 
-async def cmd_seed_inspections() -> None:
-    """Create one inspection per van from the 2026-04-15 scrape. Idempotent."""
     async with AsyncSessionLocal() as session:
-        ribrell = (
-            await session.execute(
-                select(Organization).where(Organization.name == "Ribrell 21")
-            )
-        ).scalar_one_or_none()
-        if ribrell is None:
-            print("ERROR: Organization 'Ribrell 21' not found. Run 'seed' first.")
-            sys.exit(1)
+        # Build a (part, defect_type) → rule_id lookup table once.
+        rules = (
+            await session.execute(select(DefectRule).where(DefectRule.is_active == True))  # noqa: E712
+        ).scalars().all()
+        rule_id_by_key: dict[tuple[str, str], int] = {
+            (r.part if isinstance(r.part, str) else r.part.value,
+             r.defect_type if isinstance(r.defect_type, str) else r.defect_type.value): r.id
+            for r in rules
+        }
 
-        # Inspector: David Torres (technician at Dulles Midas vendor).
-        # In real ops, technicians (drivers for DVIC, vendor techs for QC DVIC)
-        # are who fill out inspection forms. dsp_owners review, not create.
-        david = (
-            await session.execute(
-                select(User).where(User.email == "david@dullesmidas.com")
-            )
-        ).scalar_one_or_none()
+        new_count, upd_count, skip_count = 0, 0, 0
+        seen_keys: set[tuple[str, str, str, int, str | None]] = set()
 
-        created = 0
-        skipped = 0
-        for (fleet_id, mileage, submitted_iso, defects) in INSPECTION_SEED_RIBRELL:
-            vehicle = (
-                await session.execute(
-                    select(Vehicle).where(
-                        Vehicle.dsp_id == ribrell.id, Vehicle.fleet_id == fleet_id
+        for vc, rows in templates.items():
+            for row in rows:
+                # Tuple shapes:
+                #   7 — legacy (no photo_required, no requires_branding)
+                #   8 — photo_required set, requires_branding defaults False
+                #   9 — both flags explicit
+                if len(row) == 9:
+                    (section, part_cat, part, defect_type,
+                     position, description, ordering,
+                     photo_required, requires_branding) = row
+                elif len(row) == 8:
+                    (section, part_cat, part, defect_type,
+                     position, description, ordering, photo_required) = row
+                    requires_branding = False
+                else:
+                    (section, part_cat, part, defect_type,
+                     position, description, ordering) = row
+                    photo_required = True
+                    requires_branding = False
+                rule_id = rule_id_by_key.get((part.value, defect_type.value))
+                if rule_id is None:
+                    print(
+                        f"[seed-dvic-template] SKIP {vc.value}/{section.value}: "
+                        f"no rule for ({part.value}, {defect_type.value}) — "
+                        f"add to seed_defect_catalog.RULES first."
                     )
+                    skip_count += 1
+                    continue
+
+                pos_val = position.value if position is not None else None
+                key = (vc.value, section.value, part_cat, rule_id, pos_val)
+                seen_keys.add(key)
+
+                # UPSERT by natural key (use COALESCE on position for NULL match)
+                existing_q = (
+                    select(DvicTemplateItem)
+                    .where(DvicTemplateItem.vehicle_class == vc.value)
+                    .where(DvicTemplateItem.section == section.value)
+                    .where(DvicTemplateItem.part_category == part_cat)
+                    .where(DvicTemplateItem.rule_id == rule_id)
                 )
-            ).scalar_one_or_none()
-            if vehicle is None:
-                print(f"[seed-inspections] skip: {fleet_id} (vehicle not found)")
-                continue
+                if pos_val is None:
+                    existing_q = existing_q.where(DvicTemplateItem.position.is_(None))
+                else:
+                    existing_q = existing_q.where(DvicTemplateItem.position == pos_val)
 
-            # Skip if this vehicle already has an inspection on the same date
-            target_dt = datetime.fromisoformat(submitted_iso.replace("Z", "+00:00"))
-            existing = (
-                await session.execute(
-                    select(Inspection)
-                    .where(Inspection.vehicle_id == vehicle.id)
-                    .where(Inspection.submitted_at == target_dt)
-                )
-            ).scalar_one_or_none()
-            if existing:
-                print(f"[seed-inspections] exists: {fleet_id} @ {submitted_iso}")
-                skipped += 1
-                continue
+                existing = (await session.execute(existing_q)).scalar_one_or_none()
+                if existing is None:
+                    session.add(DvicTemplateItem(
+                        vehicle_class=vc,
+                        section=section,
+                        part_category=part_cat,
+                        rule_id=rule_id,
+                        position=position,
+                        description=description,
+                        ordering=ordering,
+                        photo_required=photo_required,
+                        requires_branding=requires_branding,
+                        is_active=True,
+                    ))
+                    new_count += 1
+                else:
+                    existing.description = description
+                    existing.ordering = ordering
+                    existing.photo_required = photo_required
+                    existing.requires_branding = requires_branding
+                    existing.is_active = True
+                    existing.updated_at = utc_now()
+                    session.add(existing)
+                    upd_count += 1
 
-            # Derive result — any defects → FLAGGED
-            result = InspectionResult.PASSED if not defects else InspectionResult.FLAGGED
-
-            insp = Inspection(
-                vehicle_id=vehicle.id,
-                dsp_id=ribrell.id,
-                inspector_id=david.id if david else None,
-                result=result,
-                odometer_miles=mileage if mileage > 0 else None,
-                odometer_source=OdometerSource.MANUAL,
-                started_at=target_dt,
-                submitted_at=target_dt,
-            )
-            session.add(insp)
-            await session.flush()
-
-            for (section, part, desc, category) in defects:
-                rd = ReportedDefect(
-                    inspection_id=insp.id,
-                    section=section,
-                    part=part,
-                    description=desc,
-                    category=category,
-                )
-                session.add(rd)
-
-            # Update vehicle mileage from inspection (if higher)
-            if mileage > vehicle.mileage:
-                vehicle.mileage = mileage
-                vehicle.updated_at = utc_now()
-                session.add(vehicle)
-
-            print(f"[seed-inspections] created: {fleet_id} {result.value} ({len(defects)} defects)")
-            created += 1
+        # Deactivate orphans (rows in DB whose key is not in the seed)
+        all_existing = (
+            await session.execute(select(DvicTemplateItem))
+        ).scalars().all()
+        deact_count = 0
+        for r in all_existing:
+            vc_v = r.vehicle_class if isinstance(r.vehicle_class, str) else r.vehicle_class.value
+            sec_v = r.section if isinstance(r.section, str) else r.section.value
+            pos_v = r.position if (r.position is None or isinstance(r.position, str)) else r.position.value
+            key = (vc_v, sec_v, r.part_category, r.rule_id, pos_v)
+            if key not in seen_keys and r.is_active:
+                r.is_active = False
+                r.updated_at = utc_now()
+                session.add(r)
+                deact_count += 1
 
         await session.commit()
-        print(f"\n✅ Inspections seed complete. {created} created, {skipped} already existed.")
+
+        print("✅ DVIC template seed:")
+        print(f"   {new_count} new, {upd_count} updated, {skip_count} skipped, {deact_count} deactivated")
 
 
-# ─────────────────────────────────────────────────────
-# Defect catalog seed (v2 schema reference tables)
-# ─────────────────────────────────────────────────────
 async def cmd_seed_defect_catalog() -> None:
-    """Idempotent UPSERT of defect_part_system, defect_part_validity,
-    defect_details_schema rows. Safe to re-run after spec edits."""
+    """Idempotent UPSERT of the V2.2 catalog tables."""
     from app.models.defect_catalog import (
-        DefectDetailsSchema,
+        DefectApplicability,
         DefectPartSystem,
-        DefectPartValidity,
+        DefectRule,
+        PartGroupDefault,
     )
-    from app.seed_defect_catalog import get_seed_data
-
-    seed = get_seed_data()
+    from app.models.base import utc_now
+    from app.seed_defect_catalog import (
+        expand_applicability,
+        get_part_group_defaults,
+        get_part_systems,
+        get_rules,
+    )
 
     async with AsyncSessionLocal() as session:
-        # ── part_system ──
-        ps_count = 0
-        for part, system, is_primary, group in seed["part_system"]:
+        # ── 1. part_group_default ──
+        pgd_new, pgd_upd = 0, 0
+        for part, group, rationale in get_part_group_defaults():
+            row = (
+                await session.execute(
+                    select(PartGroupDefault).where(PartGroupDefault.part == part)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                session.add(
+                    PartGroupDefault(part=part, group=group, rationale=rationale)
+                )
+                pgd_new += 1
+            else:
+                row.group = group
+                row.rationale = rationale
+                row.updated_at = utc_now()
+                session.add(row)
+                pgd_upd += 1
+
+        # ── 2. defect_part_system ──
+        ps_new, ps_upd = 0, 0
+        seed_part_systems = get_part_systems()
+        for part, system, is_primary, display_group in seed_part_systems:
             row = (
                 await session.execute(
                     select(DefectPartSystem)
@@ -392,273 +407,144 @@ async def cmd_seed_defect_catalog() -> None:
                 )
             ).scalar_one_or_none()
             if row is None:
-                session.add(DefectPartSystem(
-                    part=part, system=system,
-                    is_primary=is_primary, display_group=group,
-                ))
-                ps_count += 1
+                session.add(
+                    DefectPartSystem(
+                        part=part, system=system,
+                        is_primary=is_primary, display_group=display_group,
+                    )
+                )
+                ps_new += 1
             else:
                 row.is_primary = is_primary
-                row.display_group = group
+                row.display_group = display_group
                 session.add(row)
+                ps_upd += 1
 
-        # ── part_validity ──
-        pv_count = 0
-        for part, valid_positions, position_required, allow_null in seed["part_validity"]:
-            row = (
-                await session.execute(
-                    select(DefectPartValidity).where(DefectPartValidity.part == part)
-                )
-            ).scalar_one_or_none()
-            csv = ",".join(p.value for p in valid_positions)
-            if row is None:
-                session.add(DefectPartValidity(
-                    part=part,
-                    valid_positions_csv=csv,
-                    position_required=position_required,
-                    allow_null_position=allow_null,
-                ))
-                pv_count += 1
-            else:
-                row.valid_positions_csv = csv
-                row.position_required = position_required
-                row.allow_null_position = allow_null
-                session.add(row)
+        # ── 3. defect_rule ──
+        rules = get_rules()
+        rule_new, rule_upd = 0, 0
+        # Map natural key → DefectRule.id for applicability seeding below.
+        rule_id_by_key: dict[tuple[str, str], int] = {}
+        # Build lookup for group_override / inheritance.
+        pgd_by_part = {p: g for p, g, _ in get_part_group_defaults()}
 
-        # ── details_schema ──
-        ds_count = 0
-        for part, defect_type, json_schema in seed["details_schema"]:
-            row = (
-                await session.execute(
-                    select(DefectDetailsSchema)
-                    .where(DefectDetailsSchema.part == part)
-                    .where(DefectDetailsSchema.defect_type == defect_type)
-                )
-            ).scalar_one_or_none()
-            if row is None:
-                session.add(DefectDetailsSchema(
-                    part=part, defect_type=defect_type,
-                    json_schema=json_schema,
-                ))
-                ds_count += 1
-            else:
-                row.json_schema = json_schema
-                session.add(row)
-
-        await session.commit()
-        print(f"✅ Defect catalog seed:")
-        print(f"   part_system     — {ps_count} new, {len(seed['part_system']) - ps_count} updated")
-        print(f"   part_validity   — {pv_count} new, {len(seed['part_validity']) - pv_count} updated")
-        print(f"   details_schema  — {ds_count} new, {len(seed['details_schema']) - ds_count} updated")
-
-
-async def cmd_seed_dvic_template() -> None:
-    """Idempotent UPSERT of dvic_template_item from the Amazon DVIC PDFs.
-
-    Dedup key: (asset_types_csv, section, part_enum, defect_type_enum, position).
-    Re-running after a PDF revision updates description/severity/etc.
-
-    Orphan handling: any row in DB whose key is no longer in the seed (e.g.
-    after a consolidation that merges two CARGO+DOT rows into one ALL_ASSETS
-    row) is flipped to is_active=False so the wizard stops surfacing it.
-    Hard-delete is skipped intentionally — defects already authored against
-    that row's labels still need the row around for historical rendering.
-    """
-    from app.models.defect_catalog import DvicTemplateItem
-    from app.seed_dvic_template import get_dvic_template_seed
-
-    rows = get_dvic_template_seed()
-
-    # Pre-compute the set of keys we expect to touch — used at the end to
-    # find orphans.
-    seed_keys: set[tuple] = set()
-    for r in rows:
-        position_val = r["position"].value if r["position"] is not None else None
-        section_val = r["section"].value if hasattr(r["section"], "value") else r["section"]
-        seed_keys.add(
+        for spec in rules:
             (
-                r["asset_types_csv"],
-                section_val,
-                r["part_enum"].value,
-                r["defect_type_enum"].value,
-                position_val,
-            )
-        )
-
-    async with AsyncSessionLocal() as session:
-        new_count, updated_count = 0, 0
-        for r in rows:
-            position_val = r["position"].value if r["position"] is not None else None
-            existing = (
-                await session.execute(
-                    select(DvicTemplateItem)
-                    .where(DvicTemplateItem.asset_types_csv == r["asset_types_csv"])
-                    .where(DvicTemplateItem.section == r["section"])
-                    .where(DvicTemplateItem.part_enum == r["part_enum"])
-                    .where(DvicTemplateItem.defect_type_enum == r["defect_type_enum"])
-                    .where(
-                        DvicTemplateItem.position == position_val
-                        if position_val is not None
-                        else DvicTemplateItem.position.is_(None)
-                    )
-                )
-            ).scalar_one_or_none()
-
-            if existing is None:
-                session.add(
-                    DvicTemplateItem(
-                        asset_types_csv=r["asset_types_csv"],
-                        section=r["section"],
-                        part_category=r["part_category"],
-                        part_enum=r["part_enum"],
-                        defect_type_enum=r["defect_type_enum"],
-                        position=r["position"],
-                        position_options_csv=r["position_options_csv"],
-                        sub_positions=r["sub_positions"],
-                        description=r["description"],
-                        details_schema=r["details_schema"],
-                        ordering=r["ordering"],
-                        is_active=True,
-                    )
-                )
-                new_count += 1
-            else:
-                existing.part_category = r["part_category"]
-                existing.position_options_csv = r["position_options_csv"]
-                existing.sub_positions = r["sub_positions"]
-                existing.description = r["description"]
-                existing.details_schema = r["details_schema"]
-                existing.ordering = r["ordering"]
-                existing.is_active = True
-                session.add(existing)
-                updated_count += 1
-
-        # Deactivate any DB row whose key is no longer in the seed. This
-        # covers the case where the seed file removed/merged a row — without
-        # this step the wizard would keep showing the old row alongside the
-        # new one (the "two identical tiles" bug after consolidation).
-        all_existing = (
-            await session.execute(select(DvicTemplateItem))
-        ).scalars().all()
-        deactivated_count = 0
-        for row_db in all_existing:
-            position_val = row_db.position.value if row_db.position is not None else None
-            section_val = row_db.section.value if hasattr(row_db.section, "value") else row_db.section
-            key = (
-                row_db.asset_types_csv,
-                section_val,
-                row_db.part_enum.value,
-                row_db.defect_type_enum.value,
-                position_val,
-            )
-            if key not in seed_keys and row_db.is_active:
-                row_db.is_active = False
-                session.add(row_db)
-                deactivated_count += 1
-
-        await session.commit()
-        print("✅ DVIC template seed:")
-        print(f"   {new_count} new rows, {updated_count} updated, {deactivated_count} deactivated")
-        print(f"   Seed total: {len(rows)}")
-
-
-async def cmd_backfill_defects() -> None:
-    """Copy v2-tagged rows from reported_defects → defects (idempotent).
-
-    Selection: any ReportedDefect with both `part_enum` and `defect_type_enum`
-    populated. These were already authored against the v2 catalog; the legacy
-    free-text columns on the row are ignored.
-
-    Mapping:
-      vehicle_id      ← inspection.vehicle_id (always present)
-      inspection_id   ← reported_defect.inspection_id
-      source          ← 'inspection' (all backfilled rows came from one)
-      part            ← reported_defect.part_enum
-      position        ← reported_defect.position
-      defect_type     ← reported_defect.defect_type_enum
-      details         ← reported_defect.details or {}
-      notes           ← reported_defect.notes
-      reported_by_id  ← reported_defect.reported_by_id ?? inspection.inspector_id
-      reported_at     ← reported_defect.reported_at ?? reported_defect.created_at
-
-    Idempotency: skip rows whose
-      (vehicle_id, inspection_id, part, position, defect_type) tuple already
-    exists in `defects`. Safe to re-run after partial failures or after
-    additional reported_defects rows are written.
-
-    Rejected rows: a row with no reporter (no reported_by_id AND no
-    inspector on the parent inspection) is skipped — Defect.reported_by_id
-    is NOT NULL. This indicates a seeding gap; printed with the FD- id.
-    """
-    from app.models.defect import Defect, DefectSource
-    from app.models.inspection import Inspection, ReportedDefect
-
-    async with AsyncSessionLocal() as session:
-        rows = (
-            await session.execute(
-                select(ReportedDefect, Inspection)
-                .join(Inspection, ReportedDefect.inspection_id == Inspection.id)
-                .where(ReportedDefect.part_enum.is_not(None))
-                .where(ReportedDefect.defect_type_enum.is_not(None))
-            )
-        ).all()
-
-        copied = 0
-        skipped = 0
-        rejected = 0
-
-        for rd, insp in rows:
-            existing = (
-                await session.execute(
-                    select(Defect)
-                    .where(Defect.vehicle_id == insp.vehicle_id)
-                    .where(Defect.inspection_id == insp.id)
-                    .where(Defect.part == rd.part_enum)
-                    .where(
-                        Defect.position == rd.position
-                        if rd.position is not None
-                        else Defect.position.is_(None)
-                    )
-                    .where(Defect.defect_type == rd.defect_type_enum)
-                )
-            ).scalar_one_or_none()
-            if existing:
-                skipped += 1
-                continue
-
-            reporter_id = rd.reported_by_id or insp.inspector_id
-            if reporter_id is None:
+                part, defect_type, _classes, _classification, _vp, _pr, _anp,
+                _ds, _th, notes_default, group_override,
+            ) = spec
+            group = group_override or pgd_by_part.get(part)
+            if group is None:
                 print(
-                    f"[backfill-defects] reject FD-{rd.id:03d}: "
-                    f"no reporter (reported_by_id and inspection.inspector_id both NULL)"
+                    f"[seed-defect-catalog] WARN: no default group for {part.value!r}; "
+                    f"add to PART_GROUP_DEFAULTS or pass group_override."
                 )
-                rejected += 1
                 continue
 
-            d = Defect(
-                vehicle_id=insp.vehicle_id,
-                inspection_id=insp.id,
-                source=DefectSource.INSPECTION,
-                part=rd.part_enum,
-                position=rd.position,
-                defect_type=rd.defect_type_enum,
-                details=rd.details or {},
-                notes=rd.notes,
-                reported_by_id=reporter_id,
-                reported_at=rd.reported_at or rd.created_at,
-            )
-            session.add(d)
-            copied += 1
+            existing = (
+                await session.execute(
+                    select(DefectRule)
+                    .where(DefectRule.part == part)
+                    .where(DefectRule.defect_type == defect_type)
+                )
+            ).scalar_one_or_none()
+            if existing is None:
+                rule = DefectRule(
+                    part=part,
+                    defect_type=defect_type,
+                    group=group,
+                    notes_default=notes_default,
+                    is_active=True,
+                )
+                session.add(rule)
+                await session.flush()
+                rule_id_by_key[(part.value, defect_type.value)] = rule.id
+                rule_new += 1
+            else:
+                existing.group = group
+                existing.notes_default = notes_default
+                existing.is_active = True
+                existing.updated_at = utc_now()
+                session.add(existing)
+                rule_id_by_key[(part.value, defect_type.value)] = existing.id
+                rule_upd += 1
+
+        # ── 4. defect_applicability ──
+        app_new, app_upd = 0, 0
+        for spec in rules:
+            part, defect_type = spec[0], spec[1]
+            rule_id = rule_id_by_key.get((part.value, defect_type.value))
+            if rule_id is None:
+                continue  # rule was skipped above (missing group)
+            for app_dict in expand_applicability(spec):
+                vc = app_dict["vehicle_class"]
+                existing = (
+                    await session.execute(
+                        select(DefectApplicability)
+                        .where(DefectApplicability.rule_id == rule_id)
+                        .where(DefectApplicability.vehicle_class == vc.value)
+                    )
+                ).scalar_one_or_none()
+                if existing is None:
+                    session.add(
+                        DefectApplicability(
+                            rule_id=rule_id,
+                            vehicle_class=vc,
+                            valid_positions=app_dict["valid_positions"],
+                            position_required=app_dict["position_required"],
+                            allow_null_position=app_dict["allow_null_position"],
+                            threshold=app_dict["threshold"],
+                            classification=app_dict["classification"],
+                            details_schema=app_dict["details_schema"],
+                            notes=app_dict["notes"],
+                            is_active=True,
+                            needs_review=app_dict["needs_review"],
+                        )
+                    )
+                    app_new += 1
+                else:
+                    existing.valid_positions = app_dict["valid_positions"]
+                    existing.position_required = app_dict["position_required"]
+                    existing.allow_null_position = app_dict["allow_null_position"]
+                    existing.threshold = app_dict["threshold"]
+                    existing.classification = app_dict["classification"]
+                    existing.details_schema = app_dict["details_schema"]
+                    existing.notes = app_dict["notes"]
+                    existing.is_active = True
+                    existing.needs_review = app_dict["needs_review"]
+                    existing.updated_at = utc_now()
+                    session.add(existing)
+                    app_upd += 1
+
+        # ── 5. Deactivate orphans ──
+        # Rules not in seed → is_active=False.
+        seed_keys = {(s[0].value, s[1].value) for s in rules}
+        all_rules = (
+            await session.execute(select(DefectRule))
+        ).scalars().all()
+        rule_deact = 0
+        for r in all_rules:
+            if (r.part if isinstance(r.part, str) else r.part.value,
+                r.defect_type if isinstance(r.defect_type, str) else r.defect_type.value) not in seed_keys:
+                if r.is_active:
+                    r.is_active = False
+                    r.updated_at = utc_now()
+                    session.add(r)
+                    rule_deact += 1
 
         await session.commit()
-        print(
-            f"\n✅ Defects backfill: {copied} copied, "
-            f"{skipped} skipped (already in defects), {rejected} rejected."
-        )
+
+        print("✅ V2.2 defect catalog seed:")
+        print(f"   part_group_default      — {pgd_new} new, {pgd_upd} updated")
+        print(f"   defect_part_system      — {ps_new} new, {ps_upd} updated")
+        print(f"   defect_rule             — {rule_new} new, {rule_upd} updated, {rule_deact} deactivated")
+        print(f"   defect_applicability    — {app_new} new, {app_upd} updated")
 
 
+# ─────────────────────────────────────────────────────
+# Service user + password reset (unchanged from V1)
+# ─────────────────────────────────────────────────────
 def _parse_org_id(raw: str) -> int:
-    """Accept 'NF-006', 'V-005', 'DSP-0004', or a bare int."""
     s = raw.strip().upper()
     for prefix in ("DSP-", "NF-", "V-"):
         if s.startswith(prefix):
@@ -670,16 +556,8 @@ def _parse_org_id(raw: str) -> int:
 async def cmd_create_service_user(
     email: str, full_name: str, org_id_raw: str, role_str: str
 ) -> None:
-    """Create a user with a randomly-generated password.
-
-    Used for service accounts (Slack bots, ingest pipelines, etc.) that need
-    to authenticate against the API with a real `users.id`. The password is
-    printed ONCE — capture it from stdout, store it in a secret manager,
-    rotate later via `reset-password` if needed.
-    """
     import secrets
 
-    # ── Validate role ──
     try:
         role = UserRole(role_str)
     except ValueError:
@@ -689,7 +567,6 @@ async def cmd_create_service_user(
         )
         sys.exit(1)
 
-    # ── Validate + look up org ──
     try:
         org_pk = _parse_org_id(org_id_raw)
     except ValueError:
@@ -704,7 +581,6 @@ async def cmd_create_service_user(
             print(f"ERROR: no organization with id {org_id_raw!r} (parsed as {org_pk}).")
             sys.exit(1)
 
-        # ── Refuse if email already exists ──
         email_lc = email.strip().lower()
         existing = (
             await session.execute(select(User).where(User.email == email_lc))
@@ -712,15 +588,11 @@ async def cmd_create_service_user(
         if existing is not None:
             print(
                 f"ERROR: user {email_lc!r} already exists (id={existing.id}, "
-                f"org_id={existing.organization_id}, role={existing.role.value}). "
-                f"Use 'reset-password' to rotate credentials."
+                f"org_id={existing.organization_id}, role={existing.role.value})."
             )
             sys.exit(1)
 
-        # ── Generate password ──
         password = secrets.token_urlsafe(32)
-
-        # ── Build initials for avatar (first letter of first two words, max 2 chars) ──
         parts = [p for p in full_name.split() if p]
         avatar = "".join(p[0].upper() for p in parts[:2]) or "??"
 
@@ -750,11 +622,6 @@ async def cmd_create_service_user(
         print(f"  role        : {user.role.value}")
         print(f"  password    : {password}")
         print(sep)
-        print(
-            "Store this in a secret manager. To rotate later: "
-            f"`python -m app.cli reset-password {user.email} <new_password>`."
-        )
-        print(sep)
 
 
 async def cmd_reset_password(email: str, new_password: str) -> None:
@@ -780,14 +647,13 @@ def main() -> None:
         asyncio.run(cmd_seed())
     elif cmd == "seed-vehicles":
         asyncio.run(cmd_seed_vehicles())
-    elif cmd == "seed-inspections":
-        asyncio.run(cmd_seed_inspections())
     elif cmd == "seed-defect-catalog":
         asyncio.run(cmd_seed_defect_catalog())
     elif cmd == "seed-dvic-template":
         asyncio.run(cmd_seed_dvic_template())
-    elif cmd == "backfill-defects":
-        asyncio.run(cmd_backfill_defects())
+    elif cmd == "seed-inspection-rules":
+        from app.seed_inspection_rules import cmd_seed_inspection_rules
+        asyncio.run(cmd_seed_inspection_rules())
     elif cmd == "create-service-user":
         if len(sys.argv) != 6:
             print(

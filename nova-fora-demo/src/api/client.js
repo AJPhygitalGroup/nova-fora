@@ -39,11 +39,34 @@ export const clearTokens = () => {
 const snakeToCamel = (str) =>
   str.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
 
+// Fields whose VALUE is an opaque JSON document (JSON Schema, structured
+// payload, free-form dict) — we must NOT recurse into them, otherwise the
+// inner keys get camelCased and stop matching the snake_case keys the
+// backend uses for validation + storage.
+//
+// V2.2 cases:
+//   details_schema       — JSON Schema describing a defect's `details` object
+//   threshold            — per-applicability JSON dict (e.g. {"min_tread_32nds": 4})
+//   details              — the user-supplied payload itself (must round-trip)
+const OPAQUE_JSON_KEYS = new Set([
+  'details_schema',
+  'detailsSchema',
+  'threshold',
+  'details',
+]);
+
 export function keysToCamel(obj) {
   if (Array.isArray(obj)) return obj.map(keysToCamel);
   if (obj !== null && typeof obj === 'object' && obj.constructor === Object) {
     return Object.fromEntries(
-      Object.entries(obj).map(([k, v]) => [snakeToCamel(k), keysToCamel(v)])
+      Object.entries(obj).map(([k, v]) => {
+        const camelKey = snakeToCamel(k);
+        // Stop recursing on opaque JSON payloads
+        if (OPAQUE_JSON_KEYS.has(k) || OPAQUE_JSON_KEYS.has(camelKey)) {
+          return [camelKey, v];
+        }
+        return [camelKey, keysToCamel(v)];
+      })
     );
   }
   return obj;
@@ -270,23 +293,32 @@ export const inspections = {
     });
   },
 
-  /** POST /inspections/{id}/defects — add a defect to a DRAFT, returns FD-xxx */
-  addDefect(inspectionId, body) {
-    return apiFetch(
-      `/inspections/${encodeURIComponent(inspectionId)}/defects`,
-      { method: 'POST', body: JSON.stringify(camelToSnake(body)) }
+  /**
+   * LEGACY STUBS — inspection-scoped defect endpoints.
+   *
+   * V2.2 removed POST /inspections/{id}/defects + DELETE /inspections/{id}/defects/{did}.
+   * Defects are now first-class — use `defects.create()` and `defects.delete()`
+   * with inspectionId + source='inspection'. These stubs surface a clear
+   * error so legacy callers fail loudly instead of 404-ing silently.
+   */
+  addDefect() {
+    return Promise.reject(
+      new Error(
+        "POST /inspections/{id}/defects was removed in V2.2. Call " +
+        "defects.create({vehicleId, inspectionId, source: 'inspection', ...})."
+      )
+    );
+  },
+  removeDefect() {
+    return Promise.reject(
+      new Error(
+        'DELETE /inspections/{id}/defects/{did} was removed in V2.2. ' +
+        'Call defects.delete(id).'
+      )
     );
   },
 
-  /** DELETE /inspections/{id}/defects/{defectId} — remove from DRAFT */
-  removeDefect(inspectionId, defectId) {
-    return apiFetch(
-      `/inspections/${encodeURIComponent(inspectionId)}/defects/${encodeURIComponent(defectId)}`,
-      { method: 'DELETE' }
-    );
-  },
-
-  /** POST /inspections/{id}/submit — finalize DRAFT */
+  /** POST /inspections/{id}/submit — finalize DRAFT. */
   submit(inspectionId, body = {}) {
     return apiFetch(
       `/inspections/${encodeURIComponent(inspectionId)}/submit`,
@@ -309,18 +341,19 @@ export const inspections = {
 };
 
 // ─────────────────────────────────────────────────────
-// Defects module
+// Defects module (V2.2 — single canonical table at /defects)
 // ─────────────────────────────────────────────────────
 export const defects = {
   /**
-   * GET /defects — flat list across all inspections (role-scoped server-side).
-   * params: { dspId?, status?, vehicleId?, dateFrom?, dateTo?, page?, perPage? }
+   * GET /defects — flat list across all inspections + off-inspection sources.
+   * params: { dspId?, vehicleId?, inspectionId?, source?, dateFrom?, dateTo?, page?, perPage? }
    */
   list(params = {}) {
     const q = new URLSearchParams();
     const paramMap = {
       dspId: 'dsp_id',
       vehicleId: 'vehicle_id',
+      inspectionId: 'inspection_id',
       dateFrom: 'date_from',
       dateTo: 'date_to',
       perPage: 'per_page',
@@ -333,11 +366,63 @@ export const defects = {
     return apiFetch(`/defects${qs ? '?' + qs : ''}`);
   },
 
-  /** PATCH /defects/{id} — update workflow status */
-  updateStatus(id, status) {
+  /** GET /defects/{id} — full detail with classification + group derived */
+  get(id) {
+    return apiFetch(`/defects/${encodeURIComponent(id)}`);
+  },
+
+  /**
+   * POST /defects — create one defect (vehicle-scoped, inspection optional).
+   * body: {
+   *   vehicleId,                                     // 'VAN-XXXX' or int
+   *   inspectionId? (required when source='inspection'),
+   *   source,                                        // 'inspection' | 'driver_report' | 'maintenance_request' | 'customer_report' | 'shop_finding' | 'other'
+   *   part, defectType,                              // V2.2 enum values
+   *   position?, details?, notes?, reportedAt?,
+   * }
+   */
+  create(body) {
+    return apiFetch('/defects', {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /** PATCH /defects/{id} — mutate `notes` + `details` only.
+   *
+   * V2.2: (part, position, defect_type) is immutable post-create. Workflow
+   * status lives in a future `defect_status` table — not on the defect row.
+   */
+  update(id, body) {
     return apiFetch(`/defects/${encodeURIComponent(id)}`, {
       method: 'PATCH',
-      body: JSON.stringify({ status }),
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /**
+   * LEGACY STUB — workflow status mutation.
+   *
+   * V2.2 §4.3 moved workflow state (pending/acknowledged/sent_to_vendor/
+   * scheduled/converted_to_wo/dismissed) off the Defect row into a future
+   * `defect_status` table. Until that table + its endpoints land, this
+   * stub rejects with a clear message so callers (Defects.jsx,
+   * LiveInspectionReportCard.jsx) surface a helpful error rather than
+   * 405-ing the user.
+   */
+  updateStatus() {
+    return Promise.reject(
+      new Error(
+        'Defect workflow status was moved to a future defect_status table ' +
+        'in V2.2. Status mutations are not yet supported.'
+      )
+    );
+  },
+
+  /** DELETE /defects/{id} — used by the wizard photo-gate rollback */
+  delete(id) {
+    return apiFetch(`/defects/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
     });
   },
 
@@ -361,61 +446,25 @@ export const defects = {
       { method: 'DELETE' }
     );
   },
-};
-
-// ─────────────────────────────────────────────────────
-// Defects v2 — new spec-aligned table (POST /defects/v2 + SSE stream)
-// ─────────────────────────────────────────────────────
-export const defectsV2 = {
-  /**
-   * GET /defects/v2 — list with role scoping + filters.
-   * params: { dspId?, vehicleId?, source?, dateFrom?, dateTo?, page?, perPage? }
-   */
-  list(params = {}) {
-    const q = new URLSearchParams();
-    const paramMap = {
-      dspId: 'dsp_id',
-      vehicleId: 'vehicle_id',
-      dateFrom: 'date_from',
-      dateTo: 'date_to',
-      perPage: 'per_page',
-    };
-    for (const [k, v] of Object.entries(params)) {
-      if (v === undefined || v === null || v === '') continue;
-      q.set(paramMap[k] || k, String(v));
-    }
-    const qs = q.toString();
-    return apiFetch(`/defects/v2${qs ? '?' + qs : ''}`);
-  },
 
   /**
    * Subscribe to defect.created events via SSE.
-   * EventSource can't send Authorization headers in browsers, so the access
-   * token is passed as `?token=...` (server validates via
-   * `get_current_user_from_query_token`). The stream is server-side
-   * role-scoped — dsp_owners only see their own org's defects.
    *
-   * @param {object} cb
-   * @param {(defect: object) => void} cb.onDefect — called with camelCase defect
-   * @param {(err: Event) => void} [cb.onError]
-   * @param {() => void} [cb.onOpen]
+   * EventSource can't send Authorization headers in browsers, so the access
+   * token is passed as `?token=...`. The stream is server-side role-scoped
+   * — dsp_owners only see their own org's defects.
+   *
    * @returns {() => void} cleanup — call on unmount to close the connection
    */
   subscribe({ onDefect, onError, onOpen } = {}) {
     const token = getAccessToken();
-    if (!token) {
-      // No token → no stream. Return a no-op cleanup so callers don't crash.
-      return () => {};
-    }
-    const url = `${BASE_URL}/defects/v2/events?token=${encodeURIComponent(token)}`;
+    if (!token) return () => {};
+    const url = `${BASE_URL}/defects/events?token=${encodeURIComponent(token)}`;
     const es = new EventSource(url);
     if (onOpen) es.onopen = onOpen;
     es.onmessage = (e) => {
       if (!onDefect || !e.data) return;
       try {
-        // Server unwraps the Redis envelope and emits the bare defect — see
-        // routes/defects_v2.py event_generator. Wire payload is a snake_case
-        // DefectV2Response; flip it to camelCase to match the rest of the app.
         const defect = JSON.parse(e.data);
         if (defect && defect.id) onDefect(keysToCamel(defect));
       } catch {
@@ -430,28 +479,39 @@ export const defectsV2 = {
 };
 
 // ─────────────────────────────────────────────────────
-// Defect catalog — fetched once per session and cached in module scope.
+// Defect catalog — fetched once per (vehicle_class) and cached in module scope.
 // ─────────────────────────────────────────────────────
-let _catalogPromise = null;
+const _catalogPromises = new Map();  // vehicle_class → Promise
 
 export const catalog = {
   /**
-   * GET /defect-catalog (cached). Returns the response unchanged after
-   * camelCase normalization. Use the helpers below to slice it.
+   * GET /defect-catalog?vehicle_class=X (cached per vehicle_class).
+   *
+   * V2.2: catalog is filtered server-side by vehicle_class (which rules apply
+   * to which class). Frontend caches each class independently — switching
+   * vehicles re-uses the cache when classes match.
    */
-  load() {
-    if (!_catalogPromise) {
-      _catalogPromise = apiFetch('/defect-catalog').catch((err) => {
-        _catalogPromise = null;  // allow retry on failure
-        throw err;
-      });
+  load(vehicleClass) {
+    if (!vehicleClass) {
+      return Promise.reject(new Error('vehicle_class is required'));
     }
-    return _catalogPromise;
+    if (_catalogPromises.has(vehicleClass)) {
+      return _catalogPromises.get(vehicleClass);
+    }
+    const promise = apiFetch(
+      `/defect-catalog?vehicle_class=${encodeURIComponent(vehicleClass)}`
+    ).catch((err) => {
+      _catalogPromises.delete(vehicleClass);
+      throw err;
+    });
+    _catalogPromises.set(vehicleClass, promise);
+    return promise;
   },
 
-  /** Force refetch (e.g. after admin edit). */
-  invalidate() {
-    _catalogPromise = null;
+  /** Force refetch for a specific vehicle_class (or all if not given). */
+  invalidate(vehicleClass) {
+    if (vehicleClass) _catalogPromises.delete(vehicleClass);
+    else _catalogPromises.clear();
   },
 
   // ─── helpers — operate on a loaded catalog object ───
@@ -492,37 +552,38 @@ export const catalog = {
 };
 
 // ─────────────────────────────────────────────────────
-// DVIC Template — drives the new section-first inspector wizard
+// DVIC Template — section-first checklist driven by Amazon DVIC PDFs.
+// Cached per (vehicle_class + ownership) so Branded vs Owner/Rented stay
+// separate in the cache (they hide branded-only items).
 // ─────────────────────────────────────────────────────
-const _dvicTemplateCache = new Map();  // key=assetType → Promise
+const _dvicTemplateCache = new Map();
 
 export const dvicTemplate = {
-  /**
-   * GET /dvic-template?asset_type=X — fetched once per asset_type per session.
-   * Backend caches 5min on its side; we add an extra in-memory cache so the
-   * wizard doesn't re-fetch when the user reopens it for the same vehicle.
-   */
-  load(assetType) {
-    if (!assetType) {
-      return Promise.reject(new Error('asset_type is required'));
+  load(vehicleClass, ownership = null) {
+    if (!vehicleClass) {
+      return Promise.reject(new Error('vehicle_class is required'));
     }
-    if (_dvicTemplateCache.has(assetType)) {
-      return _dvicTemplateCache.get(assetType);
+    const cacheKey = `${vehicleClass}::${ownership || 'any'}`;
+    if (_dvicTemplateCache.has(cacheKey)) {
+      return _dvicTemplateCache.get(cacheKey);
     }
-    const promise = apiFetch(
-      `/dvic-template?asset_type=${encodeURIComponent(assetType)}`
-    ).catch((err) => {
-      _dvicTemplateCache.delete(assetType);  // allow retry on failure
-      throw err;
-    });
-    _dvicTemplateCache.set(assetType, promise);
+    const params = new URLSearchParams({ vehicle_class: vehicleClass });
+    if (ownership) params.set('ownership', ownership);
+    const promise = apiFetch(`/dvic-template?${params.toString()}`)
+      .catch((err) => {
+        _dvicTemplateCache.delete(cacheKey);
+        throw err;
+      });
+    _dvicTemplateCache.set(cacheKey, promise);
     return promise;
   },
-
-  /** Force refetch for a specific asset_type (or all if not given). */
-  invalidate(assetType) {
-    if (assetType) _dvicTemplateCache.delete(assetType);
-    else _dvicTemplateCache.clear();
+  invalidate(vehicleClass = null, ownership = null) {
+    if (!vehicleClass) {
+      _dvicTemplateCache.clear();
+      return;
+    }
+    const cacheKey = `${vehicleClass}::${ownership || 'any'}`;
+    _dvicTemplateCache.delete(cacheKey);
   },
 };
 
@@ -718,11 +779,25 @@ export const uploads = {
 // ─────────────────────────────────────────────────────
 const camelToSnakeStr = (s) => s.replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
 
+// Mirror of OPAQUE_JSON_KEYS in keysToCamel — these field VALUES are opaque
+// JSON payloads (user details dict, JSON schema, threshold dict). Their inner
+// keys must NOT be transformed in either direction; they round-trip verbatim.
+const OPAQUE_JSON_KEYS_OUT = new Set([
+  'details', 'detailsSchema', 'details_schema',
+  'threshold',
+]);
+
 function camelToSnake(obj) {
   if (Array.isArray(obj)) return obj.map(camelToSnake);
   if (obj !== null && typeof obj === 'object' && obj.constructor === Object) {
     return Object.fromEntries(
-      Object.entries(obj).map(([k, v]) => [camelToSnakeStr(k), camelToSnake(v)])
+      Object.entries(obj).map(([k, v]) => {
+        const snakeKey = camelToSnakeStr(k);
+        if (OPAQUE_JSON_KEYS_OUT.has(k) || OPAQUE_JSON_KEYS_OUT.has(snakeKey)) {
+          return [snakeKey, v];
+        }
+        return [snakeKey, camelToSnake(v)];
+      })
     );
   }
   return obj;

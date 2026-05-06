@@ -6,16 +6,23 @@ Adding a new table = add an import line below + run `alembic revision --autogene
 from app.models.base import timestamp_column, utc_now
 from app.models.defect import Defect, DefectSource
 from app.models.defect_catalog import (
-    AssetType,
-    DefectDetailsSchema,
+    DefectApplicability,
+    DefectClassification,
+    DefectGroup,
     DefectPart,
     DefectPartSystem,
-    DefectPartValidity,
     DefectPosition,
+    DefectRule,
     DefectSystem,
     DefectType,
     DvicSection,
     DvicTemplateItem,
+    InspectionRule,
+    InspectionRuleLine,
+    InspectionRuleSource,
+    InspectionRuleTarget,
+    PartGroupDefault,
+    VehicleClass,
 )
 from app.models.inspection import (
     DefectStatus,
@@ -23,12 +30,11 @@ from app.models.inspection import (
     InspectionResult,
     InspectionStatus,
     OdometerSource,
-    ReportedDefect,
 )
 from app.models.organization import OrgType, Organization
 from app.models.photo import Photo, PhotoCategory
 from app.models.user import User, UserRole, UserStatus
-from app.models.vehicle import Vehicle
+from app.models.vehicle import Ownership, Vehicle
 from app.models.work_order import (
     WorkOrder,
     WorkOrderFlag,
@@ -37,13 +43,14 @@ from app.models.work_order import (
 )
 
 __all__ = [
-    "AssetType",
     "Defect",
-    "DefectDetailsSchema",
+    "DefectApplicability",
+    "DefectClassification",
+    "DefectGroup",
     "DefectPart",
     "DefectPartSystem",
-    "DefectPartValidity",
     "DefectPosition",
+    "DefectRule",
     "DefectSource",
     "DefectStatus",
     "DefectSystem",
@@ -52,17 +59,23 @@ __all__ = [
     "DvicTemplateItem",
     "Inspection",
     "InspectionResult",
+    "InspectionRule",
+    "InspectionRuleLine",
+    "InspectionRuleSource",
+    "InspectionRuleTarget",
     "InspectionStatus",
     "OdometerSource",
     "OrgType",
     "Organization",
+    "Ownership",
+    "PartGroupDefault",
     "Photo",
     "PhotoCategory",
-    "ReportedDefect",
     "User",
     "UserRole",
     "UserStatus",
     "Vehicle",
+    "VehicleClass",
     "WorkOrder",
     "WorkOrderFlag",
     "WorkOrderItem",

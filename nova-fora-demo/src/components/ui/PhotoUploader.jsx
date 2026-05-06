@@ -11,7 +11,7 @@
  *
  * Target: <2 s end-to-end on 4G for a typical 4 MB phone photo.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import imageCompression from 'browser-image-compression';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Camera, X, AlertCircle, RotateCcw, Check } from 'lucide-react';
@@ -82,10 +82,26 @@ export default function PhotoUploader({
   };
   useEffect(() => () => clearTimeout(successTimerRef.current), []);
 
-  // Keep local state in sync when parent refetches photos
+  // Keep local state in sync when parent refetches photos.
+  //
+  // BUG FIX (2026-05-05): the previous version had `[initialPhotos]` as the
+  // effect dep. Since callers default the prop to `[]`, every parent render
+  // produced a new array reference → the effect refired on every parent
+  // state change → setItems([]) wiped just-uploaded photos from local state.
+  // Visible symptom: after taking the mandatory defect photo, the photo
+  // disappeared from the gallery and (in some flows) the user got bounced
+  // back to an earlier wizard step.
+  //
+  // Fix: use a stable dep computed from the photos' identities so the effect
+  // only fires when the actual content of `initialPhotos` changes.
+  const initialPhotosKey = useMemo(
+    () => initialPhotos.map((p) => p.id ?? '').join('|'),
+    [initialPhotos]
+  );
   useEffect(() => {
     setItems(initialPhotos.map((p) => ({ ...p, status: 'done' })));
-  }, [initialPhotos]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPhotosKey]);
 
   const uploadOne = async (file, retryItemId) => {
     const tempId = retryItemId || `tmp-${crypto.randomUUID()}`;

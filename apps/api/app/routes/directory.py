@@ -7,8 +7,16 @@ Scoping (MVP):
   - SITE_ADMIN sees everything.
   - DSP_OWNER sees: own org's users + all vendor orgs + own DSP.
   - VENDOR_ADMIN sees: own vendor's users + all DSP orgs + own vendor.
-  - TECHNICIAN  sees: own vendor's users + own vendor.
+  - TECHNICIAN  sees: own vendor's users + own vendor + all DSP orgs (so the
+                     "My DSPs" tab and inspection picker work — techs don't
+                     need cross-vendor visibility, but they DO need to know
+                     which DSPs they're servicing).
+
+Cross-vendor (V-X seeing V-Y) is NEVER allowed at the directory layer —
+that's a multi-tenant leak. The future per-tech DSP assignment table
+(post-Jun 15) will narrow the DSP visibility further.
 """
+from sqlalchemy import or_
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -33,11 +41,15 @@ async def list_organizations(
 ) -> list[dict]:
     q = select(Organization).where(Organization.is_active == True)  # noqa: E712
 
-    # Role scoping — DSP_OWNER and VENDOR_ADMIN can list cross-org for picker
-    # use-cases (DSP picks a vendor, vendor sees their DSP customers).
-    # TECHNICIAN gets a narrower view.
+    # Role scoping (see module docstring):
+    #   - SITE_ADMIN: all
+    #   - DSP_OWNER + VENDOR_ADMIN: cross-org listing for picker use-cases
+    #   - TECHNICIAN: own vendor + all DSPs (no other vendors)
     if current.role == UserRole.TECHNICIAN:
-        q = q.where(Organization.id == current.organization_id)
+        q = q.where(or_(
+            Organization.id == current.organization_id,
+            Organization.org_type == OrgType.DSP,
+        ))
 
     if org_type:
         try:

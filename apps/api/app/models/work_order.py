@@ -183,10 +183,10 @@ class WorkOrder(SQLModel, table=True):
 
 
 # ─────────────────────────────────────────────────────
-# WorkOrderItem  (junction WorkOrder <-> ReportedDefect)
+# WorkOrderItem  (junction WorkOrder <-> Defect)
 # ─────────────────────────────────────────────────────
 class WorkOrderItem(SQLModel, table=True):
-    """One line item on a WO — links to a defect being repaired.
+    """One line item on a WO — links to a Defect being repaired.
 
     UNIQUE(defect_id) ensures a defect belongs to at most ONE work order
     (you can't bundle the same defect into two WOs).
@@ -209,8 +209,9 @@ class WorkOrderItem(SQLModel, table=True):
         ),
     )
     defect_id: int = Field(
-        foreign_key="reported_defects.id", nullable=False, index=True,
-        description="The defect this WO is repairing. Bumps defect.status → converted_to_wo.",
+        foreign_key="defects.id", nullable=False, index=True,
+        description="The Defect this WO is repairing. The future defect_status "
+                    "table tracks the workflow transition to 'converted_to_wo'.",
     )
 
     # Per-line repair notes (the WO's `notes` is the overall repair plan)

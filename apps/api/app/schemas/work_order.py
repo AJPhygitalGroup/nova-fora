@@ -23,7 +23,7 @@ class WorkOrderItemCreate(BaseModel):
 
 class WorkOrderItemResponse(BaseModel):
     """One item embedded inside WorkOrderResponse — surfaces the linked
-    defect's display fields so the FE doesn't N+1.
+    Defect's display fields so the FE doesn't N+1.
     """
 
     id: str  # WOI-XXXX
@@ -32,18 +32,19 @@ class WorkOrderItemResponse(BaseModel):
     line_parts_cost: Decimal | None = None
     line_labor_cost: Decimal | None = None
 
-    # Denorm of the linked defect (so the FE renders without extra fetches)
-    defect_section: str | None = None
-    defect_part: str | None = None
-    defect_description: str | None = None
-    defect_status: str | None = None
-    defect_is_v2: bool = False
-    defect_part_label: str | None = None
-    defect_part_icon: str | None = None
+    # Denorm of the linked V2.2 Defect (computed from PART_LABELS / TYPE_LABELS
+    # / POSITION_LABELS + classification/group from defect_applicability)
+    defect_part: str | None = None              # enum value
+    defect_part_label: str | None = None        # "Tire"
+    defect_part_icon: str | None = None         # "🛞"
+    defect_position: str | None = None
     defect_position_label: str | None = None
+    defect_type: str | None = None              # enum value
     defect_type_label: str | None = None
     defect_type_icon: str | None = None
     defect_details: dict | None = None
+    defect_classification: str | None = None    # Sev1/Sev2/Sev3/ULC/Advisory
+    defect_group: str | None = None             # AMR/Body/CMR/CNMR/PM/Tires/Detailing/Netradyne
 
     created_at: datetime
 

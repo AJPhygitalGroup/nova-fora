@@ -49,7 +49,7 @@ class Photo(SQLModel, table=True):
         default=None, foreign_key="inspections.id", index=True
     )
     defect_id: int | None = Field(
-        default=None, foreign_key="reported_defects.id", index=True
+        default=None, foreign_key="defects.id", index=True
     )
     # work_order_id is added in Semana 4 when the work_orders table exists.
     # For now it's a plain int; migration adds the FK when work_orders lands.

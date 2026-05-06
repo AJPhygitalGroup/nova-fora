@@ -1,25 +1,24 @@
 /**
- * DvicWizard — full-screen section-first picker for adding ONE defect.
+ * DvicWizard — section-first DVIC checklist (matches Amazon DVIC PDFs).
  *
- * Drives the v3 schema flow that mirrors the Amazon DVIC PDF structure:
- *   1. Section          (6 tiles: General / Front / Back / Driver / Passenger / In Cab)
- *   2. Item             (rows grouped by part_category — verbatim PDF text)
- *   3. Position         (only if item has position_options)            ← auto-skip
- *   4. Sub-position     (only if item has sub_positions array)         ← auto-skip
- *   5. Details form     (only if item has requires_details)            ← auto-skip
- *   6. Review + commit
+ * Steps:
+ *   1. Section          — 6 tiles (General / Front / Back / Driver / Passenger / In Cab)
+ *   2. Item             — verbatim PDF descriptions grouped by part_category
+ *   3. Position         — only if the item's rule has multiple valid_positions
+ *                          AND the template item didn't pre-set a position
+ *   4. Details form     — only if the item.requires_details
+ *   5. Review           — preview classification + group + commit
+ *   6. Photo gate       — mandatory photo before save
  *
- * Replaces DefectWizard (system-first abstraction). Used inside
- * CreateInspectionWizard step 5: when the inspector taps '+ Add defect',
- * this opens on top.
+ * Backend wiring:
+ *   - GET /dvic-template?vehicle_class=X — verbatim PDF flow per class
+ *   - POST /defects                       — with vehicleId + inspectionId + source
+ *   - DELETE /defects/{id}                — rollback when no photo uploaded
+ *   - POST /defects/{id}/photos via PhotoUploader
  *
- * Template is loaded per asset_type via dvicTemplate.load(assetType) and
- * cached. Each asset_type sees a different filtered set (cargo vs DOT step
- * van — DOT has ~20% more checks like fuel cap, mud flap, decals, etc).
- *
- * On commit: POST /inspections/{id}/defects with v2 schema fields
- * (part_v2, defect_type_v2, position, details). The backend's catalog
- * validation is the source of truth.
+ * Each (rule, applicability) → display data joined server-side, so the
+ * wizard receives one flat tree per vehicle_class with all the labels,
+ * thresholds, and JSON Schemas it needs to render.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -29,7 +28,7 @@ import {
 } from 'lucide-react';
 import {
   dvicTemplate as dvicTemplateApi,
-  inspections as inspectionsApi,
+  defects as defectsApi,
   APIError,
 } from '../api/client';
 import PhotoUploader from './ui/PhotoUploader';
@@ -37,19 +36,22 @@ import PhotoUploader from './ui/PhotoUploader';
 
 /**
  * Props:
- *   inspectionId, assetType (required) — what we're adding defects to
- *   onCommitted(defect) — fires after each successful POST /defects
- *   defects — running list of defects already committed (for the step-1 list)
+ *   inspectionId, vehicleId, vehicleClass (required)
+ *   ownership              — 'branded' | 'owner' | 'rented' (default 'branded').
+ *                            Owner/Rented vans hide DOT decal + Prime decal items.
+ *   onCommitted(defect)    — fires after each successful POST + photo
+ *   defects                — running list of committed defects
  *   onRemoveDefect(defect) — delete handler for the inline list
- *   onComplete() — submit the entire inspection (POST /inspections/{id}/submit)
- *   submitting, submitError — bubbled from the parent's submit state
- *   onClose() — close the entire inspection wizard (top-right X)
- *   onBack() — go back to the previous parent step (top-left arrow on step 1)
- *   onCancel() — legacy alias for onClose, kept for backward-compat
+ *   onComplete()           — submit the entire inspection
+ *   submitting, submitError — bubbled from the parent
+ *   onClose() / onCancel() — close the entire wizard
+ *   onBack()               — go back to the parent's previous step
  */
 export default function DvicWizard({
   inspectionId,
-  assetType,
+  vehicleId,
+  vehicleClass,
+  ownership = 'branded',
   onCommitted,
   defects = [],
   onRemoveDefect,
@@ -60,17 +62,16 @@ export default function DvicWizard({
   onBack,
   onCancel,
 }) {
-  // Resolve close action: prefer onClose (new), fall back to onCancel (legacy).
   const handleCloseAction = onClose || onCancel;
+
   // Step 1..6
   const [step, setStep] = useState(1);
 
-  // Selections built up across steps
-  const [section, setSection] = useState(null);     // section group from template
-  const [item, setItem] = useState(null);           // chosen line item
-  const [position, setPosition] = useState(null);   // {key, label} from item.position_options
-  const [subPosition, setSubPosition] = useState(null);  // {key, label} from item.sub_positions
-  const [details, setDetails] = useState({});       // structured details (tread depth, lamp_type, etc)
+  // Selections
+  const [section, setSection] = useState(null);   // section node from template
+  const [item, setItem] = useState(null);         // template item (rule × position)
+  const [position, setPosition] = useState(null); // PositionInfo when picker needed
+  const [details, setDetails] = useState({});
   const [notes, setNotes] = useState('');
 
   // Template
@@ -78,123 +79,110 @@ export default function DvicWizard({
   const [tplLoading, setTplLoading] = useState(true);
   const [tplError, setTplError] = useState(null);
 
-  // Per-defect commit state (separate from the parent's per-inspection submit
-  // state which is bubbled in via the `submitting` prop).
+  // Per-defect commit state
   const [defectSubmitting, setDefectSubmitting] = useState(false);
   const [defectSubmitError, setDefectSubmitError] = useState(null);
 
-  // Photo-gate state — set after handleCommitDefect POSTs the defect; cleared
-  // when the user finalizes (uploads ≥ 1 photo + clicks Done) or rolls back.
-  // committedDefect carries the augmented row we'll bubble up via onCommitted
-  // ONLY after a photo lands. photoCount comes from PhotoUploader's onChanged
-  // callback. justAddedPhoto is the "photo upload obligatory before save"
-  // gate the inspector sees on step 7.
+  // Photo-gate state
   const [committedDefect, setCommittedDefect] = useState(null);
   const [photoCount, setPhotoCount] = useState(0);
 
-  // Load template
+  // Load template — ownership filters branded-only items (DOT/Prime decal)
   useEffect(() => {
     let alive = true;
     setTplLoading(true);
-    dvicTemplateApi.load(assetType)
+    dvicTemplateApi.load(vehicleClass, ownership)
       .then((res) => alive && setTpl(res))
       .catch((err) => alive && setTplError(
         err instanceof APIError ? err.detail : (err.message || 'Failed to load template')
       ))
       .finally(() => alive && setTplLoading(false));
     return () => { alive = false; };
-  }, [assetType]);
+  }, [vehicleClass, ownership]);
 
   // ─── Derived ────────────────────────────────────────
-  const hasPositionOptions = (item?.positionOptions?.length || 0) > 0;
-  const hasSubPositions = (item?.subPositions?.length || 0) > 0;
+  // Position picker is needed when:
+  //   - template item didn't pre-set a position (item.position is null), AND
+  //   - the rule's applicability has at least one valid position AND > 1 option
+  const needsPositionPicker = !!item
+    && !item.position
+    && (item.validPositions?.length || 0) > 1;
   const requiresDetails = !!item?.requiresDetails;
 
+  // Step nav helpers — auto-skip steps the current pick doesn't need.
   const canGoNext = (s) => {
     switch (s) {
       case 1: return !!section;
       case 2: return !!item;
-      case 3: return !hasPositionOptions || !!position;
-      case 4: return !hasSubPositions || !!subPosition;
-      case 5: return validateDetails(item, details, subPosition);
-      case 6: return true;
+      case 3: return !needsPositionPicker || !!position;
+      case 4: return validateDetails(
+        item, details, vehicleClass, item?.position || position?.id || null,
+      );
+      case 5: return true;
       default: return false;
     }
   };
 
   const goNext = () => {
     let next = step + 1;
-    if (next === 3 && !hasPositionOptions) next = 4;
-    if (next === 4 && !hasSubPositions) next = 5;
-    if (next === 5 && !requiresDetails) next = 6;
+    if (next === 3 && !needsPositionPicker) next = 4;
+    if (next === 4 && !requiresDetails) next = 5;
     setStep(next);
   };
 
   const goBack = () => {
     let prev = step - 1;
-    if (prev === 5 && !requiresDetails) prev = 4;
-    if (prev === 4 && !hasSubPositions) prev = 3;
-    if (prev === 3 && !hasPositionOptions) prev = 2;
+    if (prev === 4 && !requiresDetails) prev = 3;
+    if (prev === 3 && !needsPositionPicker) prev = 2;
     if (prev < 1) prev = 1;
-    // Reset downstream
-    if (prev <= 1) { setItem(null); setPosition(null); setSubPosition(null); setDetails({}); }
-    if (prev <= 2) { setPosition(null); setSubPosition(null); setDetails({}); }
-    if (prev <= 3) { setSubPosition(null); setDetails({}); }
-    if (prev <= 4) { setDetails({}); }
+    // Reset only when leaving the item entirely. handleItemPick resets
+    // details/position when a new item is chosen.
+    if (prev <= 1) { setItem(null); setPosition(null); setDetails({}); }
     setStep(prev);
   };
 
-  // ─── Auto-advance tile-pick handlers ───────────────
-  // Mirror the goNext skip-logic but compute it from the freshly-picked
-  // value rather than React state (which is async). One tap = select +
-  // jump to the next required step. Same UX rule as the section tiles.
+  // ─── Tile-pick handlers ─────────────────────────────
+  const handleSectionPick = (s) => {
+    setSection(s);
+    setItem(null);
+    setPosition(null);
+    setDetails({});
+    setStep(2);
+  };
 
   const handleItemPick = (it) => {
     setItem(it);
-    const itHasPositionOptions = (it.positionOptions?.length || 0) > 0;
-    const onlyOnePosition = it.positionOptions?.length === 1;
-    const itHasSubPositions = (it.subPositions?.length || 0) > 0;
-    const itRequiresDetails = !!it.requiresDetails;
-
-    // Auto-pick the single position option (rare — keeps existing behavior).
-    if (onlyOnePosition) setPosition(it.positionOptions[0]);
-    else setPosition(null);
-    setSubPosition(null);
-    setDetails({});
-
-    // Walk the same skip-chain as goNext: 3 → 4 → 5 → 6 collapsing through
-    // any step whose data the item doesn't need.
+    // Pre-populate details with JSON Schema defaults so single-field forms
+    // (e.g., warning_lamp.state="on") can advance without user input.
+    setDetails(initialDetailsFromSchema(it));
+    // If rule has exactly one valid position and template didn't pre-set,
+    // auto-pick it.
+    const positions = it.validPositions || [];
+    if (!it.position && positions.length === 1) {
+      // fabricate a {id, label} from the only valid position string
+      setPosition({ id: positions[0], label: positions[0].replace(/_/g, ' ') });
+    } else {
+      setPosition(null);
+    }
+    // Walk skip-chain
+    const itNeedsPositionPicker = !it.position && positions.length > 1;
     let next = 3;
-    if (next === 3 && (!itHasPositionOptions || onlyOnePosition)) next = 4;
-    if (next === 4 && !itHasSubPositions) next = 5;
-    if (next === 5 && !itRequiresDetails) next = 6;
+    if (next === 3 && !itNeedsPositionPicker) next = 4;
+    if (next === 4 && !it.requiresDetails) next = 5;
     setStep(next);
   };
 
   const handlePositionPick = (p) => {
     setPosition(p);
-    // hasSubPositions / requiresDetails come from the already-picked item,
-    // so the React-state values are fine here (no closure staleness).
     let next = 4;
-    if (next === 4 && !hasSubPositions) next = 5;
-    if (next === 5 && !requiresDetails) next = 6;
+    if (next === 4 && !requiresDetails) next = 5;
     setStep(next);
   };
 
-  const handleSubPositionPick = (sp) => {
-    setSubPosition(sp);
-    let next = 5;
-    if (next === 5 && !requiresDetails) next = 6;
-    setStep(next);
-  };
-
-  // Reset all per-defect picker state — used after a successful commit + photo
-  // so the user lands on a fresh step 1 ready for the next defect.
   const resetForNextDefect = () => {
     setSection(null);
     setItem(null);
     setPosition(null);
-    setSubPosition(null);
     setDetails({});
     setNotes('');
     setDefectSubmitError(null);
@@ -203,56 +191,51 @@ export default function DvicWizard({
     setStep(1);
   };
 
-  // ─── Commit one defect ──────────────────────────────
-  // Step 6 → step 7 transition. POSTs the defect so the photo uploader has a
-  // parentId to bind to. The defect is NOT bubbled up to the parent yet —
-  // that happens only after the inspector uploads at least one photo and
-  // taps Done on step 7. If they back out instead, handleRollbackDefect
-  // deletes the row server-side so we don't leak orphaned defects.
+  // ─── Commit ──────────────────────────────────────────
   const handleCommitDefect = async () => {
     if (!item) return;
     setDefectSubmitting(true);
     setDefectSubmitError(null);
     try {
-      // Server-side, position is the DefectPosition enum value. Two cases:
-      //  a) item.position is pre-set → use it as-is
-      //  b) item.positionOptions non-empty → use the picked position.key
-      const finalPosition = position?.key || item.position || null;
-
-      // Compose the details JSON. Sub_position picks go into a key matching
-      // the picker shape:
-      //   - headlight beam     → details.beam_type    = "low_beam" | "high_beam"
-      //   - tire tread location → details.tread_position = "inner" | ...
-      //   - seatbelt component  → details.component   = "anchor" | ...
-      //   - exterior_door       → details.door        = "driver" | ...
-      const finalDetails = { ...details };
-      if (subPosition) {
-        const key = subPositionKeyForPart(item.part);
-        finalDetails[key] = subPosition.key;
-      }
+      // Resolve final position: pre-set by template > picker pick
+      const finalPosition = item.position || position?.id || null;
 
       const body = {
-        partV2: item.part,
-        defectTypeV2: item.defectType,
-        details: finalDetails,
+        vehicleId,
+        inspectionId,
+        source: 'inspection',
+        part: item.part,
+        defectType: item.defectType,
+        details: details || {},
       };
       if (finalPosition) body.position = finalPosition;
       if (notes.trim()) body.notes = notes.trim();
 
-      const created = await inspectionsApi.addDefect(inspectionId, body);
-      // Park the augmented row until the photo step finalizes — only then
-      // does it bubble up to the parent's running list.
-      setCommittedDefect({
+      const created = await defectsApi.create(body);
+      const enriched = {
         ...created,
         partLabel: item.partLabel,
         partIcon: item.partIcon,
-        positionLabel: position?.label || item.positionLabel,
+        positionLabel: position?.label || item.positionLabel || null,
         defectTypeLabel: item.defectTypeLabel,
         defectTypeIcon: item.defectTypeIcon,
-        details: finalDetails,
-      });
+        classification: item.classification,
+        group: item.group,
+        description: item.description,
+        details: details || {},
+      };
+
+      // Sensory/audio defects (odor, brake noise, no AC, etc.) skip the
+      // photo gate — commit straight to the parent and reset for next.
+      if (item.photoRequired === false) {
+        onCommitted?.({ ...enriched, photoCount: 0 });
+        resetForNextDefect();
+        return;
+      }
+
+      setCommittedDefect(enriched);
       setPhotoCount(0);
-      setStep(7);  // → photo gate
+      setStep(6);
     } catch (err) {
       setDefectSubmitError(err instanceof APIError ? err.detail : 'Submit failed');
     } finally {
@@ -260,24 +243,17 @@ export default function DvicWizard({
     }
   };
 
-  // ─── Photo gate finalize / rollback ────────────────
-  // Inspector uploaded ≥ 1 photo and tapped "Save defect" on step 7.
   const handleFinalizeDefectWithPhoto = () => {
     if (!committedDefect || photoCount < 1) return;
     onCommitted?.({ ...committedDefect, photoCount });
-    resetForNextDefect();  // → step 1 (section picker), ready for the next defect
+    resetForNextDefect();
   };
 
-  // Inspector backed out of step 7 without uploading a photo — DELETE the
-  // freshly-created defect so an unphotographed row doesn't leak into the
-  // inspection. Best-effort: if the server delete fails (network blip,
-  // permission, whatever) we still drop it from local state and let the
-  // server cleanup orphans on submit.
   const handleRollbackDefect = async (nextStep) => {
     const id = committedDefect?.id;
     if (id) {
       try {
-        await inspectionsApi.removeDefect(inspectionId, id);
+        await defectsApi.delete(id);
       } catch (err) {
         console.warn('rollback defect failed', err);
       }
@@ -288,7 +264,7 @@ export default function DvicWizard({
     setStep(nextStep);
   };
 
-  // ─── Render ─────────────────────────────────────────
+  // ─── Render guards ──────────────────────────────────
   if (tplLoading) {
     return (
       <Shell title="Loading checklist…" onCancel={handleCloseAction}>
@@ -299,32 +275,44 @@ export default function DvicWizard({
     );
   }
 
-  if (tplError || !tpl) {
+  if (tplError) {
     return (
       <Shell title="Couldn't load checklist" onCancel={handleCloseAction}>
         <div className="px-4 py-12 text-center text-sm text-navy-300">
           <AlertCircle size={28} className="text-accent-red mx-auto mb-3" />
-          <p>{tplError || 'Unknown error'}</p>
+          <p>{tplError}</p>
         </div>
       </Shell>
     );
   }
 
-  // Top-left back button:
-  //   - on step 1 (the hub): if onBack is provided (parent wants us to go back
-  //     to the previous wizard step), use it. Otherwise no back button.
-  //   - on step 7: hidden — the user must either Save (with photo) or Discard
-  //     (which rolls back the defect server-side) via the footer.
-  //   - on steps 2-6: standard intra-DvicWizard back navigation.
+  // Empty template (e.g. EV / Box Truck pending PDFs) — friendly empty state.
+  if (!tpl?.sections?.length) {
+    return (
+      <Shell title={`No checklist for ${tpl?.vehicleClassLabel || vehicleClass}`} onCancel={handleCloseAction}>
+        <div className="px-4 py-12 max-w-md mx-auto text-center">
+          <ClipboardList size={32} className="text-navy-400 mx-auto mb-3" />
+          <h3 className="text-base font-semibold text-white mb-2">
+            DVIC checklist not configured yet
+          </h3>
+          <p className="text-sm text-navy-300 mb-4">
+            The Amazon DVIC PDF for <span className="text-white font-mono">{tpl?.vehicleClassLabel || vehicleClass}</span> hasn't
+            been transcribed into the catalog yet. Contact your admin or
+            inspect another vehicle in the meantime.
+          </p>
+          <CommittedDefectsList defects={defects} onRemove={onRemoveDefect} />
+        </div>
+      </Shell>
+    );
+  }
+
   const topBackHandler = step === 1
     ? (onBack || null)
-    : step === 7
+    : step === 6
       ? null
       : goBack;
 
-  // Top-right X handler — on step 7 we have a half-saved defect, so confirm
-  // + rollback before closing instead of leaking an unphotographed row.
-  const topCloseHandler = (step === 7 && committedDefect)
+  const topCloseHandler = (step === 6 && committedDefect)
     ? async () => {
         if (window.confirm("Discard this defect and close? You haven't uploaded a photo yet.")) {
           await handleRollbackDefect(1);
@@ -336,12 +324,12 @@ export default function DvicWizard({
   return (
     <Shell
       title={step === 1
-        ? `Add defects — ${tpl.assetTypeLabel}`
-        : step === 7
-          ? `Photo required — ${tpl.assetTypeLabel}`
-          : `Add defect — ${tpl.assetTypeLabel}`}
+        ? `Add defects — ${tpl.vehicleClassLabel}`
+        : step === 6
+          ? `Photo required — ${tpl.vehicleClassLabel}`
+          : `Add defect — ${tpl.vehicleClassLabel}`}
       step={step}
-      totalSteps={7}
+      totalSteps={6}
       onCancel={topCloseHandler}
       onBack={topBackHandler}
     >
@@ -352,16 +340,8 @@ export default function DvicWizard({
               <SectionPicker
                 sections={tpl.sections}
                 value={section}
-                onChange={(s) => {
-                  // Tile tap selects + auto-advances to the item picker so
-                  // the tech doesn't have to also reach for the Next button.
-                  setSection(s);
-                  setItem(null);
-                  setStep(2);
-                }}
+                onChange={handleSectionPick}
               />
-              {/* Running defect list — gives the tech confidence the additions
-                  are saved without requiring them to leave this view. */}
               <CommittedDefectsList
                 defects={defects}
                 onRemove={onRemoveDefect}
@@ -383,40 +363,31 @@ export default function DvicWizard({
               />
             </Pane>
           )}
-          {step === 3 && item && hasPositionOptions && (
+          {step === 3 && item && needsPositionPicker && (
             <Pane key="3">
               <PositionPicker
-                options={item.positionOptions}
+                positions={item.validPositions || []}
                 value={position}
                 onChange={handlePositionPick}
               />
             </Pane>
           )}
-          {step === 4 && item && hasSubPositions && (
+          {step === 4 && item && requiresDetails && (
             <Pane key="4">
-              <SubPositionPicker
-                part={item.part}
-                options={item.subPositions}
-                value={subPosition}
-                onChange={handleSubPositionPick}
-              />
-            </Pane>
-          )}
-          {step === 5 && item && requiresDetails && (
-            <Pane key="5">
               <DetailsForm
                 item={item}
                 details={details}
+                vehicleClass={vehicleClass}
+                positionId={item.position || position?.id || null}
                 onChange={setDetails}
               />
             </Pane>
           )}
-          {step === 6 && item && (
-            <Pane key="6">
+          {step === 5 && item && (
+            <Pane key="5">
               <ReviewStep
                 item={item}
                 position={position}
-                subPosition={subPosition}
                 details={details}
                 notes={notes}
                 onNotesChange={setNotes}
@@ -424,8 +395,8 @@ export default function DvicWizard({
               />
             </Pane>
           )}
-          {step === 7 && committedDefect && (
-            <Pane key="7">
+          {step === 6 && committedDefect && (
+            <Pane key="6">
               <PhotoGateStep
                 defect={committedDefect}
                 photoCount={photoCount}
@@ -442,13 +413,6 @@ export default function DvicWizard({
       {/* Sticky footer */}
       <div className="fixed bottom-0 left-0 right-0 border-t border-navy-800 bg-navy-950/95 backdrop-blur px-4 py-3 z-10">
         <div className="max-w-2xl mx-auto flex items-center justify-between gap-3">
-          {/* Left button:
-              - step 1: "Back" returns to the previous parent step (odometer)
-                if onBack is given; otherwise hidden (top-X handles full close)
-              - steps 2-6: in-wizard Back navigation
-              - step 7: "Discard" — photo gate Back rolls back the freshly
-                created defect via DELETE /defects/{id} so an unphotographed
-                row doesn't leak into the inspection. */}
           {step === 1 ? (
             onBack ? (
               <button
@@ -460,11 +424,11 @@ export default function DvicWizard({
             ) : (
               <span className="w-[80px]" aria-hidden />
             )
-          ) : step === 7 ? (
+          ) : step === 6 ? (
             <button
               onClick={() => {
                 if (window.confirm("Discard this defect? You haven't uploaded a photo yet.")) {
-                  handleRollbackDefect(6);
+                  handleRollbackDefect(5);
                 }
               }}
               className="flex items-center gap-1.5 px-3 py-2 rounded-md border border-accent-red/40 bg-accent-red/10 text-accent-red hover:bg-accent-red/20 cursor-pointer text-sm font-semibold"
@@ -480,14 +444,6 @@ export default function DvicWizard({
             </button>
           )}
 
-          {/* Right button:
-              - step 1: "Complete Inspection" — submits the WHOLE inspection
-                via onComplete (parent's handleSubmit). Always enabled even
-                with 0 defects (a clean walkthrough = passed inspection).
-              - steps 2-5: "Next" — advances internally
-              - step 6: "Continue → photo" — POSTs the defect (parks it as
-                committedDefect), advances to the photo gate
-              - step 7: "Save defect" — disabled until ≥ 1 photo uploaded */}
           {step === 1 && onComplete && (
             <button
               onClick={onComplete}
@@ -500,7 +456,7 @@ export default function DvicWizard({
                 : `Complete Inspection${defects.length > 0 ? ` (${defects.length})` : ''}`}
             </button>
           )}
-          {step > 1 && step < 6 && (
+          {step > 1 && step < 5 && (
             <button
               onClick={goNext}
               disabled={!canGoNext(step)}
@@ -509,7 +465,7 @@ export default function DvicWizard({
               Next <ArrowRight size={14} />
             </button>
           )}
-          {step === 6 && (
+          {step === 5 && (
             <button
               onClick={handleCommitDefect}
               disabled={defectSubmitting}
@@ -519,7 +475,7 @@ export default function DvicWizard({
               {defectSubmitting ? 'Saving…' : 'Continue → photo'}
             </button>
           )}
-          {step === 7 && (
+          {step === 6 && (
             <button
               onClick={handleFinalizeDefectWithPhoto}
               disabled={photoCount < 1}
@@ -539,36 +495,44 @@ export default function DvicWizard({
 }
 
 
-// ─────────────────────────────────────────────────────
-// Step 7 — Photo gate (mandatory, blocks the defect from being saved
-// until at least one photo lands on its row in MinIO + the API).
-// ─────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════
+// Step 6 — Photo gate (mandatory)
+// ═════════════════════════════════════════════════════
 function PhotoGateStep({ defect, photoCount, onPhotoChanged }) {
   const positionLabel = defect.positionLabel || '';
   return (
     <div className="space-y-4">
-      {/* Defect summary so the inspector knows which defect they're
-          documenting — kept compact since this isn't the review step. */}
       <div className="rounded-xl border border-navy-700 bg-navy-900/60 p-3">
         <div className="flex items-start gap-3">
           <span className="text-2xl shrink-0">{defect.partIcon || '🔧'}</span>
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-white truncate">
+            <div className="text-sm font-semibold text-white">
               {defect.partLabel}
               {positionLabel && (
                 <span className="text-navy-400 font-normal"> ({positionLabel})</span>
               )}
             </div>
-            <div className="text-xs text-navy-300 truncate">
+            <div className="text-xs text-navy-300">
               {defect.defectTypeIcon} {defect.defectTypeLabel}
             </div>
-            <div className="text-[10px] text-navy-500 font-mono mt-0.5">{defect.id}</div>
+            {defect.description && (
+              <p className="text-[11px] text-navy-400 italic mt-1 line-clamp-2">"{defect.description}"</p>
+            )}
+            <div className="flex items-center gap-1.5 mt-1">
+              <span className="text-[10px] text-navy-500 font-mono">{defect.id}</span>
+              {defect.classification && (
+                <SeverityBadge classification={defect.classification} />
+              )}
+              {defect.group && (
+                <span className="text-[9px] uppercase tracking-wide font-bold text-accent-blue/80">
+                  {defect.group}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Required-photo banner — explicit + visible so there's no ambiguity
-          about what the inspector needs to do to advance. */}
       <div className={`rounded-lg border-2 px-3 py-2.5 flex items-start gap-2 ${
         photoCount >= 1
           ? 'border-accent-green/40 bg-accent-green/10'
@@ -593,8 +557,6 @@ function PhotoGateStep({ defect, photoCount, onPhotoChanged }) {
         </div>
       </div>
 
-      {/* The actual uploader — bound to the just-created defect.id so each
-          file goes straight to MinIO + commits to /defects/{id}/photos. */}
       <PhotoUploader
         parentKind="defect"
         parentId={defect.id}
@@ -611,11 +573,9 @@ function PhotoGateStep({ defect, photoCount, onPhotoChanged }) {
 }
 
 
-// ─────────────────────────────────────────────────────
-// Committed defects list — rendered inline on step 1 so the tech can see
-// what they've added so far + delete a wrongly-tapped one without leaving
-// the section picker.
-// ─────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════
+// Committed defects list (step 1 inline)
+// ═════════════════════════════════════════════════════
 function CommittedDefectsList({ defects, onRemove }) {
   if (!defects || defects.length === 0) {
     return (
@@ -651,8 +611,18 @@ function CommittedDefectsList({ defects, onRemove }) {
                 )}
               </div>
               <div className="text-[11px] text-navy-300 truncate">
-                {d.defectTypeIcon} {d.defectTypeLabel || d.description || ''}
+                {d.defectTypeIcon} {d.defectTypeLabel || ''}
               </div>
+              {(d.classification || d.group) && (
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  {d.classification && <SeverityBadge classification={d.classification} />}
+                  {d.group && (
+                    <span className="text-[9px] uppercase tracking-wide font-bold text-accent-blue/80">
+                      {d.group}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
             {onRemove && (
               <button
@@ -672,7 +642,27 @@ function CommittedDefectsList({ defects, onRemove }) {
 
 
 // ═════════════════════════════════════════════════════
-// Sub-components
+// Severity badge
+// ═════════════════════════════════════════════════════
+function SeverityBadge({ classification }) {
+  const styles = {
+    Sev1: 'bg-accent-red/15 text-accent-red border-accent-red/40',
+    Sev2: 'bg-accent-orange/15 text-accent-orange border-accent-orange/40',
+    Sev3: 'bg-accent-yellow/15 text-accent-yellow border-accent-yellow/40',
+    ULC: 'bg-accent-red/30 text-white border-accent-red font-bold',
+    Advisory: 'bg-navy-700/40 text-navy-200 border-navy-600',
+  };
+  const cls = styles[classification] || 'bg-navy-700/40 text-navy-300 border-navy-600';
+  return (
+    <span className={`inline-block px-1.5 py-[1px] rounded text-[9px] uppercase tracking-wide font-semibold border ${cls}`}>
+      {classification}
+    </span>
+  );
+}
+
+
+// ═════════════════════════════════════════════════════
+// Shell + Pane
 // ═════════════════════════════════════════════════════
 function Shell({ title, children, onCancel, onBack, step, totalSteps }) {
   return (
@@ -720,9 +710,9 @@ function Pane({ children }) {
 }
 
 
-// ─────────────────────────────────────────────────────
-// Step 1 — Section picker (6 tiles)
-// ─────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════
+// Step 1 — Section picker (6 tiles, hide empty sections)
+// ═════════════════════════════════════════════════════
 function SectionPicker({ sections, value, onChange }) {
   return (
     <div>
@@ -732,9 +722,6 @@ function SectionPicker({ sections, value, onChange }) {
       </p>
       <div className="grid grid-cols-2 gap-2">
         {sections.map((s) => {
-          const itemCount = (s.categories || []).reduce(
-            (a, c) => a + (c.items?.length || 0), 0
-          );
           const selected = value?.id === s.id;
           return (
             <button
@@ -750,7 +737,7 @@ function SectionPicker({ sections, value, onChange }) {
                 <span className="text-2xl shrink-0">{s.icon}</span>
                 <div className="min-w-0">
                   <div className="text-sm font-semibold text-white truncate">{s.label}</div>
-                  <div className="text-[10px] text-navy-400">{itemCount} checks</div>
+                  <div className="text-[10px] text-navy-400">{s.itemCount} checks</div>
                 </div>
               </div>
               <div className="text-[11px] text-navy-300 line-clamp-2">{s.description}</div>
@@ -763,9 +750,9 @@ function SectionPicker({ sections, value, onChange }) {
 }
 
 
-// ─────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════
 // Step 2 — Item picker (rows grouped by part_category)
-// ─────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════
 function ItemPicker({ section, value, onChange }) {
   return (
     <div className="space-y-4">
@@ -777,13 +764,13 @@ function ItemPicker({ section, value, onChange }) {
         </div>
       </div>
 
-      {section.categories.map((cat) => (
+      {(section.categories || []).map((cat) => (
         <div key={cat.name}>
           <div className="text-[10px] uppercase tracking-wide text-navy-400 mb-1.5 font-semibold">
             {cat.name}
           </div>
           <div className="space-y-1">
-            {cat.items.map((it) => {
+            {(cat.items || []).map((it) => {
               const selected = value?.id === it.id;
               return (
                 <button
@@ -796,37 +783,28 @@ function ItemPicker({ section, value, onChange }) {
                   }`}
                 >
                   <div className="flex items-start gap-2">
-                    <span className="text-lg shrink-0 mt-0.5">{it.partIcon}</span>
+                    <span className="text-lg shrink-0 mt-0.5">{it.partIcon || '🔧'}</span>
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-white">
-                        {it.partLabel}
+                      <div className="text-sm text-white">{it.description}</div>
+                      <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                        {it.classification && <SeverityBadge classification={it.classification} />}
+                        <span className="text-[10px] text-accent-blue/80 font-bold uppercase tracking-wide">
+                          {it.group}
+                        </span>
                         {it.position && (
-                          <span className="text-navy-400 font-normal">
-                            {' '}({it.positionLabel})
+                          <span className="text-[10px] text-navy-500">
+                            · {it.positionLabel || it.position.replace(/_/g, ' ')}
                           </span>
                         )}
-                        {' — '}
-                        <span className="text-navy-200">
-                          {it.defectTypeIcon} {it.defectTypeLabel}
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-navy-400 mt-0.5">
-                        {it.description}
-                      </div>
-                      {/* Hint icons for follow-up steps */}
-                      <div className="flex items-center gap-1.5 mt-1 text-[10px] text-navy-500">
-                        {(it.positionOptions?.length || 0) > 0 && (
-                          <span>📍 {it.positionOptions.length} positions</span>
+                        {!it.position && (it.validPositions?.length || 0) > 1 && (
+                          <span className="text-[10px] text-navy-500">
+                            · {it.validPositions.length} positions
+                          </span>
                         )}
-                        {(it.subPositions?.length || 0) > 0 && (
-                          <span>· {it.subPositions.length} sub-options</span>
-                        )}
-                        {it.requiresDetails && <span>· details required</span>}
+                        {it.requiresDetails && <span className="text-[10px] text-navy-500">· details required</span>}
                       </div>
                     </div>
-                    {selected && (
-                      <ChevronRight size={14} className="text-accent-blue shrink-0 mt-1" />
-                    )}
+                    {selected && <ChevronRight size={14} className="text-accent-blue shrink-0 mt-1" />}
                   </div>
                 </button>
               );
@@ -839,30 +817,31 @@ function ItemPicker({ section, value, onChange }) {
 }
 
 
-// ─────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════
 // Step 3 — Position picker
-// ─────────────────────────────────────────────────────
-function PositionPicker({ options, value, onChange }) {
+// ═════════════════════════════════════════════════════
+function PositionPicker({ positions, value, onChange }) {
   return (
     <div>
-      <h3 className="text-sm font-semibold text-white mb-1">Which side?</h3>
+      <h3 className="text-sm font-semibold text-white mb-1">Which position?</h3>
       <p className="text-xs text-navy-400 mb-4">
-        Pick the position the defect is on.
+        Pick where on the vehicle the defect is.
       </p>
       <div className="grid grid-cols-2 gap-2">
-        {options.map((o) => {
-          const selected = value?.key === o.key;
+        {positions.map((id) => {
+          const label = id.replace(/_/g, ' ');
+          const selected = value?.id === id;
           return (
             <button
-              key={o.key}
-              onClick={() => onChange(o)}
-              className={`rounded-xl border-2 px-4 py-6 text-center transition-all cursor-pointer ${
+              key={id}
+              onClick={() => onChange({ id, label })}
+              className={`rounded-xl border-2 px-4 py-6 text-center transition-all cursor-pointer capitalize ${
                 selected
                   ? 'border-accent-blue bg-accent-blue/10 text-accent-blue'
                   : 'border-navy-700 bg-navy-900/60 text-white hover:border-navy-600'
               }`}
             >
-              <div className="text-base font-semibold">{o.label}</div>
+              <div className="text-base font-semibold">{label}</div>
             </button>
           );
         })}
@@ -872,89 +851,35 @@ function PositionPicker({ options, value, onChange }) {
 }
 
 
-// ─────────────────────────────────────────────────────
-// Step 4 — Sub-position picker (beam type, seatbelt component, etc.)
-// ─────────────────────────────────────────────────────
-function SubPositionPicker({ part, options, value, onChange }) {
-  const promptByPart = {
-    headlight: 'Which beam?',
-    seatbelt: 'Which seatbelt component?',
-    exterior_door: 'Which door?',
-    tire: 'Which tread location?',
-    warning_lamp: 'Which lamp?',
-  };
-  const prompt = promptByPart[part] || 'Pick one';
-
-  return (
-    <div>
-      <h3 className="text-sm font-semibold text-white mb-1">{prompt}</h3>
-      <p className="text-xs text-navy-400 mb-4">
-        Used to pinpoint the defect — stored as structured details.
-      </p>
-      <div className="grid grid-cols-2 gap-2">
-        {options.map((o) => {
-          const selected = value?.key === o.key;
-          return (
-            <button
-              key={o.key}
-              onClick={() => onChange(o)}
-              className={`rounded-xl border-2 px-4 py-5 text-left transition-all cursor-pointer ${
-                selected
-                  ? 'border-accent-blue bg-accent-blue/10'
-                  : 'border-navy-700 bg-navy-900/60 hover:border-navy-600'
-              }`}
-            >
-              <div className="text-sm font-semibold text-white">{o.label}</div>
-              {selected && <Check size={12} className="inline mt-1 text-accent-blue" />}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-
-// Map a part to the JSON key used to store its sub_position in defect.details
-function subPositionKeyForPart(part) {
-  switch (part) {
-    case 'headlight': return 'beam_type';
-    case 'tire': return 'tread_position';
-    case 'seatbelt': return 'component';
-    case 'exterior_door': return 'door';
-    case 'warning_lamp': return 'lamp_type';
-    case 'turn_signal': return 'lateral_side';  // driver_side | passenger_side (paired with FRONT/REAR position)
-    default: return 'sub_position';
-  }
-}
-
-
-// ─────────────────────────────────────────────────────
-// Step 5 — Details form (JSON Schema-driven)
-// ─────────────────────────────────────────────────────
-function DetailsForm({ item, details, onChange }) {
+// ═════════════════════════════════════════════════════
+// Step 4 — Details form (JSON Schema-driven)
+// ═════════════════════════════════════════════════════
+function DetailsForm({ item, details, vehicleClass, positionId, onChange }) {
   const schema = item.detailsSchema || {};
   const props = schema.properties || {};
-  const required = schema.required || [];
+  const baseRequired = new Set(schema.required || []);
+
+  // Filter to currently-visible fields (x_show_when may hide some) and
+  // compute required flag per field, including conditional requirements.
+  const visibleEntries = Object.entries(props).filter(
+    ([, def]) => isFieldVisible(def, vehicleClass, positionId),
+  );
 
   return (
     <div className="space-y-3">
       <h3 className="text-sm font-semibold text-white mb-1">Extra details</h3>
       <p className="text-xs text-navy-400 mb-3">
-        {schema.ui_helper || 'Required to fully describe this defect.'}
+        Required to fully describe this defect.
       </p>
-
-      {Object.entries(props).map(([key, def]) => {
-        // Skip keys covered by sub_positions (we capture those separately)
-        if (['tread_position', 'beam_type', 'component', 'door', 'lamp_type'].includes(key)) {
-          return null;
-        }
+      {visibleEntries.map(([key, def]) => {
+        const isRequired = baseRequired.has(key)
+          || (def.x_required_when_shown && isFieldVisible(def, vehicleClass, positionId));
         return (
           <FieldInput
             key={key}
             name={key}
             def={def}
-            required={required.includes(key)}
+            required={isRequired}
             value={details[key]}
             onChange={(v) => onChange({ ...details, [key]: v })}
           />
@@ -992,7 +917,6 @@ function FieldInput({ name, def, required, value, onChange }) {
     );
   }
 
-  // Boolean toggle
   if (def.type === 'boolean') {
     return (
       <div>
@@ -1018,7 +942,40 @@ function FieldInput({ name, def, required, value, onChange }) {
     );
   }
 
-  // Enum (single select)
+  if (def.type === 'array' && def.items?.enum) {
+    const arr = Array.isArray(value) ? value : [];
+    const toggle = (opt) => {
+      if (arr.includes(opt)) onChange(arr.filter((x) => x !== opt));
+      else onChange([...arr, opt]);
+    };
+    return (
+      <div>
+        <label className="text-xs font-semibold text-navy-300 mb-1 block capitalize">
+          {label}{required && <span className="text-accent-red">*</span>}
+        </label>
+        <p className="text-[10px] text-navy-500 mb-1.5">Pick one or more.</p>
+        <div className="flex flex-wrap gap-1.5">
+          {def.items.enum.map((opt) => {
+            const selected = arr.includes(opt);
+            return (
+              <button
+                key={opt}
+                onClick={() => toggle(opt)}
+                className={`px-3 py-1.5 rounded-md border-2 text-xs font-semibold cursor-pointer capitalize ${
+                  selected
+                    ? 'border-accent-blue bg-accent-blue/10 text-accent-blue'
+                    : 'border-navy-700 bg-navy-900 text-navy-300 hover:text-white'
+                }`}
+              >
+                {opt.replace(/_/g, ' ')}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   if (def.enum) {
     return (
       <div>
@@ -1044,7 +1001,34 @@ function FieldInput({ name, def, required, value, onChange }) {
     );
   }
 
-  // String fallback
+  // String fallback — date format presets (MM/DD/YYYY, MM/YYYY) auto-format.
+  const datePresets = [
+    {
+      match: /^\^\(0\[1-9\]\|1\[0-2\]\)\\\/\(0\[1-9\]\|\[12\]\\d\|3\[01\]\)\\\/\\d\{4\}\$$/,
+      placeholder: 'MM/DD/YYYY', helper: 'US date format — month/day/year, e.g. 04/19/2026',
+      maxLength: 10, autoFormat: 'date',
+    },
+    {
+      match: /^\^\(0\[1-9\]\|1\[0-2\]\)\\\/\\d\{4\}\$$/,
+      placeholder: 'MM/YYYY', helper: 'Month/year on the sticker, e.g. 04/2026',
+      maxLength: 7, autoFormat: 'month',
+    },
+  ];
+  const preset = def.pattern ? datePresets.find((p) => p.match.test(def.pattern)) : null;
+
+  const handleDateChange = (raw) => {
+    if (!preset) return onChange(raw);
+    const digits = raw.replace(/\D/g, '').slice(0, preset.autoFormat === 'date' ? 8 : 6);
+    let out = digits;
+    if (preset.autoFormat === 'date') {
+      if (digits.length >= 5) out = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+      else if (digits.length >= 3) out = `${digits.slice(0, 2)}/${digits.slice(2)}`;
+    } else if (preset.autoFormat === 'month') {
+      if (digits.length >= 3) out = `${digits.slice(0, 2)}/${digits.slice(2)}`;
+    }
+    onChange(out);
+  };
+
   return (
     <div>
       <label className="text-xs font-semibold text-navy-300 mb-1 block capitalize">
@@ -1052,57 +1036,114 @@ function FieldInput({ name, def, required, value, onChange }) {
       </label>
       <input
         type="text"
+        inputMode={preset ? 'numeric' : 'text'}
         value={value ?? ''}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => preset ? handleDateChange(e.target.value) : onChange(e.target.value)}
         pattern={def.pattern}
-        className="w-full rounded-md px-3 py-2 bg-navy-900 border border-navy-700 text-white outline-none focus:border-accent-blue text-sm"
+        maxLength={preset?.maxLength}
+        placeholder={preset?.placeholder || (def.pattern ? def.pattern.replace(/[\\^$]/g, '') : undefined)}
+        className="w-full rounded-md px-3 py-2 bg-navy-900 border border-navy-700 text-white outline-none focus:border-accent-blue text-sm font-mono"
       />
+      {preset ? (
+        <p className="text-[10px] text-navy-500 mt-0.5">{preset.helper}</p>
+      ) : def.pattern ? (
+        <p className="text-[10px] text-navy-500 mt-0.5">
+          Pattern: <span className="font-mono">{def.pattern}</span>
+        </p>
+      ) : null}
     </div>
   );
 }
 
 
-// Validate that all required fields in the details schema are populated
-function validateDetails(item, details, subPosition) {
+// Nova Fora extension to JSON Schema. A property may carry x_show_when:
+// {position_in?: string[], vehicle_class_in?: string[]} — the form renders
+// it only when ALL listed conditions match. If x_required_when_shown is true,
+// validation treats the field as required whenever it's visible.
+function isFieldVisible(def, vehicleClass, positionId) {
+  const showWhen = def?.x_show_when;
+  if (!showWhen) return true;  // no condition → always visible
+  if (showWhen.position_in && !showWhen.position_in.includes(positionId)) return false;
+  if (showWhen.vehicle_class_in && !showWhen.vehicle_class_in.includes(vehicleClass)) return false;
+  return true;
+}
+
+function validateDetails(item, details, vehicleClass = null, positionId = null) {
   if (!item) return false;
   const schema = item.detailsSchema || {};
-  const required = schema.required || [];
+  const props = schema.properties || {};
+  const required = new Set(schema.required || []);
+
+  // Add conditionally-required fields when their x_show_when matches.
+  for (const [key, def] of Object.entries(props)) {
+    if (def?.x_required_when_shown && isFieldVisible(def, vehicleClass, positionId)) {
+      required.add(key);
+    }
+  }
+
   for (const key of required) {
-    // sub_position-covered keys: validated separately
-    if (['tread_position', 'beam_type', 'component', 'door', 'lamp_type'].includes(key)) {
-      // OK if a sub_position was picked OR details has the key
-      if (subPosition || details[key] !== undefined) continue;
-      return false;
-    }
-    if (details[key] === undefined || details[key] === '' || details[key] === null) {
-      return false;
-    }
+    // Skip required fields that are currently hidden — user can't fill them
+    const def = props[key];
+    if (def && !isFieldVisible(def, vehicleClass, positionId)) continue;
+    const v = details[key];
+    if (v === undefined || v === '' || v === null) return false;
+    if (Array.isArray(v) && v.length === 0) return false;
   }
   return true;
 }
 
+// Pre-populate details from JSON Schema property defaults so the user can
+// advance immediately when every required field has a default (e.g.
+// warning_lamp.state defaults to "on").
+function initialDetailsFromSchema(item) {
+  const props = item?.detailsSchema?.properties || {};
+  const out = {};
+  for (const [key, def] of Object.entries(props)) {
+    if (def && def.default !== undefined) out[key] = def.default;
+  }
+  return out;
+}
 
-// ─────────────────────────────────────────────────────
-// Step 6 — Review + commit
-// ─────────────────────────────────────────────────────
-function ReviewStep({ item, position, subPosition, details, notes, onNotesChange, submitError }) {
-  const positionLabel = position?.label || item.positionLabel;
+
+// ═════════════════════════════════════════════════════
+// Step 5 — Review + commit
+// ═════════════════════════════════════════════════════
+function ReviewStep({ item, position, details, notes, onNotesChange, submitError }) {
+  const positionLabel = position?.label
+    || item.positionLabel
+    || (item.position ? item.position.replace(/_/g, ' ') : null);
 
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-navy-700 bg-navy-900/60 p-4">
         <div className="flex items-start gap-3">
-          <span className="text-3xl shrink-0">{item.partIcon}</span>
+          <span className="text-3xl shrink-0">{item.partIcon || '🔧'}</span>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-semibold text-white mb-0.5">
               {item.partLabel}
-              {positionLabel && <span className="text-navy-400 font-normal"> ({positionLabel})</span>}
+              {positionLabel && <span className="text-navy-400 font-normal capitalize"> ({positionLabel})</span>}
             </div>
             <div className="text-sm text-navy-200 mb-1.5">
               {item.defectTypeIcon} {item.defectTypeLabel}
-              {subPosition && <span className="text-navy-400"> — {subPosition.label}</span>}
             </div>
-            <p className="text-[11px] text-navy-400 italic">"{item.description}"</p>
+
+            {item.description && (
+              <p className="text-[11px] text-navy-400 italic mb-2">"{item.description}"</p>
+            )}
+
+            <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+              {item.classification && <SeverityBadge classification={item.classification} />}
+              {item.group && (
+                <span className="text-[10px] uppercase tracking-wide font-bold text-accent-blue/80">
+                  {item.group}
+                </span>
+              )}
+              {item.needsReview && (
+                <span className="text-[10px] text-accent-orange/80 italic">
+                  · Severity pending review
+                </span>
+              )}
+            </div>
 
             {Object.keys(details).length > 0 && (
               <div className="mt-2 pt-2 border-t border-navy-800">
@@ -1113,7 +1154,9 @@ function ReviewStep({ item, position, subPosition, details, notes, onNotesChange
                   {Object.entries(details).map(([k, v]) => (
                     <div key={k} className="flex justify-between gap-2">
                       <span className="text-navy-400 capitalize">{k.replace(/_/g, ' ')}</span>
-                      <span className="text-white font-mono">{String(v)}</span>
+                      <span className="text-white font-mono">
+                        {Array.isArray(v) ? v.join(', ') : String(v)}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -1123,7 +1166,6 @@ function ReviewStep({ item, position, subPosition, details, notes, onNotesChange
         </div>
       </div>
 
-      {/* Notes (escape hatch — kept compact since most info should be structured) */}
       <div>
         <label className="text-[10px] uppercase tracking-wide text-navy-400 block mb-1.5">
           Notes (optional)

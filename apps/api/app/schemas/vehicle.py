@@ -1,15 +1,15 @@
 """Vehicle request/response schemas — matches nova-fora-demo/src/data/mockData.js.
 
-Derived fields (defect_count, last_inspected, photos) are set to defaults
-here. Later, when inspections/defects are live, the endpoint will JOIN
-with those tables and populate these fields from real data.
+V2.2 NOTE: replaces V1's `asset_type` with `vehicle_class` (driving the new
+`defect_applicability` lookup).
 """
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.defect_catalog import VehicleClass
 from app.models.organization import Organization
-from app.models.vehicle import Vehicle
+from app.models.vehicle import Ownership, Vehicle
 
 
 class VehicleResponse(BaseModel):
@@ -28,11 +28,12 @@ class VehicleResponse(BaseModel):
     grounded: bool
     grounded_reason: str | None = None
     grounded_at: datetime | None = None
-    asset_type: str = "extra_large_cargo_van"  # drives DVIC template selection
+    vehicle_class: str = "regular_cargo_van"  # drives catalog applicability
+    ownership: str = "branded"                # branded | owner | rented
 
-    # Derived from inspections / defects (stubbed until Semana 3 PR 2)
+    # Derived from inspections / defects
     defect_count: int = 0
-    last_inspected: str | None = None  # "Today, 6:15 AM" or ISO timestamp
+    last_inspected: str | None = None
     photos: int = 0
     inspector: str | None = None
 
@@ -56,20 +57,20 @@ class VehicleResponse(BaseModel):
             grounded=v.grounded,
             grounded_reason=v.grounded_reason,
             grounded_at=v.grounded_at,
-            asset_type=(
-                v.asset_type.value if hasattr(v.asset_type, "value")
-                else str(v.asset_type)
+            vehicle_class=(
+                v.vehicle_class.value if hasattr(v.vehicle_class, "value")
+                else str(v.vehicle_class)
+            ),
+            ownership=(
+                v.ownership.value if hasattr(v.ownership, "value")
+                else str(v.ownership)
             ),
             is_active=v.is_active,
         )
 
 
 class VehicleCreate(BaseModel):
-    """POST /vehicles body.
-
-    `dsp_id` is optional: if omitted and the caller is a dsp_owner, it defaults
-    to the caller's own org. site_admin must specify dsp_id explicitly.
-    """
+    """POST /vehicles body."""
 
     dsp_id: int | None = None
     fleet_id: str = Field(min_length=1, max_length=50)
@@ -79,6 +80,8 @@ class VehicleCreate(BaseModel):
     make: str = Field(min_length=1, max_length=50)
     model: str = Field(min_length=1, max_length=100)
     mileage: int = Field(default=0, ge=0)
+    vehicle_class: VehicleClass = VehicleClass.REGULAR_CARGO_VAN
+    ownership: Ownership = Ownership.BRANDED
 
     model_config = ConfigDict(extra="forbid")
 
@@ -95,12 +98,14 @@ class VehicleUpdate(BaseModel):
     grounded: bool | None = None
     grounded_reason: str | None = Field(default=None, max_length=500)
     is_active: bool | None = None
+    vehicle_class: VehicleClass | None = None
+    ownership: Ownership | None = None
 
     model_config = ConfigDict(extra="forbid")
 
 
 class VehicleListResponse(BaseModel):
-    """Paginated list response matching common frontend table expectations."""
+    """Paginated list response."""
 
     items: list[VehicleResponse]
     total: int

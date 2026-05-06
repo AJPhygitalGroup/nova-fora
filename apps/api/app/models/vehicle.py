@@ -6,21 +6,38 @@ Business rules:
   - `vin` is globally unique (even across DSPs).
   - `mileage` is the last-known odometer reading — updated when a Work Order
     completion reports a new value, or when an inspection's odometer OCR fires.
-  - `asset_type` selects which DVIC template (Cargo vs DOT) the inspector
-    sees. Defaults to extra_large_cargo_van for backfill.
+  - `vehicle_class` drives catalog applicability (V2.2 schema). Maps to
+    Amazon fleet shorthand: CDV / Cargo / SV / EV / AMXL.
+  - `ownership` is administrative metadata (Branded / Owner / Rented) — does
+    NOT affect vehicle_class but DOES affect which DVIC items the wizard
+    shows. Owner / Rented vans skip items tagged `requires_branding=true`
+    (Amazon DOT decal, Prime decal) since those don't apply.
   - Derived fields (defect_count, severity, last_inspected) are computed at
     read-time by JOINs against inspections/defects, NOT stored here.
 
 Frontend compat: `id_str` returns "VAN-XXXX" (see src/data/mockData.js shape).
 """
 from datetime import datetime
+from enum import Enum
 
 import sqlalchemy as sa
 from sqlalchemy import Column, DateTime
 from sqlmodel import Field, SQLModel
 
 from app.models.base import timestamp_column, utc_now
-from app.models.defect_catalog import AssetType
+from app.models.defect_catalog import VehicleClass
+
+
+class Ownership(str, Enum):
+    """How the DSP holds title to the van. Does NOT change vehicle_class
+    (a van is mechanically the same regardless of who owns it) but DOES
+    suppress DVIC items that only apply to Amazon-branded vans (DOT decal
+    USDOT2881058, Prime decal). Stored as VARCHAR per CLAUDE.md rule #2.
+    """
+
+    BRANDED = "branded"   # Amazon-branded (carries DOT + Prime decals)
+    OWNER = "owner"       # DSP owns the van outright
+    RENTED = "rented"     # DSP rents the van (Wheels, Enterprise, etc.)
 
 
 class Vehicle(SQLModel, table=True):
@@ -43,23 +60,41 @@ class Vehicle(SQLModel, table=True):
     make: str = Field(max_length=50, nullable=False)    # "Mercedes"
     model: str = Field(max_length=100, nullable=False)  # "Sprinter 2500"
 
-    # Asset classification — drives which DVIC template the inspector loads.
-    # DOT step vans get extra checks (documentation, fuel cap, mud flaps,
-    # Amazon DOT decal, air pressure gauge, etc.). Defaults to cargo for
-    # backfill; existing rows get extra_large_cargo_van via migration.
-    asset_type: AssetType = Field(
-        default=AssetType.EXTRA_LARGE_CARGO_VAN,
+    # Vehicle class — drives `defect_applicability` lookup for catalog/validation.
+    # CDV/Cargo/SV/EV/AMXL per Amazon fleet shorthand (see VehicleClass enum).
+    # Defaults to regular_cargo_van as the most common case; explicit on insert
+    # is preferred so the wizard surfaces the right rules.
+    vehicle_class: VehicleClass = Field(
+        default=VehicleClass.REGULAR_CARGO_VAN,
         sa_column=Column(
-            "asset_type",
+            "vehicle_class",
             sa.Enum(
-                AssetType,
+                VehicleClass,
                 native_enum=False,
                 length=30,
                 values_callable=lambda e: [m.value for m in e],
             ),
             nullable=False,
             index=True,
-            server_default="extra_large_cargo_van",
+            server_default="regular_cargo_van",
+        ),
+    )
+
+    # Ownership — Branded vs Owner vs Rented. Filters out branding-specific
+    # DVIC items when not Branded. Defaults to BRANDED (most common for DSPs).
+    ownership: Ownership = Field(
+        default=Ownership.BRANDED,
+        sa_column=Column(
+            "ownership",
+            sa.Enum(
+                Ownership,
+                native_enum=False,
+                length=20,
+                values_callable=lambda e: [m.value for m in e],
+            ),
+            nullable=False,
+            index=True,
+            server_default="branded",
         ),
     )
 

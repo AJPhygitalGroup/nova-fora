@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Truck, Plus, Upload, Search, Filter, Edit3, Trash2, MoreVertical,
-  X, ArrowRight, ArrowLeft, Check, CheckCircle2, AlertTriangle, FileSpreadsheet,
+  X, ArrowRight, ArrowLeft, Check, CheckCircle2, AlertCircle, AlertTriangle, FileSpreadsheet,
   ChevronDown, ChevronUp, Eye, Minus, Info, Download, Lock, Copy, Users, Building2,
   RefreshCw,
 } from 'lucide-react';
@@ -60,14 +60,13 @@ function enrichVehicle(v) {
 }
 
 // Transform a VehicleResponse from the real API into the shape the existing
-// components expect. Fields like `vehicleClass`, `fmc`, `location`, `color`
-// aren't in the backend yet — we synthesize defaults here. They'll become
-// real fields when the DSP admin panel adds them (post-Jun 15).
+// components expect. The backend now persists vehicle_class + ownership;
+// fmc, color, location are still frontend-only metadata until the admin panel
+// owns them (post-Jun 15).
 function fromApiVehicle(v) {
   // API returns (camelCase via snakeToCamel): id (VAN-XXXX), dspId, dsp,
   // fleetId, vin, plate, year, make, model, mileage, grounded, groundedReason,
-  // defectCount, lastInspected, photos, isActive.
-  const CLASS_DEFAULTS = ['Branded Cargo', 'Rental', 'Owned'];
+  // defectCount, lastInspected, photos, isActive, vehicleClass, ownership.
   const FMC_DEFAULTS = ['Wheels', 'Element', 'Rented/Owned'];
   const seed = parseInt(String(v.id).replace(/\D/g, ''), 10) || 0;
 
@@ -88,6 +87,9 @@ function fromApiVehicle(v) {
     grounded: v.grounded,
     groundedReason: v.groundedReason,
     isActive: v.isActive ?? true,
+    // Real persisted fields (V2.2 + ownership):
+    vehicleClass: v.vehicleClass || 'regular_cargo_van',
+    ownership: v.ownership || 'branded',
     // Derived (stubbed until inspections are live)
     defectCount: v.defectCount ?? 0,
     lastInspected: v.lastInspected || 'Never',
@@ -95,7 +97,6 @@ function fromApiVehicle(v) {
     inspector: v.inspector || '—',
     // Frontend-only metadata (not stored server-side yet)
     color: ['White', 'Blue', 'Silver', 'Black', 'Gray'][seed % 5],
-    vehicleClass: CLASS_DEFAULTS[seed % CLASS_DEFAULTS.length],
     fmc: FMC_DEFAULTS[seed % FMC_DEFAULTS.length],
     isFmcManaged: true,
     location: 'parking_lot',
@@ -115,7 +116,48 @@ const LOCATION_OPTIONS = [
 // ============================================================
 // Add/Edit Vehicle Modal (the "all-fields-editable-at-once" fix)
 // ============================================================
-const VEHICLE_CLASSES = ['Branded Cargo', 'Step Van', 'Rental', 'Owned'];
+// V2.2: vehicle_class drives the DVIC template. Each entry below maps a
+// user-friendly label to one of the backend's 5 enum values. Ownership is
+// a separate metadata axis that filters branded-only DVIC items
+// (DOT decal, Prime decal) when the van is Owner/Rented.
+const VEHICLE_TYPES = [
+  { value: 'regular_cargo_van',   label: 'Branded Cargo Van' },
+  { value: 'custom_delivery_van', label: 'Custom Delivery Van (CDV)' },
+  { value: 'step_van_dot',        label: 'Step Van (DOT)' },
+  { value: 'box_truck_dot',       label: 'Box Truck (AMXL)' },
+  { value: 'electric_vehicle',    label: 'Electric Vehicle' },
+];
+const OWNERSHIPS = [
+  { value: 'branded', label: 'Branded' },
+  { value: 'owner',   label: 'Owner'   },
+  { value: 'rented',  label: 'Rented'  },
+];
+
+// Used by the table view + filter pills to render the right label
+const VEHICLE_TYPE_LABEL = Object.fromEntries(
+  VEHICLE_TYPES.map(({ value, label }) => [value, label]),
+);
+const OWNERSHIP_LABEL = Object.fromEntries(
+  OWNERSHIPS.map(({ value, label }) => [value, label]),
+);
+
+// Best-effort migration from legacy display strings → new enum value.
+// Used when the backend hasn't yet been updated for an old vehicle row.
+const LEGACY_VEHICLE_CLASS_TO_TYPE = {
+  'Branded Cargo': 'regular_cargo_van',
+  'Step Van':      'step_van_dot',
+  'Box Truck':     'box_truck_dot',
+  'Rental':        'regular_cargo_van',
+  'Owned':         'regular_cargo_van',
+};
+const LEGACY_VEHICLE_CLASS_TO_OWNERSHIP = {
+  'Branded Cargo': 'branded',
+  'Step Van':      'branded',
+  'Box Truck':     'branded',
+  'Rental':        'rented',
+  'Owned':         'owner',
+};
+
 const FMC_OPTIONS = ['Wheels', 'Element', 'Rented/Owned', 'Holman', 'Enterprise Fleet', 'Other'];
 const MAKES = ['Ford', 'Mercedes', 'Ram', 'Chevrolet', 'Isuzu'];
 
@@ -129,7 +171,18 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
     color: vehicle.color,
     vin: vehicle.vin,
     plate: vehicle.plate,
-    vehicleClass: vehicle.vehicleClass,
+    // V2.2: vehicleClass is the backend enum (drives DVIC). ownership is
+    // its own axis. Legacy mock rows might have a label string in
+    // vehicle.vehicleClass — translate it once on load so the form
+    // shows a sensible default.
+    vehicleClass:
+      VEHICLE_TYPE_LABEL[vehicle.vehicleClass]
+        ? vehicle.vehicleClass
+        : (LEGACY_VEHICLE_CLASS_TO_TYPE[vehicle.vehicleClass] || 'regular_cargo_van'),
+    ownership:
+      vehicle.ownership
+        || LEGACY_VEHICLE_CLASS_TO_OWNERSHIP[vehicle.vehicleClass]
+        || 'branded',
     fmc: vehicle.fmc,
   } : {
     fleetId: '',
@@ -139,22 +192,56 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
     color: 'White',
     vin: '',
     plate: '',
-    vehicleClass: 'Branded Cargo',
+    vehicleClass: 'regular_cargo_van',
+    ownership: 'branded',
     fmc: 'Wheels',
   });
   const [submitting, setSubmitting] = useState(false);
+  const [saveError, setSaveError] = useState(null);
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
 
-  const update = (k, v) => setForm({ ...form, [k]: v });
-  const isValid = form.fleetId && form.vin && form.plate && form.make && form.model;
+  const update = (k, v) => {
+    setForm({ ...form, [k]: v });
+    if (saveError) setSaveError(null);  // clear after the user tweaks
+  };
 
-  const handleSave = () => {
+  // VIN check: 17 chars, no I/O/Q (FMVSS reserves those for 1/0/0).
+  // We surface a friendlier hint than the raw Pydantic regex error.
+  const vinUpper = (form.vin || '').toUpperCase().trim();
+  const vinHasIllegalChars = /[IOQ]/.test(vinUpper);
+  const vinLengthOk = vinUpper.length === 17;
+  const vinClientValid = vinLengthOk && !vinHasIllegalChars && /^[A-HJ-NPR-Z0-9]{17}$/.test(vinUpper);
+
+  const isValid = form.fleetId && form.vin && form.plate && form.make && form.model && vinClientValid;
+
+  const handleSave = async () => {
+    setSaveError(null);
+    if (!vinClientValid) {
+      setSaveError(
+        vinHasIllegalChars
+          ? 'VIN contains I / O / Q — those letters are reserved (use 1 / 0 / 0).'
+          : !vinLengthOk
+            ? `VIN must be exactly 17 characters (got ${vinUpper.length}).`
+            : 'VIN format is invalid.',
+      );
+      return;
+    }
     setSubmitting(true);
-    setTimeout(() => {
-      onSave(form);
-      setSubmitting(false);
+    try {
+      // onSave is async and throws on failure; only close on success
+      await onSave(form);
       onClose();
-    }, 600);
+    } catch (err) {
+      // Try to surface the friendliest message available
+      const detail = err?.detail || err?.message || 'Save failed';
+      // If FastAPI returned a 422 with a body.<field> path, strip the prefix
+      const cleaned = typeof detail === 'string'
+        ? detail.replace(/^body\.[a-z_]+:\s*/i, '')
+        : 'Save failed — check the form fields and try again.';
+      setSaveError(cleaned);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -190,6 +277,16 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
             </div>
           )}
 
+          {saveError && (
+            <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-accent-red/10 border border-accent-red/30 text-xs text-accent-red">
+              <AlertCircle size={14} className="shrink-0 mt-0.5" />
+              <div>
+                <div className="font-semibold mb-0.5">Couldn't save</div>
+                <div className="text-accent-red/90">{saveError}</div>
+              </div>
+            </div>
+          )}
+
           <fieldset disabled={readOnly} className={`${readOnly ? 'opacity-90' : ''} contents`}>
 
           <div className="grid grid-cols-2 gap-3">
@@ -211,11 +308,36 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
           </div>
 
           <div>
-            <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">VIN *</label>
+            <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">
+              VIN *
+              {form.vin && !vinClientValid && (
+                <span className="ml-1 normal-case font-normal text-accent-red">— invalid</span>
+              )}
+            </label>
             <input value={form.vin} onChange={(e) => update('vin', e.target.value.toUpperCase())}
               placeholder="1FTBW3XM22AJF3472"
               maxLength={17}
-              className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm font-mono bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue" />
+              aria-invalid={form.vin ? !vinClientValid : undefined}
+              className={`w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm font-mono bg-navy-800 border text-white placeholder-navy-500 outline-none ${
+                form.vin && !vinClientValid
+                  ? 'border-accent-red focus:border-accent-red ring-1 ring-accent-red/40'
+                  : 'border-navy-700 focus:border-accent-blue'
+              }`} />
+            {form.vin && !vinClientValid && (
+              <p className="text-[11px] text-accent-red mt-1.5 flex items-start gap-1">
+                <AlertCircle size={11} className="shrink-0 mt-0.5" />
+                <span>
+                  {vinHasIllegalChars
+                    ? <>VIN cannot contain <span className="font-mono font-bold">I</span>, <span className="font-mono font-bold">O</span>, or <span className="font-mono font-bold">Q</span> — those letters are reserved (use 1, 0, 0).</>
+                    : !vinLengthOk
+                      ? `VIN must be exactly 17 characters — you typed ${vinUpper.length}.`
+                      : 'VIN format invalid — only A-Z (no I/O/Q) and 0-9 allowed.'}
+                </span>
+              </p>
+            )}
+            {!form.vin && (
+              <p className="text-[10px] text-navy-500 mt-1">17 characters · no <span className="font-mono">I</span>, <span className="font-mono">O</span>, or <span className="font-mono">Q</span></p>
+            )}
           </div>
 
           <div className="grid grid-cols-3 gap-3">
@@ -247,12 +369,26 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
               className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue" />
           </div>
 
+          <div>
+            <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">
+              Vehicle Type *
+              <span className="ml-1 normal-case font-normal text-navy-500">— drives the inspection checklist</span>
+            </label>
+            <select value={form.vehicleClass} onChange={(e) => update('vehicleClass', e.target.value)}
+              className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue cursor-pointer">
+              {VEHICLE_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">Vehicle Class</label>
-              <select value={form.vehicleClass} onChange={(e) => update('vehicleClass', e.target.value)}
+              <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">
+                Ownership
+                <span className="ml-1 normal-case font-normal text-navy-500">— Branded carries DOT + Prime decals</span>
+              </label>
+              <select value={form.ownership} onChange={(e) => update('ownership', e.target.value)}
                 className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue cursor-pointer">
-                {VEHICLE_CLASSES.map((c) => <option key={c} value={c}>{c}</option>)}
+                {OWNERSHIPS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </div>
             <div>
@@ -727,7 +863,16 @@ function VehicleTable({ vans, isVendor, canEdit, onRowClick, onCopy, copiedId, o
             <td className="px-4 py-3 text-xs font-mono text-navy-300">{v.vin}</td>
             <td className="px-4 py-3 text-sm text-white whitespace-nowrap">{v.plate}</td>
             <td className="px-4 py-3 text-sm text-white text-right whitespace-nowrap font-mono">{v.mileage?.toLocaleString() || '—'} mi</td>
-            <td className="px-4 py-3"><Badge variant={v.vehicleClass === 'Rental' ? 'purple' : v.vehicleClass === 'Owned' ? 'blue' : 'gold'}>{v.vehicleClass}</Badge></td>
+            <td className="px-4 py-3 whitespace-nowrap">
+              <Badge variant="gold">
+                {VEHICLE_TYPE_LABEL[v.vehicleClass] || v.vehicleClass}
+              </Badge>
+              {(v.ownership || LEGACY_VEHICLE_CLASS_TO_OWNERSHIP[v.vehicleClass]) && (
+                <span className="ml-1.5 text-[10px] text-navy-400">
+                  {OWNERSHIP_LABEL[v.ownership || LEGACY_VEHICLE_CLASS_TO_OWNERSHIP[v.vehicleClass]]}
+                </span>
+              )}
+            </td>
             <td className="px-4 py-3 text-sm text-navy-300">{v.fmc}</td>
             <td className="px-4 py-3">
               {v.defectCount === 0 ? (
@@ -779,7 +924,7 @@ function VehicleCardMobile({ v, onClick, onCopy, copiedId, isVendor, showDsp, on
         <div className="flex items-center justify-between mt-1.5 text-[11px] gap-2">
           <span className="text-navy-300 truncate">{v.plate} <span className="text-navy-500">·</span> <span className="text-white font-mono">{v.mileage?.toLocaleString() || '—'} mi</span></span>
           <div className="flex items-center gap-1.5 shrink-0">
-            <Badge variant={v.vehicleClass === 'Rental' ? 'purple' : v.vehicleClass === 'Owned' ? 'blue' : 'gold'}>{v.vehicleClass}</Badge>
+            <Badge variant="gold">{VEHICLE_TYPE_LABEL[v.vehicleClass] || v.vehicleClass}</Badge>
           </div>
         </div>
       </button>
@@ -919,36 +1064,35 @@ export default function MyVehicles({ user }) {
   };
 
   const handleSaveVehicle = async (form) => {
-    try {
-      // Is this an edit? Match by VIN (unique) if the form has one that
-      // corresponds to an existing fleet entry.
-      const existing = form.vin && fleet.find((v) => v.vin === form.vin);
-      if (existing) {
-        await vehiclesApi.update(existing.id, {
-          fleetId: form.fleetId,
-          plate: form.plate,
-          year: parseInt(form.year, 10),
-          make: form.make,
-          model: form.model,
-          mileage: parseInt(form.mileage ?? existing.mileage, 10),
-        });
-      } else {
-        await vehiclesApi.create({
-          fleetId: form.fleetId,
-          vin: form.vin,
-          plate: form.plate,
-          year: parseInt(form.year, 10),
-          make: form.make,
-          model: form.model,
-          mileage: parseInt(form.mileage ?? 0, 10),
-        });
-      }
-      await reloadFleet();
-    } catch (err) {
-      const msg = err?.detail || err?.message || 'Save failed';
-      // Basic surfacing — TODO: replace with toast in Semana 6
-      alert(`Save failed: ${msg}`);
+    // Match by VIN (unique) if the form's VIN matches an existing fleet row.
+    // Errors propagate to the modal so the user can fix and retry without
+    // losing what they typed.
+    const existing = form.vin && fleet.find((v) => v.vin === form.vin);
+    if (existing) {
+      await vehiclesApi.update(existing.id, {
+        fleetId: form.fleetId,
+        plate: form.plate,
+        year: parseInt(form.year, 10),
+        make: form.make,
+        model: form.model,
+        mileage: parseInt(form.mileage ?? existing.mileage, 10),
+        vehicleClass: form.vehicleClass,
+        ownership: form.ownership,
+      });
+    } else {
+      await vehiclesApi.create({
+        fleetId: form.fleetId,
+        vin: form.vin,
+        plate: form.plate,
+        year: parseInt(form.year, 10),
+        make: form.make,
+        model: form.model,
+        mileage: parseInt(form.mileage ?? 0, 10),
+        vehicleClass: form.vehicleClass,
+        ownership: form.ownership,
+      });
     }
+    await reloadFleet();
   };
 
   // Soft-delete via PATCH isActive=false (no hard DELETE endpoint yet —
@@ -1159,8 +1303,8 @@ export default function MyVehicles({ user }) {
         )}
         <select value={classFilter} onChange={(e) => setClassFilter(e.target.value)}
           className="rounded-lg px-3 py-2.5 text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue cursor-pointer">
-          <option value="all">All classes</option>
-          {VEHICLE_CLASSES.map((c) => <option key={c} value={c}>{c}</option>)}
+          <option value="all">All vehicle types</option>
+          {VEHICLE_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
         </select>
       </div>
 

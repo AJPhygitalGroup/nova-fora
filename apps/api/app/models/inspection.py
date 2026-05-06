@@ -1,23 +1,15 @@
-"""Inspection + ReportedDefect models — the DVIC (Daily Vehicle Inspection
-Checklist) data.
+"""Inspection model — the DVIC (Daily Vehicle Inspection Checklist) header.
 
 Flow (simplified for MVP):
-  Driver selects vehicle → walks 11 sections (front, sides, lights, brakes,
-  tires, interior, etc.) → reports defects per section → submits.
-  One Inspection = one walkaround of one van. Defects are one-to-many.
+  Tech selects vehicle → walks 6 DVIC sections → reports defects per section
+  → submits. One Inspection = one walkaround of one van. Defects (V2.2
+  `defects` table, see app/models/defect.py) are 1:N via `Defect.inspection_id`.
 
-The draft workflow (Section 4 of the plan) is deferred — for now, POST
-/inspections creates a fully-submitted row in one call.
+Denormalized dsp_id: stored on Inspection too (not just via vehicle.dsp_id)
+so the hot query "all inspections for DSP X today" is a single-index scan.
 
-Denormalized dsp_id: we store it on Inspection too (not just via vehicle ->
-dsp) so the hot query "all inspections for DSP X today" is a single-index
-scan, no join.
-
-V2 SCHEMA NOTE (Notion Defect Data Schema spec):
-  ReportedDefect now carries v2 enum fields alongside legacy text columns.
-  New code writes to (part_enum, position, defect_type_enum, details).
-  Legacy columns (section/part/description/category) stay populated for
-  backward compat until the frontend wizard fully migrates to v2.
+V2.2 NOTE: the legacy `ReportedDefect` model and `reported_defects` table
+were removed in the V2.2 migration. New defects live in `app.models.defect.Defect`.
 """
 from datetime import datetime
 from enum import Enum
@@ -53,6 +45,14 @@ class OdometerSource(str, Enum):
 
 
 class DefectStatus(str, Enum):
+    """Workflow lifecycle for a Defect.
+
+    Lives in the `defect_status` table (separate spec) — not on the defect row
+    itself per V2.2 §4.3. This enum is referenced by the future status table
+    and by service-layer code that filters by status; it is NOT a column on
+    `defects`. Kept here for backwards-compat with code that imports it.
+    """
+
     PENDING = "pending"              # fresh — DSP hasn't reviewed yet
     ACKNOWLEDGED = "acknowledged"    # DSP saw + accepted
     SENT_TO_VENDOR = "sent_to_vendor"
@@ -160,97 +160,3 @@ class Inspection(SQLModel, table=True):
     def id_str(self) -> str:
         """Frontend-compatible ID. INS-47330, etc."""
         return f"INS-{self.id:05d}" if self.id is not None else ""
-
-
-# ─────────────────────────────────────────────────────
-# ReportedDefect
-# ─────────────────────────────────────────────────────
-class ReportedDefect(SQLModel, table=True):
-    __tablename__ = "reported_defects"
-
-    id: int | None = Field(default=None, primary_key=True)
-
-    # Parent inspection
-    inspection_id: int = Field(
-        foreign_key="inspections.id", index=True, nullable=False
-    )
-
-    # What's wrong
-    section: str = Field(max_length=100, nullable=False, index=True)
-    # e.g. "1. Front Side", "5. In-Cab"
-    part: str = Field(max_length=100, nullable=False)
-    # e.g. "Windshield", "Brake Lights"
-    description: str = Field(max_length=2000, nullable=False)
-    category: str | None = Field(default=None, max_length=100)
-    # e.g. "Glass", "Lighting", "Brakes" — used later to match vendor catalogs
-
-    status: DefectStatus = Field(
-        default=DefectStatus.PENDING,
-        sa_column=Column(
-            "status",
-            sa.Enum(
-                DefectStatus,
-                native_enum=False,
-                length=20,
-                values_callable=lambda e: [m.value for m in e],
-            ),
-            nullable=False,
-            index=True,
-            server_default="pending",
-        ),
-    )
-
-    # Photos counter (populated when photos are added in later PR)
-    photo_count: int = Field(default=0, nullable=False)
-
-    # ── V2 schema fields (Notion Defect Data Schema) ──
-    # All nullable so legacy rows still validate. New code writes these.
-    # See app/models/defect_catalog.py for the enum definitions.
-    part_enum: str | None = Field(
-        default=None, max_length=40, index=True,
-        description="DefectPart enum value (v2). Coexists with legacy free-text 'part'."
-    )
-    position: str | None = Field(
-        default=None, max_length=30,
-        description="DefectPosition enum value. Required for some parts (see defect_part_validity)."
-    )
-    defect_type_enum: str | None = Field(
-        default=None, max_length=40, index=True,
-        description="DefectType enum value (v2). Coexists with legacy 'description'."
-    )
-    details: dict | None = Field(
-        default=None,
-        sa_column=Column("details", sa.JSON, nullable=True),
-        description="JSON follow-up answers. Validated against defect_details_schema."
-    )
-    notes: str | None = Field(
-        default=None, max_length=2000,
-        description="Free text escape hatch (target <5% of rows post-launch)."
-    )
-    reported_by_id: int | None = Field(
-        default=None, foreign_key="users.id", index=True,
-        description="The inspector who reported the defect (denorm of inspection.inspector_id "
-                    "for fast 'defects reported by tech X' queries)."
-    )
-    reported_at: datetime | None = Field(
-        default=None,
-        sa_column=Column("reported_at", sa.DateTime(timezone=True), nullable=True),
-    )
-
-    # Timestamps
-    created_at: datetime = Field(
-        default_factory=utc_now, sa_column=timestamp_column("created_at")
-    )
-    updated_at: datetime = Field(
-        default_factory=utc_now, sa_column=timestamp_column("updated_at")
-    )
-
-    @property
-    def id_str(self) -> str:
-        """Frontend-compatible ID. FD-123 format."""
-        return f"FD-{self.id:03d}" if self.id is not None else ""
-
-    @property
-    def is_v2(self) -> bool:
-        """True if this row was written with the v2 enum schema."""
-        return self.part_enum is not None and self.defect_type_enum is not None

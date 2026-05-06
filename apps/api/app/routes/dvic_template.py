@@ -1,14 +1,12 @@
-"""GET /dvic-template?asset_type=X — drives the inspector wizard.
+"""GET /dvic-template?vehicle_class=X — section-first DVIC checklist.
 
-Returns the DVIC checklist for the requested asset type, grouped by:
-  section (top-level wizard tab) → part_category (sub-group) → items (rows)
+Renders the verbatim Amazon DVIC PDF flow for the wizard. Each item joins
+the V2.2 catalog (rule + applicability) so the wizard can show:
+  - section / part_category / verbatim description (from dvic_template_item)
+  - classification + group + threshold + details_schema (from V2.2 catalog)
 
-Each row is a transcribed line from the Amazon DVIC PDF. The asset_type
-filter (Cargo vs DOT step van) controls which rows are visible — DOT
-trucks see ~30% more checks (documentation, fuel cap, mud flap, decals,
-air pressure gauge, battery cover for box trucks, etc.).
-
-Caching: 5 min Cache-Control private. Reference data, rarely changes.
+Empty array → vehicle_class doesn't have a template seeded yet (e.g.
+electric_vehicle, box_truck_dot until those PDFs land).
 """
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,33 +15,25 @@ from sqlmodel import select
 from app.auth.dependencies import get_current_user
 from app.db import get_session
 from app.defect_labels import (
-    ASSET_TYPE_LABELS,
-    DVIC_SECTION_LABELS,
-    PART_LABELS,
-    POSITION_LABELS,
-    TYPE_LABELS,
+    PART_LABELS, POSITION_LABELS, TYPE_LABELS, VEHICLE_CLASS_LABELS,
 )
 from app.models.defect_catalog import (
-    AssetType,
+    DefectApplicability,
     DefectPart,
     DefectPosition,
+    DefectRule,
     DefectType,
     DvicSection,
     DvicTemplateItem,
+    VehicleClass,
 )
 from app.models.user import User
-from app.schemas.dvic_template import (
-    DvicItem,
-    DvicPartCategory,
-    DvicSectionGroup,
-    DvicSubPosition,
-    DvicTemplateResponse,
-)
+from app.models.vehicle import Ownership
 
 router = APIRouter(prefix="/dvic-template", tags=["catalog"])
 
 
-# Section ordering matches the Amazon DVIC PDFs
+# Section ordering — matches the Amazon PDF flow
 _SECTION_ORDER = [
     DvicSection.GENERAL,
     DvicSection.FRONT_SIDE,
@@ -53,174 +43,179 @@ _SECTION_ORDER = [
     DvicSection.IN_CAB,
 ]
 
-
-def _build_position_options(csv: str) -> list[dict]:
-    """Convert position_options_csv into a list of {key, label} dicts."""
-    out = []
-    for raw in csv.split(","):
-        s = raw.strip()
-        if not s:
-            continue
-        try:
-            pos = DefectPosition(s)
-        except ValueError:
-            continue
-        label = POSITION_LABELS.get(pos, {}).get("label", pos.value)
-        out.append({"key": pos.value, "label": label})
-    return out
-
-
-def _resolve_part_label(part_str: str) -> tuple[str, str]:
-    """(label, icon) for a part enum value."""
-    try:
-        p = DefectPart(part_str)
-        info = PART_LABELS.get(p, {})
-        return info.get("label", part_str), info.get("icon", "❓")
-    except ValueError:
-        return part_str, "❓"
-
-
-def _resolve_type_label(type_str: str) -> tuple[str, str]:
-    try:
-        t = DefectType(type_str)
-        info = TYPE_LABELS.get(t, {})
-        return info.get("label", type_str), info.get("icon", "❓")
-    except ValueError:
-        return type_str, "❓"
-
-
-def _resolve_position_label(pos_str: str | None) -> str | None:
-    if not pos_str:
-        return None
-    try:
-        p = DefectPosition(pos_str)
-        return POSITION_LABELS.get(p, {}).get("label", pos_str)
-    except ValueError:
-        return pos_str
+_SECTION_META = {
+    DvicSection.GENERAL: {"label": "General", "icon": "📋",
+                          "description": "Documentation, cleanliness, safety accessories"},
+    DvicSection.FRONT_SIDE: {"label": "Front Side", "icon": "🔦",
+                             "description": "Headlights, hazard light, front suspension"},
+    DvicSection.BACK_SIDE: {"label": "Back Side", "icon": "🔴",
+                            "description": "Tail lights, license plate, rear body"},
+    DvicSection.DRIVER_SIDE: {"label": "Driver Side", "icon": "⬅️",
+                              "description": "Driver-side tires, mirror, body, decals"},
+    DvicSection.PASSENGER_SIDE: {"label": "Passenger Side", "icon": "➡️",
+                                 "description": "Passenger-side tires, mirror, body"},
+    DvicSection.IN_CAB: {"label": "In Cab", "icon": "💺",
+                         "description": "Wipers, brakes, HVAC, steering, dash, doors"},
+}
 
 
 @router.get(
     "",
-    response_model=DvicTemplateResponse,
-    summary="DVIC checklist for an asset type — drives the inspector wizard",
+    response_model=dict,
+    summary="DVIC checklist for a vehicle_class — drives the section-first wizard",
 )
 async def get_dvic_template(
     response: Response,
-    asset_type: str = Query(
-        ...,
-        description="extra_large_cargo_van | large_cargo_van | step_van_medium | step_van_large",
-    ),
+    vehicle_class: str = Query(...,
+        description="custom_delivery_van | regular_cargo_van | step_van_dot | "
+                    "electric_vehicle | box_truck_dot"),
+    ownership: str | None = Query(None,
+        description="branded | owner | rented — when provided, items "
+                    "requiring branding (DOT decal, Prime decal) are hidden "
+                    "for owner/rented vans."),
     current: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
-) -> DvicTemplateResponse:
-    # Validate asset_type
+) -> dict:
     try:
-        at_enum = AssetType(asset_type)
+        vc = VehicleClass(vehicle_class)
     except ValueError:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            f"unknown asset_type: {asset_type!r}. Valid: "
-            + ", ".join(at.value for at in AssetType),
+            f"unknown vehicle_class: {vehicle_class!r}. Valid: "
+            + ", ".join(v.value for v in VehicleClass),
         ) from None
 
-    at_label = ASSET_TYPE_LABELS.get(at_enum, {}).get("label", asset_type)
+    # Validate ownership if provided. None / "branded" → show every item;
+    # "owner" or "rented" → hide branded-only items.
+    own = None
+    if ownership is not None:
+        try:
+            own = Ownership(ownership)
+        except ValueError:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"unknown ownership: {ownership!r}. Valid: "
+                + ", ".join(o.value for o in Ownership),
+            ) from None
+    hide_branded = own in (Ownership.OWNER, Ownership.RENTED)
 
-    # Fetch all active rows that match asset_type. SQL: asset_types_csv contains
-    # the enum value as a comma-separated token. We use a LIKE on the CSV with
-    # commas as boundaries to avoid e.g. matching "step_van_medium" inside
-    # "step_van_medium_xl" (theoretical but safe).
-    needle = f"%{at_enum.value}%"
+    # Fetch all template items for this class, joined with rule + applicability
     stmt = (
-        select(DvicTemplateItem)
+        select(DvicTemplateItem, DefectRule, DefectApplicability)
+        .join(DefectRule, DefectRule.id == DvicTemplateItem.rule_id)
+        .join(DefectApplicability, DefectApplicability.rule_id == DefectRule.id)
+        .where(DvicTemplateItem.vehicle_class == vc.value)
+        .where(DefectApplicability.vehicle_class == vc.value)
         .where(DvicTemplateItem.is_active == True)  # noqa: E712
-        .where(DvicTemplateItem.asset_types_csv.like(needle))
-        .order_by(DvicTemplateItem.section, DvicTemplateItem.ordering)
+        .where(DefectRule.is_active == True)        # noqa: E712
+        .where(DefectApplicability.is_active == True)  # noqa: E712
     )
-    rows = (await session.execute(stmt)).scalars().all()
-
-    # Filter precisely (LIKE was just an index-friendly pre-filter)
-    rows = [
-        r for r in rows
-        if at_enum.value in [s.strip() for s in r.asset_types_csv.split(",")]
-    ]
+    if hide_branded:
+        # Owner / Rented vans don't carry Amazon DOT or Prime decals — hide those
+        stmt = stmt.where(DvicTemplateItem.requires_branding == False)  # noqa: E712
+    stmt = stmt.order_by(DvicTemplateItem.section, DvicTemplateItem.ordering)
+    rows = (await session.execute(stmt)).all()
 
     # Group: section → part_category → list[items]
-    by_section: dict[DvicSection, dict[str, list[DvicItem]]] = {}
-    for r in rows:
-        part_label, part_icon = _resolve_part_label(
-            r.part_enum.value if hasattr(r.part_enum, "value") else r.part_enum
-        )
-        type_label, type_icon = _resolve_type_label(
-            r.defect_type_enum.value if hasattr(r.defect_type_enum, "value") else r.defect_type_enum
-        )
-        position_str = (
-            r.position.value if (r.position is not None and hasattr(r.position, "value"))
-            else r.position
-        )
-        position_label = _resolve_position_label(position_str)
+    by_section: dict[str, dict[str, list[dict]]] = {}
+    for tpl, rule, app in rows:
+        sec_key = tpl.section if isinstance(tpl.section, str) else tpl.section.value
+        cat_key = tpl.part_category
 
-        sub_positions = None
-        if r.sub_positions:
-            sub_positions = [
-                DvicSubPosition(key=sp["key"], label=sp["label"])
-                for sp in r.sub_positions
-                if isinstance(sp, dict) and "key" in sp and "label" in sp
-            ]
-
-        item = DvicItem(
-            id=r.id,
-            part=r.part_enum.value if hasattr(r.part_enum, "value") else r.part_enum,
-            part_label=part_label,
-            part_icon=part_icon,
-            defect_type=r.defect_type_enum.value if hasattr(r.defect_type_enum, "value") else r.defect_type_enum,
-            defect_type_label=type_label,
-            defect_type_icon=type_icon,
-            description=r.description,
-            position=position_str,
-            position_label=position_label,
-            position_options=_build_position_options(r.position_options_csv),
-            sub_positions=sub_positions,
-            details_schema=r.details_schema,
-            requires_details=bool(r.details_schema),
-            ordering=r.ordering,
-        )
-
-        section_key = r.section if hasattr(r.section, "value") else DvicSection(r.section)
-        by_section.setdefault(section_key, {}).setdefault(r.part_category, []).append(item)
-
-    # Build response — preserve the canonical section ordering even if a
-    # given asset has zero items in some section
-    sections: list[DvicSectionGroup] = []
-    for sec in _SECTION_ORDER:
-        cats_dict = by_section.get(sec, {})
-        if not cats_dict:
-            continue
-        info = DVIC_SECTION_LABELS.get(sec, {})
-        # Categories ordered by the lowest item ordering they contain
-        cats_sorted = sorted(
-            cats_dict.items(),
-            key=lambda kv: min(it.ordering for it in kv[1]),
-        )
-        categories = [
-            DvicPartCategory(name=name, items=items)
-            for name, items in cats_sorted
-        ]
-        sections.append(
-            DvicSectionGroup(
-                id=sec,
-                label=info.get("label", sec.value),
-                icon=info.get("icon", "📋"),
-                description=info.get("description", ""),
-                categories=categories,
+        # Resolve display labels from the static dictionaries
+        try:
+            part_enum = DefectPart(rule.part if isinstance(rule.part, str) else rule.part.value)
+            part_lbl = PART_LABELS.get(part_enum, {})
+        except ValueError:
+            part_lbl = {}
+        try:
+            type_enum = DefectType(
+                rule.defect_type if isinstance(rule.defect_type, str) else rule.defect_type.value
             )
-        )
+            type_lbl = TYPE_LABELS.get(type_enum, {})
+        except ValueError:
+            type_lbl = {}
+        pos_lbl = {}
+        if tpl.position is not None:
+            pos_v = tpl.position if isinstance(tpl.position, str) else tpl.position.value
+            try:
+                pos_enum = DefectPosition(pos_v)
+                pos_lbl = POSITION_LABELS.get(pos_enum, {})
+            except ValueError:
+                pass
 
-    total = sum(s.item_count for s in sections)
+        item = {
+            "id": tpl.id,
+            "description": tpl.description,
+            "ordering": tpl.ordering,
+            "photo_required": tpl.photo_required,
+            "requires_branding": tpl.requires_branding,
+            # Underlying V2.2 (part, defect_type) — what the wizard POSTs
+            "part": rule.part if isinstance(rule.part, str) else rule.part.value,
+            "part_label": part_lbl.get("label"),
+            "part_icon": part_lbl.get("icon"),
+            "defect_type": (
+                rule.defect_type if isinstance(rule.defect_type, str)
+                else rule.defect_type.value
+            ),
+            "defect_type_label": type_lbl.get("label"),
+            "defect_type_icon": type_lbl.get("icon"),
+            "position": (
+                tpl.position if (tpl.position is None or isinstance(tpl.position, str))
+                else tpl.position.value
+            ),
+            "position_label": pos_lbl.get("label"),
+            # Severity + routing (derived from V2.2 applicability + rule)
+            "classification": (
+                app.classification if (
+                    app.classification is None or isinstance(app.classification, str)
+                ) else app.classification.value
+            ),
+            "group": rule.group if isinstance(rule.group, str) else rule.group.value,
+            "threshold": app.threshold or {},
+            "details_schema": app.details_schema or {},
+            "requires_details": bool(app.details_schema),
+            "valid_positions": app.valid_positions or [],
+            "position_required": app.position_required,
+            "allow_null_position": app.allow_null_position,
+            "needs_review": app.needs_review,
+        }
+        by_section.setdefault(sec_key, {}).setdefault(cat_key, []).append(item)
+
+    # Order sections per the canonical PDF flow + drop empty sections
+    sections = []
+    for sec in _SECTION_ORDER:
+        cats = by_section.get(sec.value, {})
+        if not cats:
+            continue
+        meta = _SECTION_META[sec]
+        # Order categories by the smallest ordering inside them
+        cats_sorted = sorted(
+            cats.items(),
+            key=lambda kv: min(it["ordering"] for it in kv[1]),
+        )
+        sections.append({
+            "id": sec.value,
+            "label": meta["label"],
+            "icon": meta["icon"],
+            "description": meta["description"],
+            "categories": [
+                {
+                    "name": name,
+                    "items": items,
+                }
+                for name, items in cats_sorted
+            ],
+            "item_count": sum(len(items) for _, items in cats_sorted),
+        })
+
+    vc_label = VEHICLE_CLASS_LABELS.get(vc, {}).get("label", vc.value)
 
     response.headers["Cache-Control"] = "private, max-age=300"
-    return DvicTemplateResponse(
-        asset_type=at_enum.value,
-        asset_type_label=at_label,
-        sections=sections,
-        total_items=total,
-    )
+    return {
+        "vehicle_class": vc.value,
+        "vehicle_class_label": vc_label,
+        "ownership": own.value if own else None,
+        "sections": sections,
+        "total_items": sum(s["item_count"] for s in sections),
+    }
