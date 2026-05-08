@@ -20,6 +20,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import {
   Loader2, CheckCircle2, AlertCircle, Mail, Lock, User as UserIcon, Phone, Building2,
 } from 'lucide-react';
@@ -40,14 +41,8 @@ const ROLE_LABEL = {
   site_admin:     'Site Admin',
 };
 
-const ORG_TYPE_LABEL = {
-  dsp:      'Delivery Service Partner',
-  vendor:   'Service Vendor',
-  platform: 'Platform',
-};
-
-
 export default function SignupAcceptPage({ onAccepted }) {
+  const { t } = useTranslation('auth');
   const token = useMemo(() => {
     if (typeof window === 'undefined') return '';
     return new URLSearchParams(window.location.search).get('token') || '';
@@ -67,7 +62,7 @@ export default function SignupAcceptPage({ onAccepted }) {
   useEffect(() => {
     if (!token || token.length < 10) {
       setPhase('error');
-      setError('Invitation link is missing or malformed. Ask your inviter to resend it.');
+      setError(t('signupAccept.errorIncomplete'));
       return;
     }
     let cancelled = false;
@@ -83,18 +78,18 @@ export default function SignupAcceptPage({ onAccepted }) {
         if (err instanceof APIError) {
           setError(
             err.status === 404
-              ? "This invitation doesn't exist or has been revoked."
+              ? t('signupAccept.errorNotFound')
               : err.status === 410
-                ? `This invitation is no longer valid (${(err.detail || 'expired').toString().toLowerCase()}).`
-                : (err.detail || 'Could not load invitation.')
+                ? t('signupAccept.errorExpiredFmt', { detail: (err.detail || 'expired').toString().toLowerCase() })
+                : (err.detail || t('signupAccept.errorTitle'))
           );
         } else {
-          setError(err.message || 'Network error — please try again.');
+          setError(err.message || t('common:errors.network', 'Network error — please try again.'));
         }
         setPhase('error');
       });
     return () => { cancelled = true; };
-  }, [token]);
+  }, [token, t]);
 
   // Form-side validation — keeps the Submit button honest before we POST
   const passwordOk = password.length >= 8
@@ -148,10 +143,10 @@ export default function SignupAcceptPage({ onAccepted }) {
           <div className="w-14 h-14 mx-auto rounded-full bg-accent-red/15 border border-accent-red/40 flex items-center justify-center mb-4">
             <AlertCircle size={28} className="text-accent-red" />
           </div>
-          <h2 className="text-lg font-semibold text-white mb-2">We couldn't open that invitation</h2>
+          <h2 className="text-lg font-semibold text-white mb-2">{t('signupAccept.errorTitle')}</h2>
           <p className="text-sm text-navy-300 max-w-sm mx-auto">{error}</p>
           <a href="/" className="inline-block mt-6 px-4 py-2 rounded-md bg-navy-800 border border-navy-700 text-sm text-white hover:border-accent-blue cursor-pointer">
-            Go to login
+            {t('signupAccept.goToLogin')}
           </a>
         </div>
       </Shell>
@@ -169,8 +164,8 @@ export default function SignupAcceptPage({ onAccepted }) {
           >
             <CheckCircle2 size={28} className="text-accent-green" />
           </motion.div>
-          <h2 className="text-lg font-semibold text-white mb-2">Welcome aboard!</h2>
-          <p className="text-sm text-navy-300">Loading your dashboard…</p>
+          <h2 className="text-lg font-semibold text-white mb-2">{t('signupAccept.successTitle')}</h2>
+          <p className="text-sm text-navy-300">{t('signupAccept.successHint')}</p>
         </div>
       </Shell>
     );
@@ -183,23 +178,27 @@ export default function SignupAcceptPage({ onAccepted }) {
     <Shell>
       <div className="mb-5">
         <div className="text-[11px] uppercase tracking-wider text-accent-blue font-semibold mb-1">
-          Invitation
+          {t('signupAccept.invitationLabel')}
         </div>
         <h2 className="text-xl font-bold text-white mb-1">
-          Join <span className="text-accent-blue">{preview.orgName}</span>
+          {t('signupAccept.joinTitle', { org: '' }).replace(/\{\{org\}\}/, '')}
+          <span className="text-accent-blue">{preview.orgName}</span>
         </h2>
         <p className="text-sm text-navy-300">
-          <strong className="text-white">{preview.inviterName}</strong> invited you to be a{' '}
+          <strong className="text-white">{preview.inviterName}</strong>
+          {' '}{t('signupAccept.invitedByPart1', 'invited you to be a')}{' '}
           <strong className="text-white">{ROLE_LABEL[preview.role] || preview.role}</strong>{' '}
-          at this {ORG_TYPE_LABEL[preview.orgType] || preview.orgType} on Nova Fora.
+          {t('signupAccept.invitedByPart2', 'at this')}{' '}
+          {t(`signupAccept.orgTypes.${preview.orgType}`, preview.orgType)}{' '}
+          {t('signupAccept.invitedByPart3', 'on Nova Fora.')}
         </p>
       </div>
 
       {/* Read-only invitation summary */}
       <div className="rounded-lg bg-navy-900/60 border border-navy-700 px-3 py-3 text-[11px] text-navy-300 mb-5 space-y-1">
-        <Row icon={Mail}      label="Email"        value={preview.email} mono />
-        <Row icon={Building2} label="Organization" value={preview.orgName} />
-        <Row icon={UserIcon}  label="Role"         value={ROLE_LABEL[preview.role] || preview.role} />
+        <Row icon={Mail}      label={t('signupAccept.summaryEmail')}        value={preview.email} mono />
+        <Row icon={Building2} label={t('signupAccept.summaryOrganization')} value={preview.orgName} />
+        <Row icon={UserIcon}  label={t('signupAccept.summaryRole')}         value={ROLE_LABEL[preview.role] || preview.role} />
       </div>
 
       {error && (
@@ -210,24 +209,24 @@ export default function SignupAcceptPage({ onAccepted }) {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-3">
-        <Field label="Full name *">
+        <Field label={t('signupAccept.fullNameLabel')}>
           <div className="relative">
             <UserIcon size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-navy-400" />
             <input
               type="text" value={fullName} onChange={(e) => setFullName(e.target.value)}
-              placeholder="Ana López"
+              placeholder={t('signupAccept.fullNamePlaceholder')}
               className="w-full pl-9 pr-3 py-2.5 rounded-md bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue text-sm"
               maxLength={200} required
             />
           </div>
         </Field>
 
-        <Field label="Phone (optional)">
+        <Field label={t('signupAccept.phoneLabel')}>
           <div className="relative">
             <Phone size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-navy-400" />
             <input
               type="tel" value={phone} onChange={(e) => setPhone(e.target.value)}
-              placeholder="+1 555 123 4567"
+              placeholder={t('signupAccept.phonePlaceholder')}
               className="w-full pl-9 pr-3 py-2.5 rounded-md bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue text-sm"
               maxLength={30}
             />
@@ -235,11 +234,9 @@ export default function SignupAcceptPage({ onAccepted }) {
         </Field>
 
         <Field
-          label="Password *"
-          hint="At least 8 characters with one letter and one number."
-          error={password.length > 0 && !passwordOk
-            ? 'Must be 8+ chars with at least one letter and one number.'
-            : null}
+          label={t('signupAccept.passwordLabel')}
+          hint={t('signupAccept.passwordHint')}
+          error={password.length > 0 && !passwordOk ? t('signupAccept.passwordError') : null}
         >
           <div className="relative">
             <Lock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-navy-400" />
@@ -256,8 +253,8 @@ export default function SignupAcceptPage({ onAccepted }) {
         </Field>
 
         <Field
-          label="Confirm password *"
-          error={confirmPw.length > 0 && !passwordsMatch ? 'Passwords do not match.' : null}
+          label={t('signupAccept.confirmPasswordLabel')}
+          error={confirmPw.length > 0 && !passwordsMatch ? t('signupAccept.confirmPasswordError') : null}
         >
           <div className="relative">
             <Lock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-navy-400" />
@@ -277,12 +274,13 @@ export default function SignupAcceptPage({ onAccepted }) {
           type="submit" disabled={!formValid || submitting}
           className="w-full mt-2 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-md bg-accent-blue text-white font-semibold text-sm hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
         >
-          {submitting ? <><Loader2 size={14} className="animate-spin" /> Creating account…</>
-                      : <>Create account &amp; sign in</>}
+          {submitting
+            ? <><Loader2 size={14} className="animate-spin" /> {t('signupAccept.submitting')}</>
+            : <>{t('signupAccept.submit')}</>}
         </button>
 
         <p className="text-[11px] text-navy-500 text-center mt-3">
-          By creating an account you agree to Nova Fora's terms of service.
+          {t('signupAccept.termsHint')}
         </p>
       </form>
     </Shell>

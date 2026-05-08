@@ -1,0 +1,54 @@
+{
+  "nav": {
+    "home": "Home",
+    "dvic": "Home",
+    "defects": "Defects",
+    "vehicles": "My Fleet",
+    "snapshot": "QC DVIC",
+    "workOrders": "Work Orders",
+    "myDsps": "My DSPs",
+    "body": "Body Repairs",
+    "scorecard": "Vendor Scorecard",
+    "admin": "Admin",
+    "ghost": "Ghost Mode",
+    "dashboard": "Dashboard"
+  },
+  "subtitles": {
+    "dvic": "Command center",
+    "defects": "All reported defects",
+    "vehicles": "Fleet directory",
+    "snapshot": "Heatmap view",
+    "workOrders": "Vendor hub",
+    "myDsps": "DSPs you service",
+    "body": "Enhanced Portal",
+    "scorecard": "DFS Value Proposition",
+    "admin": "Users, org, security",
+    "ghost": "Impersonate users",
+    "dashboard": "Defects + body repairs"
+  },
+  "user": {
+    "menu": "Menu",
+    "profile": "Profile",
+    "logout": "Sign out",
+    "switchUser": "Switch user",
+    "stopImpersonating": "Stop impersonating"
+  },
+  "impersonation": {
+    "title": "Ghost Mode",
+    "viewingAs": "viewing as",
+    "banner": "Impersonating {{name}} — {{role}}",
+    "exit": "Exit Ghost Mode"
+  },
+  "theme": {
+    "toggle": "Toggle theme",
+    "dark": "Dark",
+    "light": "Light"
+  },
+  "language": {
+    "label": "Language"
+  },
+  "roleSwitcher": {
+    "title": "Demo role switcher",
+    "subtitle": "Try each perspective — nav, permissions and data differ."
+  }
+}

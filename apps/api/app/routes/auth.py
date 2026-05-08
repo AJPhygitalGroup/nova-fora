@@ -160,3 +160,44 @@ async def me(
     session: AsyncSession = Depends(get_session),
 ) -> UserResponse:
     return await _build_user_response(current, session)
+
+
+# ─────────────────────────────────────────────────────
+# PATCH /auth/me/language — i18n preference
+# ─────────────────────────────────────────────────────
+from pydantic import BaseModel, Field, field_validator
+from fastapi import Body
+
+
+class _LanguageUpdate(BaseModel):
+    """Body shape for PATCH /auth/me/language."""
+
+    language: str = Field(min_length=2, max_length=5)
+
+    @field_validator("language")
+    @classmethod
+    def _normalize(cls, v: str) -> str:
+        # Accept 'es' / 'es-MX' / 'en' / 'en-US' — store the 2-letter base.
+        base = v.lower().split("-", 1)[0]
+        if base not in ("es", "en"):
+            raise ValueError("only 'es' and 'en' are supported")
+        return base
+
+
+@router.patch(
+    "/me/language",
+    response_model=UserResponse,
+    summary="Update the authenticated user's i18n preference",
+)
+async def update_language(
+    body: _LanguageUpdate = Body(...),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> UserResponse:
+    if current.language != body.language:
+        current.language = body.language
+        current.updated_at = utc_now()
+        session.add(current)
+        await session.commit()
+        await session.refresh(current)
+    return await _build_user_response(current, session)

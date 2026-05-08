@@ -1,0 +1,54 @@
+{
+  "nav": {
+    "home": "Inicio",
+    "dvic": "Inicio",
+    "defects": "Defectos",
+    "vehicles": "Mi Flota",
+    "snapshot": "QC DVIC",
+    "workOrders": "Órdenes de trabajo",
+    "myDsps": "Mis DSPs",
+    "body": "Reparación de carrocería",
+    "scorecard": "Tablero de proveedor",
+    "admin": "Administración",
+    "ghost": "Modo Fantasma",
+    "dashboard": "Tablero"
+  },
+  "subtitles": {
+    "dvic": "Centro de mando",
+    "defects": "Todos los defectos reportados",
+    "vehicles": "Directorio de flota",
+    "snapshot": "Vista de calor",
+    "workOrders": "Hub de proveedores",
+    "myDsps": "DSPs que atiendes",
+    "body": "Portal extendido",
+    "scorecard": "Propuesta de valor DFS",
+    "admin": "Usuarios, org, seguridad",
+    "ghost": "Suplantar usuarios",
+    "dashboard": "Defectos + carrocería"
+  },
+  "user": {
+    "menu": "Menú",
+    "profile": "Perfil",
+    "logout": "Cerrar sesión",
+    "switchUser": "Cambiar de usuario",
+    "stopImpersonating": "Salir de la suplantación"
+  },
+  "impersonation": {
+    "title": "Modo Fantasma",
+    "viewingAs": "viendo como",
+    "banner": "Suplantando a {{name}} — {{role}}",
+    "exit": "Salir del Modo Fantasma"
+  },
+  "theme": {
+    "toggle": "Cambiar tema",
+    "dark": "Oscuro",
+    "light": "Claro"
+  },
+  "language": {
+    "label": "Idioma"
+  },
+  "roleSwitcher": {
+    "title": "Cambio de rol (demo)",
+    "subtitle": "Prueba cada perspectiva — navegación, permisos y datos cambian."
+  }
+}

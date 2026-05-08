@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import { Shield, Mail, Lock, ArrowRight, Star, UserCheck, Building2, Wrench as WrenchIcon, Briefcase, Info, Moon, Sun, AlertCircle } from 'lucide-react';
 import { demoAccounts } from '../data/mockData';
 import { auth, APIError } from '../api/client';
@@ -19,6 +20,7 @@ const roleTint = {
 };
 
 export default function Login({ onLogin, theme, onToggleTheme }) {
+  const { t } = useTranslation('auth');
   const [selectedAccount, setSelectedAccount] = useState(demoAccounts[0]);
   const [email, setEmail] = useState(demoAccounts[0].email);
   const [password, setPassword] = useState(demoAccounts[0].password);
@@ -42,14 +44,14 @@ export default function Login({ onLogin, theme, onToggleTheme }) {
     } catch (err) {
       if (err instanceof APIError) {
         if (err.status === 401) {
-          setError('Invalid email or password.');
+          setError(t('login.wrongCredentials'));
         } else if (err.status === 403) {
-          setError(`Account ${err.detail}`);
+          setError(t('login.userDisabled'));
         } else {
-          setError(err.detail || 'Login failed. Try again.');
+          setError(err.detail || t('login.wrongCredentials'));
         }
       } else {
-        setError('Network error — is the API reachable?');
+        setError(t('login.networkError', 'Network error — is the API reachable?'));
       }
     } finally {
       setSubmitting(false);
@@ -87,19 +89,20 @@ export default function Login({ onLogin, theme, onToggleTheme }) {
             </div>
 
             <div className="mb-6">
-              <h2 className="text-xl font-bold text-white mb-1">Welcome back</h2>
-              <p className="text-sm text-navy-400">Sign in to continue to your fleet</p>
+              <h2 className="text-xl font-bold text-white mb-1">{t('login.title')}</h2>
+              <p className="text-sm text-navy-400">{t('login.subtitle')}</p>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Email</label>
+                <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('common:labels.email', 'Email')}</label>
                 <div className="relative">
                   <Mail size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-navy-400" />
                   <input
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
+                    placeholder={t('login.emailPlaceholder')}
                     className="w-full rounded-lg pl-9 pr-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue"
                     required
                   />
@@ -107,13 +110,14 @@ export default function Login({ onLogin, theme, onToggleTheme }) {
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Password</label>
+                <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('common:labels.password', 'Password')}</label>
                 <div className="relative">
                   <Lock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-navy-400" />
                   <input
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
+                    placeholder={t('login.passwordPlaceholder')}
                     className="w-full rounded-lg pl-9 pr-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue"
                     required
                   />
@@ -121,9 +125,9 @@ export default function Login({ onLogin, theme, onToggleTheme }) {
                 <div className="flex justify-between mt-1.5">
                   <label className="flex items-center gap-1.5 text-[11px] text-navy-400 cursor-pointer">
                     <input type="checkbox" className="rounded" defaultChecked />
-                    Remember me
+                    {t('login.rememberMe')}
                   </label>
-                  <a href="#" className="text-[11px] text-accent-blue hover:underline">Forgot password?</a>
+                  <a href="#" className="text-[11px] text-accent-blue hover:underline">{t('login.forgotPassword')}</a>
                 </div>
               </div>
 
@@ -147,11 +151,11 @@ export default function Login({ onLogin, theme, onToggleTheme }) {
                   <>
                     <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
                       className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full" />
-                    Signing in…
+                    {t('login.submitting')}
                   </>
                 ) : (
                   <>
-                    Sign In <ArrowRight size={14} />
+                    {t('login.submit')} <ArrowRight size={14} />
                   </>
                 )}
               </button>
@@ -159,7 +163,7 @@ export default function Login({ onLogin, theme, onToggleTheme }) {
 
             <div className="mt-6 pt-6 border-t border-navy-800 flex items-center justify-center gap-2 text-[11px] text-navy-400">
               <Shield size={11} className="text-accent-green" />
-              <span>JWT auth &mdash; Let's Encrypt SSL</span>
+              <span>{t('login.securityHint', "JWT auth — Let's Encrypt SSL")}</span>
             </div>
           </motion.div>
 
@@ -172,10 +176,10 @@ export default function Login({ onLogin, theme, onToggleTheme }) {
             <div className="mb-4">
               <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent-orange/15 border border-accent-orange/30 text-accent-orange text-[10px] font-semibold mb-2">
                 <Info size={10} />
-                DEMO MODE
+                {t('login.demoBadge', 'DEMO MODE')}
               </div>
-              <h3 className="text-base font-semibold text-white mb-1">Pick a demo account to explore</h3>
-              <p className="text-xs text-navy-400">Each role has its own navigation, permissions and workflows.</p>
+              <h3 className="text-base font-semibold text-white mb-1">{t('login.demoAccountsTitle')}</h3>
+              <p className="text-xs text-navy-400">{t('login.demoAccountsHint')}</p>
             </div>
 
             <div className="grid sm:grid-cols-2 gap-3 flex-1">
@@ -212,11 +216,11 @@ export default function Login({ onLogin, theme, onToggleTheme }) {
                     </div>
                     <div className="flex items-center justify-between text-[11px]">
                       <div>
-                        <div className="text-navy-500">Organization</div>
+                        <div className="text-navy-500">{t('common:labels.organization', 'Organization')}</div>
                         <div className="text-white font-medium">{acc.org}</div>
                       </div>
                       <div className="text-right">
-                        <div className="text-navy-500">Role</div>
+                        <div className="text-navy-500">{t('common:labels.role', 'Role')}</div>
                         <div className={`font-semibold ${tint.text}`}>{acc.roleLabel}</div>
                       </div>
                     </div>
@@ -226,15 +230,15 @@ export default function Login({ onLogin, theme, onToggleTheme }) {
             </div>
 
             <div className="mt-4 text-[11px] text-navy-500 text-center">
-              Click a card to auto-fill credentials, then click <span className="text-white font-medium">Sign In</span>.
-              Tip: all demo accounts share password <span className="text-white font-mono">nova2026!</span>.
+              {t('login.demoTipPart1', 'Click a card to auto-fill credentials, then click')} <span className="text-white font-medium">{t('login.submit')}</span>.
+              {' '}{t('login.demoTipPart2', 'Tip: all demo accounts share password')} <span className="text-white font-mono">nova2026!</span>.
             </div>
           </motion.div>
         </div>
       </div>
 
       <footer className="border-t border-navy-800 py-4 px-6 text-center text-[11px] text-navy-500">
-        Nova Fora &mdash; Safety First, LLC &mdash; Customer Preview Demo
+        {t('login.footer', 'Nova Fora — Customer Preview Demo')}
       </footer>
     </div>
   );

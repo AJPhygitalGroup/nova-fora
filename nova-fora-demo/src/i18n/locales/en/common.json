@@ -1,0 +1,71 @@
+{
+  "actions": {
+    "save": "Save",
+    "saveChanges": "Save Changes",
+    "saving": "Saving…",
+    "cancel": "Cancel",
+    "close": "Close",
+    "delete": "Delete",
+    "deleting": "Deleting…",
+    "edit": "Edit",
+    "create": "Create",
+    "creating": "Creating…",
+    "submit": "Submit",
+    "submitting": "Submitting…",
+    "send": "Send",
+    "sending": "Sending…",
+    "next": "Next",
+    "back": "Back",
+    "previous": "Previous",
+    "continue": "Continue",
+    "confirm": "Confirm",
+    "yes": "Yes",
+    "no": "No",
+    "copy": "Copy",
+    "copied": "Copied",
+    "retry": "Retry",
+    "refresh": "Refresh",
+    "search": "Search",
+    "filter": "Filter",
+    "download": "Download",
+    "upload": "Upload",
+    "browse": "Browse",
+    "apply": "Apply"
+  },
+  "status": {
+    "loading": "Loading…",
+    "error": "Error",
+    "success": "Success",
+    "pending": "Pending",
+    "completed": "Completed",
+    "active": "Active",
+    "inactive": "Inactive",
+    "noData": "No data yet",
+    "comingSoon": "Coming soon"
+  },
+  "labels": {
+    "email": "Email",
+    "password": "Password",
+    "confirmPassword": "Confirm password",
+    "fullName": "Full name",
+    "phone": "Phone",
+    "phoneOptional": "Phone (optional)",
+    "name": "Name",
+    "role": "Role",
+    "organization": "Organization",
+    "required": "Required",
+    "optional": "Optional"
+  },
+  "errors": {
+    "generic": "Something went wrong. Please try again.",
+    "network": "Network error — please check your connection.",
+    "unauthorized": "You're not authorized to do that.",
+    "notFound": "Not found.",
+    "validation": "Please check the highlighted fields."
+  },
+  "language": {
+    "label": "Language",
+    "spanish": "Spanish",
+    "english": "English"
+  }
+}

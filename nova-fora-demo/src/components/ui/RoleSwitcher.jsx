@@ -1,7 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown, Check, LogOut, UserCheck, Building2, Briefcase, Wrench as WrenchIcon, RefreshCw, ClipboardCheck, Eye, Headphones } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { ChevronDown, Check, LogOut, UserCheck, Building2, Briefcase, Wrench as WrenchIcon, RefreshCw, ClipboardCheck, Eye, Headphones, Globe } from 'lucide-react';
 import { demoAccounts } from '../../data/mockData';
+import { auth as authApi } from '../../api/client';
+import { setLanguage as setI18nLanguage, SUPPORTED_LANGUAGES } from '../../i18n';
 
 // Icons for the 9 V2.2 roles. Defaults sensibly per role family so users
 // with a sub-role don't get the owner's icon by mistake.
@@ -33,9 +36,25 @@ const roleTint = {
 };
 
 export default function RoleSwitcher({ user, onSwitchRole, onLogout }) {
+  const { t, i18n } = useTranslation('layout');
   const [open, setOpen] = useState(false);
   const tint = roleTint[user.role] || roleTint.dsp_owner;
   const Icon = roleIcon[user.role] || UserCheck;
+  const currentLang = (i18n.resolvedLanguage || i18n.language || 'es').slice(0, 2);
+
+  // Switch language. Persists to localStorage immediately (via i18n config)
+  // and pushes to the user record so the preference follows them across
+  // devices. The API call is fire-and-forget so a transient network blip
+  // doesn't stop the UI from updating.
+  const handleLanguageChange = async (lang) => {
+    if (lang === currentLang) return;
+    await setI18nLanguage(lang);
+    if (user?.id) {
+      authApi.setLanguage(lang).catch((err) => {
+        console.warn('failed to persist language preference', err);
+      });
+    }
+  };
 
   return (
     <div className="relative">
@@ -66,9 +85,9 @@ export default function RoleSwitcher({ user, onSwitchRole, onLogout }) {
               <div className="px-4 py-3 border-b border-navy-800 bg-navy-950/60">
                 <div className="flex items-center gap-2 mb-1">
                   <RefreshCw size={10} className="text-accent-orange" />
-                  <span className="text-[10px] font-semibold text-accent-orange uppercase tracking-wide">Demo role switcher</span>
+                  <span className="text-[10px] font-semibold text-accent-orange uppercase tracking-wide">{t('roleSwitcher.title')}</span>
                 </div>
-                <div className="text-[11px] text-navy-400">Try each perspective — nav, permissions and data differ.</div>
+                <div className="text-[11px] text-navy-400">{t('roleSwitcher.subtitle')}</div>
               </div>
 
               <div className="max-h-96 overflow-y-auto">
@@ -99,12 +118,40 @@ export default function RoleSwitcher({ user, onSwitchRole, onLogout }) {
                 })}
               </div>
 
+              {/* Language picker — persists per-user via /auth/me/language */}
+              <div className="border-t border-navy-800 px-4 py-3 bg-navy-950/30">
+                <div className="flex items-center gap-2 mb-2">
+                  <Globe size={10} className="text-navy-400" />
+                  <span className="text-[10px] font-semibold text-navy-400 uppercase tracking-wide">{t('language.label')}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {SUPPORTED_LANGUAGES.map((lang) => {
+                    const active = currentLang === lang.code;
+                    return (
+                      <button
+                        key={lang.code}
+                        onClick={() => handleLanguageChange(lang.code)}
+                        className={`flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md border text-xs font-medium transition-all cursor-pointer ${
+                          active
+                            ? 'bg-accent-blue/15 border-accent-blue/40 text-accent-blue'
+                            : 'bg-navy-800 border-navy-700 text-navy-300 hover:text-white'
+                        }`}
+                      >
+                        <span>{lang.flag}</span>
+                        <span>{lang.nativeLabel}</span>
+                        {active && <Check size={11} />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div className="border-t border-navy-800">
                 <button
                   onClick={() => { setOpen(false); onLogout(); }}
                   className="w-full flex items-center gap-2 px-4 py-3 text-left text-accent-red hover:bg-accent-red/10 transition-colors text-sm font-medium cursor-pointer"
                 >
-                  <LogOut size={14} /> Sign out
+                  <LogOut size={14} /> {t('user.logout')}
                 </button>
               </div>
             </motion.div>

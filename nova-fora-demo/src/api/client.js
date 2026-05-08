@@ -191,6 +191,15 @@ export const auth = {
     return apiFetch('/auth/me');
   },
 
+  /** PATCH /auth/me/language — persist the i18n preference. Accepts 'es' / 'en'
+   *  (or any locale starting with those — server collapses to the base). */
+  setLanguage(lang) {
+    return apiFetch('/auth/me/language', {
+      method: 'PATCH',
+      body: JSON.stringify({ language: lang }),
+    });
+  },
+
   /** POST /auth/logout — best-effort; always clears local tokens. */
   async logout() {
     try {

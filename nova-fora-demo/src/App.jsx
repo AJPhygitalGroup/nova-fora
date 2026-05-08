@@ -4,6 +4,7 @@ import Layout from './components/Layout';
 import Login from './components/Login';
 import SignupAcceptPage from './components/SignupAcceptPage';
 import { auth, getAccessToken, clearTokens, APIError } from './api/client';
+import { setLanguage as setI18nLanguage } from './i18n';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -33,7 +34,16 @@ export default function App() {
     }
     auth
       .me()
-      .then((me) => setUser(me))
+      .then((me) => {
+        setUser(me);
+        // Sync the user's stored language preference to i18n so the UI
+        // shows their language right after auth bootstrap (without making
+        // them re-pick on every device).
+        if (me?.language) {
+          const base = String(me.language).split('-', 1)[0].toLowerCase();
+          if (['es', 'en'].includes(base)) setI18nLanguage(base);
+        }
+      })
       .catch((err) => {
         if (err instanceof APIError && (err.status === 401 || err.status === 403)) {
           clearTokens();

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import {
   Shield, BarChart3, Wrench, ChevronRight, Menu, X, Sun, Moon, Bell,
   LayoutGrid, Truck, ClipboardList, Settings, Eye, Star, Home as HomeIcon,
@@ -19,58 +20,79 @@ import NotificationsPanel from './NotificationsPanel';
 import RoleSwitcher from './ui/RoleSwitcher';
 import { rolePermissions, notificationsSeed } from '../data/mockData';
 
-// View catalog — id, label, subtitle, icon, accent color, component
+// View catalog — id, i18n key, icon, accent color, component.
+// Labels are looked up via t('layout:nav.<key>') and t('layout:subtitles.<key>')
+// at render time so language changes apply without a reload.
 const VIEW_CATALOG = {
-  dvic:        { id: 'dvic',        label: 'Home',             subtitle: 'Command center',           icon: HomeIcon,       color: 'text-accent-green',  Component: RealDVIC },
-  defects:     { id: 'defects',     label: 'Defects',          subtitle: 'All reported defects',     icon: AlertTriangle,  color: 'text-accent-orange', Component: Defects },
-  snapshot:    { id: 'snapshot',    label: 'QC DVIC',          subtitle: 'Heatmap view',             icon: LayoutGrid,     color: 'text-accent-blue',   Component: FleetSnapshot },
-  vehicles:    { id: 'vehicles',    label: 'My Fleet',         subtitle: 'Fleet directory',          icon: Truck,          color: 'text-accent-green',  Component: MyVehicles },
-  my_dsps:     { id: 'my_dsps',     label: 'My DSPs',          subtitle: 'DSPs you service',         icon: Truck,          color: 'text-accent-blue',   Component: MyDsps },
-  work_orders: { id: 'work_orders', label: 'Work Orders',      subtitle: 'Vendor hub',               icon: ClipboardList,  color: 'text-accent-purple', Component: WorkOrders },
-  body:        { id: 'body',        label: 'Body Repairs',     subtitle: 'Enhanced Portal',          icon: Wrench,         color: 'text-accent-purple', Component: BodyRepairs },
-  scorecard:   { id: 'scorecard',   label: 'Vendor Scorecard', subtitle: 'DFS Value Proposition',    icon: BarChart3,      color: 'text-accent-blue',   Component: VendorScorecard },
-  admin:       { id: 'admin',       label: 'Admin',            subtitle: 'Users, org, security',     icon: Settings,       color: 'text-accent-gold',   Component: AdminPanel },
-  ghost:       { id: 'ghost',       label: 'Ghost Mode',       subtitle: 'Impersonate users',        icon: Eye,            color: 'text-accent-red',    Component: GhostMode },
+  dvic:        { id: 'dvic',        i18nKey: 'dvic',        icon: HomeIcon,       color: 'text-accent-green',  Component: RealDVIC },
+  defects:     { id: 'defects',     i18nKey: 'defects',     icon: AlertTriangle,  color: 'text-accent-orange', Component: Defects },
+  snapshot:    { id: 'snapshot',    i18nKey: 'snapshot',    icon: LayoutGrid,     color: 'text-accent-blue',   Component: FleetSnapshot },
+  vehicles:    { id: 'vehicles',    i18nKey: 'vehicles',    icon: Truck,          color: 'text-accent-green',  Component: MyVehicles },
+  my_dsps:     { id: 'my_dsps',     i18nKey: 'myDsps',      icon: Truck,          color: 'text-accent-blue',   Component: MyDsps },
+  work_orders: { id: 'work_orders', i18nKey: 'workOrders',  icon: ClipboardList,  color: 'text-accent-purple', Component: WorkOrders },
+  body:        { id: 'body',        i18nKey: 'body',        icon: Wrench,         color: 'text-accent-purple', Component: BodyRepairs },
+  scorecard:   { id: 'scorecard',   i18nKey: 'scorecard',   icon: BarChart3,      color: 'text-accent-blue',   Component: VendorScorecard },
+  admin:       { id: 'admin',       i18nKey: 'admin',       icon: Settings,       color: 'text-accent-gold',   Component: AdminPanel },
+  ghost:       { id: 'ghost',       i18nKey: 'ghost',       icon: Eye,            color: 'text-accent-red',    Component: GhostMode },
 };
 
 // 'Dashboard' is a virtual group rendered as a dropdown that contains the
 // defects + body repairs views (so they share a single nav slot for DSP).
 const DASHBOARD_GROUP = {
   id: 'dashboard',
-  label: 'Dashboard',
+  i18nKey: 'dashboard',
   icon: AlertTriangle,
   color: 'text-accent-orange',
   children: ['defects', 'body'],
 };
 
 export default function Layout({ user, onSwitchRole, onLogout, onImpersonate, impersonating, onExitImpersonation }) {
+  const { t } = useTranslation('layout');
   const [showNotifs, setShowNotifs] = useState(false);
   const [dashboardOpen, setDashboardOpen] = useState(false);
+
+  // Resolve translated label/subtitle for a view-catalog entry on each render.
+  const navLabel = (key) => t(`nav.${key}`);
+  const navSub = (key) => t(`subtitles.${key}`, '');
 
   // Tabs are derived from the user's role. Views that belong to the
   // Dashboard dropdown collapse into a single virtual group entry placed
   // where the first of its children appeared in the role's permission list.
   const tabs = useMemo(() => {
     const allowedIds = rolePermissions[user.role] || [];
+    const decorate = (v) => ({
+      ...v,
+      label: navLabel(v.i18nKey),
+      subtitle: navSub(v.i18nKey),
+    });
     const groupChildren = DASHBOARD_GROUP.children
       .filter((c) => allowedIds.includes(c))
       .map((id) => VIEW_CATALOG[id])
-      .filter(Boolean);
+      .filter(Boolean)
+      .map(decorate);
     const result = [];
     let dashboardInserted = false;
     for (const id of allowedIds) {
       if (DASHBOARD_GROUP.children.includes(id)) {
         if (!dashboardInserted && groupChildren.length > 0) {
-          result.push({ ...DASHBOARD_GROUP, isGroup: true, childrenViews: groupChildren });
+          result.push({
+            ...DASHBOARD_GROUP,
+            label: navLabel(DASHBOARD_GROUP.i18nKey),
+            subtitle: navSub(DASHBOARD_GROUP.i18nKey),
+            isGroup: true,
+            childrenViews: groupChildren,
+          });
           dashboardInserted = true;
         }
         continue;
       }
       const view = VIEW_CATALOG[id];
-      if (view) result.push(view);
+      if (view) result.push(decorate(view));
     }
     return result;
-  }, [user.role]);
+    // i18n.language as dep so tabs re-build when the user toggles language.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user.role, t]);
 
   // Live notification count per user (computed from seed)
   const userNotifCount = useMemo(() => {
@@ -127,13 +149,13 @@ export default function Layout({ user, onSwitchRole, onLogout, onImpersonate, im
                 <span className="text-[10px]">👁</span>
               </div>
               <div className="text-xs text-white min-w-0 truncate">
-                <span className="font-semibold">Ghost Mode</span> — viewing as <span className="font-bold text-white">{user.name}</span>
+                <span className="font-semibold">{t('impersonation.title', 'Ghost Mode')}</span> — {t('impersonation.viewingAs', 'viewing as')} <span className="font-bold text-white">{user.name}</span>
                 <span className="text-navy-200 hidden sm:inline"> &middot; {user.roleLabel}</span>
               </div>
             </div>
             <button onClick={onExitImpersonation}
               className="shrink-0 flex items-center gap-1.5 px-3 py-1 rounded-md bg-accent-red text-white text-xs font-semibold hover:opacity-90 cursor-pointer">
-              Exit Ghost Mode
+              {t('impersonation.exit')}
             </button>
           </motion.div>
         )}
