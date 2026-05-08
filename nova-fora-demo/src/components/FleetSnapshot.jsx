@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import {
   LayoutGrid, Truck, KeyRound, AlertTriangle, CheckCircle2, X, Lock, Send, Eye,
   ArrowRight, Calendar, Users, Filter, Plus, ShieldCheck, Camera, Clock,
@@ -14,10 +15,12 @@ import Badge from './ui/Badge';
 // Defect-count → color configuration for heatmap tiles.
 // (Replaces the old severity grading. Driven by defect count buckets:
 //  0 = clean / 1-2 = some / 3+ = many.)
+// Bucket label keys map to fleetSnapshot.legend.* — the JSX consumers
+// resolve the actual string at render time so they pick up the active lang.
 const TILE_BUCKETS = {
-  clean: { bg: 'bg-accent-green/15',  border: 'border-accent-green/40',  text: 'text-accent-green',  label: 'Clean',   bar: 'bg-accent-green',  ring: 'ring-accent-green/30' },
-  some:  { bg: 'bg-accent-gold/15',   border: 'border-accent-gold/40',   text: 'text-accent-gold',   label: '1-2 defects', bar: 'bg-accent-gold',   ring: 'ring-accent-gold/30' },
-  many:  { bg: 'bg-accent-orange/15', border: 'border-accent-orange/40', text: 'text-accent-orange', label: '3+ defects',  bar: 'bg-accent-orange', ring: 'ring-accent-orange/30' },
+  clean: { bg: 'bg-accent-green/15',  border: 'border-accent-green/40',  text: 'text-accent-green',  labelKey: 'fleetSnapshot.legend.clean', labelDefault: 'Clean',         bar: 'bg-accent-green',  ring: 'ring-accent-green/30' },
+  some:  { bg: 'bg-accent-gold/15',   border: 'border-accent-gold/40',   text: 'text-accent-gold',   labelKey: 'fleetSnapshot.legend.some',  labelDefault: '1-2 defects',   bar: 'bg-accent-gold',   ring: 'ring-accent-gold/30' },
+  many:  { bg: 'bg-accent-orange/15', border: 'border-accent-orange/40', text: 'text-accent-orange', labelKey: 'fleetSnapshot.legend.many',  labelDefault: '3+ defects',    bar: 'bg-accent-orange', ring: 'ring-accent-orange/30' },
 };
 
 function bucketForVan(van) {
@@ -28,17 +31,20 @@ function bucketForVan(van) {
   return 'many';
 }
 
-const DEFECT_STATUS_CONFIG = {
-  pending:        { label: 'Pending',         variant: 'gold' },
-  approved:       { label: 'Approved',        variant: 'green' },
-  canceled:       { label: 'Canceled',        variant: 'gray' },
-  acknowledged:   { label: 'Acknowledged',    variant: 'blue' },
-  sent_to_vendor: { label: 'Sent to Vendor',  variant: 'purple' },
-  completed:      { label: 'Completed',       variant: 'green' },
+// Status variant lookup — the visible label is resolved via i18n at render
+// time so badges stay localized when the user toggles ES↔EN mid-session.
+const DEFECT_STATUS_VARIANT = {
+  pending:        'gold',
+  approved:       'green',
+  canceled:       'gray',
+  acknowledged:   'blue',
+  sent_to_vendor: 'purple',
+  completed:      'green',
 };
 
 // Tile sizes based on screen breakpoint — we want the heatmap to feel dense like a real fleet view
 function HeatmapTile({ van, onClick }) {
+  const { t } = useTranslation('fleet');
   const conf = TILE_BUCKETS[bucketForVan(van)];
   return (
     <motion.button
@@ -59,7 +65,7 @@ function HeatmapTile({ van, onClick }) {
       </div>
       {van.defectCount > 0 && (
         <div className={`mt-1 text-[9px] sm:text-[10px] ${conf.text} font-bold leading-none`}>
-          {van.defectCount} {van.defectCount === 1 ? 'defect' : 'defects'}
+          {t('fleetSnapshot.tile.defectFmt', { count: van.defectCount, defaultValue: `${van.defectCount} ${van.defectCount === 1 ? 'defect' : 'defects'}` })}
         </div>
       )}
       {van.defectCount === 0 && (
@@ -70,17 +76,18 @@ function HeatmapTile({ van, onClick }) {
 }
 
 function SeverityLegend() {
+  const { t } = useTranslation('fleet');
   return (
     <div className="flex flex-wrap items-center gap-2 text-[11px]">
       {Object.entries(TILE_BUCKETS).map(([k, c]) => (
         <div key={k} className="flex items-center gap-1.5">
           <div className={`w-3 h-3 rounded-sm ${c.bar}`} />
-          <span className="text-navy-300">{c.label}</span>
+          <span className="text-navy-300">{t(c.labelKey, c.labelDefault)}</span>
         </div>
       ))}
       <div className="flex items-center gap-1.5">
         <Lock size={10} className="text-accent-red" />
-        <span className="text-navy-300">Grounded</span>
+        <span className="text-navy-300">{t('fleetSnapshot.legend.grounded', 'Grounded')}</span>
       </div>
     </div>
   );
@@ -88,10 +95,11 @@ function SeverityLegend() {
 
 // ---------- Flex Fleet Modal ----------
 export function FlexFleetModal({ onClose }) {
+  const { t } = useTranslation('fleet');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [vanCount, setVanCount] = useState(5);
-  const [reason, setReason] = useState('Prime Day');
+  const [reason, setReason] = useState('primeDay');  // store reason key, not display text
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
 
@@ -116,8 +124,8 @@ export function FlexFleetModal({ onClose }) {
               <Truck size={16} className="text-accent-purple" />
             </div>
             <div>
-              <h3 className="text-base font-semibold text-white">Order Flex Fleet</h3>
-              <p className="text-[11px] text-navy-400">Temporary rentals for peak demand</p>
+              <h3 className="text-base font-semibold text-white">{t('flexFleet.title', 'Order Flex Fleet')}</h3>
+              <p className="text-[11px] text-navy-400">{t('flexFleet.subtitle', 'Temporary rentals for peak demand')}</p>
             </div>
           </div>
           <button onClick={onClose} className="text-navy-400 hover:text-white p-2 -mr-2"><X size={20} /></button>
@@ -130,10 +138,16 @@ export function FlexFleetModal({ onClose }) {
                 className="w-14 h-14 mx-auto rounded-full bg-accent-green/15 border border-accent-green/40 flex items-center justify-center mb-4">
                 <CheckCircle2 size={26} className="text-accent-green" />
               </motion.div>
-              <h4 className="text-base font-semibold text-white mb-1">Flex Fleet Requested</h4>
-              <p className="text-xs text-navy-400 mb-4">Your {vanCount} vans will be delivered on {startDate || 'the start date'}.</p>
+              <h4 className="text-base font-semibold text-white mb-1">{t('flexFleet.successHeading', 'Flex Fleet Requested')}</h4>
+              <p className="text-xs text-navy-400 mb-4">
+                {t('flexFleet.successBodyFmt', {
+                  count: vanCount,
+                  date: startDate || t('flexFleet.successBodyFallbackDate', 'the start date'),
+                  defaultValue: `Your ${vanCount} vans will be delivered on ${startDate || 'the start date'}.`,
+                })}
+              </p>
               <div className="inline-flex flex-col gap-1 px-4 py-3 rounded-lg bg-navy-800/60 border border-navy-700/40 text-left">
-                <div className="text-[11px] text-navy-400">Request ID</div>
+                <div className="text-[11px] text-navy-400">{t('flexFleet.requestId', 'Request ID')}</div>
                 <div className="text-sm font-mono text-accent-purple">FF-{Math.floor(10000 + Math.random() * 90000)}</div>
               </div>
             </div>
@@ -141,18 +155,18 @@ export function FlexFleetModal({ onClose }) {
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Start date</label>
+                  <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('flexFleet.startDate', 'Start date')}</label>
                   <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
                     className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-purple" />
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-navy-300 mb-1.5 block">End date</label>
+                  <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('flexFleet.endDate', 'End date')}</label>
                   <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)}
                     className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-purple" />
                 </div>
               </div>
               <div>
-                <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Number of vans</label>
+                <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('flexFleet.numberOfVans', 'Number of vans')}</label>
                 <div className="flex items-center gap-2">
                   <button onClick={() => setVanCount(Math.max(1, vanCount - 1))}
                     className="w-11 h-11 rounded-lg border border-navy-700 bg-navy-800 text-white text-lg font-bold hover:bg-navy-700 cursor-pointer">−</button>
@@ -163,19 +177,19 @@ export function FlexFleetModal({ onClose }) {
                 </div>
               </div>
               <div>
-                <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Reason</label>
+                <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('flexFleet.reason', 'Reason')}</label>
                 <select value={reason} onChange={(e) => setReason(e.target.value)}
                   className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-purple cursor-pointer">
-                  <option>Prime Day</option>
-                  <option>Black Friday / Cyber Monday</option>
-                  <option>Holiday Surge</option>
-                  <option>Temporary Vehicle Breakdown</option>
-                  <option>New Route Launch</option>
-                  <option>Other</option>
+                  <option value="primeDay">{t('flexFleet.reasonOpt.primeDay', 'Prime Day')}</option>
+                  <option value="blackFriday">{t('flexFleet.reasonOpt.blackFriday', 'Black Friday / Cyber Monday')}</option>
+                  <option value="holidaySurge">{t('flexFleet.reasonOpt.holidaySurge', 'Holiday Surge')}</option>
+                  <option value="breakdown">{t('flexFleet.reasonOpt.breakdown', 'Temporary Vehicle Breakdown')}</option>
+                  <option value="newRoute">{t('flexFleet.reasonOpt.newRoute', 'New Route Launch')}</option>
+                  <option value="other">{t('flexFleet.reasonOpt.other', 'Other')}</option>
                 </select>
               </div>
               <div className="p-3 rounded-lg bg-accent-purple/10 border border-accent-purple/30 text-xs text-navy-200">
-                <strong className="text-accent-purple">Estimated cost:</strong> ${(vanCount * 89).toLocaleString()}/day · Delivered within 48h
+                <strong className="text-accent-purple">{t('flexFleet.estimatedCostLabel', 'Estimated cost:')}</strong> {t('flexFleet.estimatedCostBody', { cost: (vanCount * 89).toLocaleString(), defaultValue: `$${(vanCount * 89).toLocaleString()}/day · Delivered within 48h` })}
               </div>
             </div>
           )}
@@ -183,16 +197,16 @@ export function FlexFleetModal({ onClose }) {
 
         {!success && (
           <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-t border-navy-800 bg-navy-900/80">
-            <button onClick={onClose} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">Cancel</button>
+            <button onClick={onClose} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">{t('flexFleet.cancel', 'Cancel')}</button>
             <button onClick={handleSubmit} disabled={!startDate || !endDate || submitting}
               className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-accent-purple text-white hover:opacity-90 disabled:opacity-40 cursor-pointer">
-              {submitting ? (<><motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full" /> Submitting…</>) : (<>Request Fleet <ArrowRight size={14} /></>)}
+              {submitting ? (<><motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full" /> {t('flexFleet.submitting', 'Submitting…')}</>) : (<>{t('flexFleet.requestFleet', 'Request Fleet')} <ArrowRight size={14} /></>)}
             </button>
           </div>
         )}
         {success && (
           <div className="flex justify-end px-4 sm:px-6 py-3 sm:py-4 border-t border-navy-800">
-            <button onClick={onClose} className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-accent-green text-white hover:opacity-90 cursor-pointer">Done</button>
+            <button onClick={onClose} className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-accent-green text-white hover:opacity-90 cursor-pointer">{t('flexFleet.done', 'Done')}</button>
           </div>
         )}
       </motion.div>
@@ -207,6 +221,7 @@ export function FlexFleetModal({ onClose }) {
 
 // ---------- Vehicle Report Card (drawer/bottom sheet) ----------
 export function VehicleReportCard({ van, onClose, onUpdateVan, userRole, onCreateWO }) {
+  const { t } = useTranslation('fleet');
   const [photoIndex, setPhotoIndex] = useState(0);
   const [defectActions, setDefectActions] = useState({});
   const [autoApproveSimilar, setAutoApproveSimilar] = useState({});
@@ -284,16 +299,18 @@ export function VehicleReportCard({ van, onClose, onUpdateVan, userRole, onCreat
               <div className="flex items-start justify-between gap-3 mb-3">
                 <div className="flex items-center gap-3 min-w-0">
                   <button onClick={onClose}
-                    className="text-navy-300 hover:text-white p-2 -ml-2 rounded-md hover:bg-navy-800 cursor-pointer shrink-0" title="Back">
+                    className="text-navy-300 hover:text-white p-2 -ml-2 rounded-md hover:bg-navy-800 cursor-pointer shrink-0" title={t('vehicleReport.backTitle', 'Back')}>
                     <ArrowRight size={18} className="rotate-180" />
                   </button>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                       <h3 className="text-xl sm:text-2xl font-bold text-white">{van.id}</h3>
                       <Badge variant={(van.defectCount || 0) === 0 ? 'green' : 'gold'} size="md">
-                        {(van.defectCount || 0) === 0 ? 'Clean' : `${van.defectCount} defect${van.defectCount === 1 ? '' : 's'}`}
+                        {(van.defectCount || 0) === 0
+                          ? t('vehicleReport.cleanBadge', 'Clean')
+                          : t('vehicleReport.defectFmt', { count: van.defectCount, defaultValue: `${van.defectCount} defect${van.defectCount === 1 ? '' : 's'}` })}
                       </Badge>
-                      {van.grounded && <Badge variant="red" size="md">Grounded</Badge>}
+                      {van.grounded && <Badge variant="red" size="md">{t('vehicleReport.groundedBadge', 'Grounded')}</Badge>}
                     </div>
                     <div className="text-xs sm:text-sm text-navy-300 truncate">
                       <span>{van.model}</span>
@@ -302,31 +319,31 @@ export function VehicleReportCard({ van, onClose, onUpdateVan, userRole, onCreat
                       <span className="text-navy-600 mx-2">·</span>
                       <span>{van.dsp}</span>
                       <span className="text-navy-600 mx-2">·</span>
-                      <span className="font-mono">{van.mileage.toLocaleString()} mi</span>
+                      <span className="font-mono">{van.mileage.toLocaleString()} {t('myVehicles.milesShort', 'mi')}</span>
                     </div>
                   </div>
                 </div>
-                <button onClick={onClose} className="text-navy-400 hover:text-white p-2 -mr-2 shrink-0 rounded-md hover:bg-navy-800" title="Close"><X size={20} /></button>
+                <button onClick={onClose} className="text-navy-400 hover:text-white p-2 -mr-2 shrink-0 rounded-md hover:bg-navy-800" title={t('vehicleReport.closeTitle', 'Close')}><X size={20} /></button>
               </div>
 
               {/* Last inspection + quick stats */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                 <div className="rounded-lg bg-navy-800/60 border border-navy-700/40 px-3 py-2">
-                  <div className="text-[10px] text-navy-400 uppercase tracking-wide">Last inspected</div>
+                  <div className="text-[10px] text-navy-400 uppercase tracking-wide">{t('vehicleReport.stat.lastInspected', 'Last inspected')}</div>
                   <div className="text-white font-medium flex items-center gap-1 mt-0.5"><Clock size={11} className="text-accent-blue" /> {van.lastInspected}</div>
-                  <div className="text-[11px] text-navy-400 truncate">by {van.inspector}</div>
+                  <div className="text-[11px] text-navy-400 truncate">{t('vehicleReport.stat.byInspectorFmt', { name: van.inspector, defaultValue: `by ${van.inspector}` })}</div>
                 </div>
                 <div className="rounded-lg bg-navy-800/60 border border-navy-700/40 px-3 py-2">
-                  <div className="text-[10px] text-navy-400 uppercase tracking-wide">Current defects</div>
+                  <div className="text-[10px] text-navy-400 uppercase tracking-wide">{t('vehicleReport.stat.currentDefects', 'Current defects')}</div>
                   <div className={`text-lg font-bold ${(van.defectCount || 0) === 0 ? 'text-accent-green' : 'text-accent-orange'}`}>{van.defectCount}</div>
-                  <div className="text-[11px] text-navy-400">{van.defectCount === 0 ? 'Clean bill' : 'Active issues'}</div>
+                  <div className="text-[11px] text-navy-400">{van.defectCount === 0 ? t('vehicleReport.stat.cleanBill', 'Clean bill') : t('vehicleReport.stat.activeIssues', 'Active issues')}</div>
                 </div>
                 <div className="rounded-lg bg-navy-800/60 border border-navy-700/40 px-3 py-2">
-                  <div className="text-[10px] text-navy-400 uppercase tracking-wide">Mileage</div>
-                  <div className="text-sm text-white font-semibold mt-0.5 font-mono">{van.mileage.toLocaleString()} mi</div>
+                  <div className="text-[10px] text-navy-400 uppercase tracking-wide">{t('vehicleReport.stat.mileage', 'Mileage')}</div>
+                  <div className="text-sm text-white font-semibold mt-0.5 font-mono">{van.mileage.toLocaleString()} {t('myVehicles.milesShort', 'mi')}</div>
                 </div>
                 <div className="rounded-lg bg-navy-800/60 border border-navy-700/40 px-3 py-2">
-                  <div className="text-[10px] text-navy-400 uppercase tracking-wide">DSP</div>
+                  <div className="text-[10px] text-navy-400 uppercase tracking-wide">{t('vehicleReport.stat.dsp', 'DSP')}</div>
                   <div className="text-sm text-white font-semibold mt-0.5 truncate">{van.dsp}</div>
                 </div>
               </div>
@@ -336,11 +353,11 @@ export function VehicleReportCard({ van, onClose, onUpdateVan, userRole, onCreat
                 <div className="mt-3 flex items-start gap-2 p-3 rounded-lg bg-accent-red/10 border border-accent-red/40">
                   <Lock size={14} className="text-accent-red mt-0.5 shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <div className="text-xs font-semibold text-accent-red">Vehicle Grounded</div>
-                    <div className="text-[11px] text-navy-300 mt-0.5">{van.groundedReason || 'Unsafe for routing'}</div>
+                    <div className="text-xs font-semibold text-accent-red">{t('vehicleReport.groundedTitle', 'Vehicle Grounded')}</div>
+                    <div className="text-[11px] text-navy-300 mt-0.5">{van.groundedReason || t('vehicleReport.groundedFallback', 'Unsafe for routing')}</div>
                   </div>
                   {canTakeActions && (
-                    <button onClick={handleUnground} className="text-[11px] font-semibold text-accent-green hover:underline shrink-0">Unground</button>
+                    <button onClick={handleUnground} className="text-[11px] font-semibold text-accent-green hover:underline shrink-0">{t('vehicleReport.unground', 'Unground')}</button>
                   )}
                 </div>
               )}
@@ -354,7 +371,7 @@ export function VehicleReportCard({ van, onClose, onUpdateVan, userRole, onCreat
             <div className="lg:col-span-2 lg:sticky lg:top-4 lg:self-start">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-1.5 text-xs font-semibold text-navy-300">
-                  <ImageIcon size={13} className="text-accent-blue" /> Photos ({photos.length})
+                  <ImageIcon size={13} className="text-accent-blue" /> {t('vehicleReport.photosFmt', { count: photos.length, defaultValue: `Photos (${photos.length})` })}
                 </div>
                 <div className="flex items-center gap-1">
                   {photos.map((_, i) => (
@@ -394,7 +411,7 @@ export function VehicleReportCard({ van, onClose, onUpdateVan, userRole, onCreat
             {defects.length > 0 ? (
               <div>
                 <div className="flex items-center gap-1.5 text-xs font-semibold text-navy-300 mb-3">
-                  <AlertTriangle size={13} className="text-accent-orange" /> Accumulated Defects ({defects.length})
+                  <AlertTriangle size={13} className="text-accent-orange" /> {t('vehicleReport.accumulatedFmt', { count: defects.length, defaultValue: `Accumulated Defects (${defects.length})` })}
                 </div>
                 <div className="space-y-3">
                   {Object.entries(defectsBySection).map(([section, list]) => (
@@ -404,7 +421,7 @@ export function VehicleReportCard({ van, onClose, onUpdateVan, userRole, onCreat
                         {list.map((d) => {
                           const action = defectActions[d.id];
                           const currentStatus = action || d.status;
-                          const statusConf = DEFECT_STATUS_CONFIG[currentStatus];
+                          const variant = DEFECT_STATUS_VARIANT[currentStatus];
                           return (
                             <div key={d.id} className="rounded-lg bg-navy-800/40 border border-navy-700/40 p-3">
                               <div className="flex items-start justify-between gap-2 mb-2">
@@ -415,7 +432,7 @@ export function VehicleReportCard({ van, onClose, onUpdateVan, userRole, onCreat
                                   <p className="text-xs text-navy-300 mb-1">{d.description}</p>
                                   <p className="text-[10px] text-navy-500">{d.reportedAt}</p>
                                 </div>
-                                {statusConf && <Badge variant={statusConf.variant} size="md">{statusConf.label}</Badge>}
+                                {variant && <Badge variant={variant} size="md">{t(`fleetSnapshot.defectStatus.${currentStatus}`, currentStatus)}</Badge>}
                               </div>
                               {canTakeActions && currentStatus === 'pending' && (
                                 <div className="pt-2 border-t border-navy-700/40 space-y-2">
@@ -423,16 +440,16 @@ export function VehicleReportCard({ van, onClose, onUpdateVan, userRole, onCreat
                                     <button
                                       onClick={() => handleCancel(d)}
                                       className="flex-1 flex items-center justify-center gap-1 px-2 py-2 rounded-md bg-accent-red/10 border border-accent-red/40 text-accent-red text-[11px] font-semibold hover:bg-accent-red/20 cursor-pointer"
-                                      title="Dismiss this defect"
+                                      title={t('vehicleReport.dismissTitle', 'Dismiss this defect')}
                                     >
-                                      <X size={11} /> Cancel
+                                      <X size={11} /> {t('vehicleReport.cancel', 'Cancel')}
                                     </button>
                                     <button
                                       onClick={() => handleApprove(d)}
                                       className="flex-1 flex items-center justify-center gap-1 px-2 py-2 rounded-md bg-accent-green text-white text-[11px] font-semibold hover:opacity-90 cursor-pointer shadow-lg shadow-accent-green/20"
-                                      title="Approve and create a work order"
+                                      title={t('vehicleReport.approveTitle', 'Approve and create a work order')}
                                     >
-                                      <Check size={11} /> Approve
+                                      <Check size={11} /> {t('vehicleReport.approve', 'Approve')}
                                     </button>
                                   </div>
                                   <label className="flex items-center gap-1.5 text-[11px] text-navy-400 cursor-pointer select-none">
@@ -440,7 +457,7 @@ export function VehicleReportCard({ van, onClose, onUpdateVan, userRole, onCreat
                                       checked={!!autoApproveSimilar[d.id]}
                                       onChange={() => toggleAutoApprove(d.id)}
                                       className="w-3.5 h-3.5 cursor-pointer" />
-                                    Auto-approve similar defects
+                                    {t('vehicleReport.autoApproveSimilar', 'Auto-approve similar defects')}
                                     <span className="text-navy-500">({d.part})</span>
                                   </label>
                                 </div>
@@ -456,8 +473,8 @@ export function VehicleReportCard({ van, onClose, onUpdateVan, userRole, onCreat
             ) : (
               <div className="rounded-xl border border-accent-green/30 bg-accent-green/5 p-6 text-center">
                 <CheckCircle2 size={32} className="text-accent-green mx-auto mb-2" />
-                <h4 className="text-sm font-semibold text-white mb-1">No Active Defects</h4>
-                <p className="text-xs text-navy-400">Vehicle passed its most recent inspection.</p>
+                <h4 className="text-sm font-semibold text-white mb-1">{t('vehicleReport.noActiveDefectsTitle', 'No Active Defects')}</h4>
+                <p className="text-xs text-navy-400">{t('vehicleReport.noActiveDefectsBody', 'Vehicle passed its most recent inspection.')}</p>
               </div>
             )}
             </div> {/* /right column */}
@@ -472,7 +489,7 @@ export function VehicleReportCard({ van, onClose, onUpdateVan, userRole, onCreat
                   onClick={() => onCreateWO?.(van, null)}
                   className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-gradient-to-r from-accent-blue to-accent-purple text-white text-sm font-semibold hover:opacity-90 cursor-pointer"
                 >
-                  <ClipboardList size={14} /> Create Work Order
+                  <ClipboardList size={14} /> {t('vehicleReport.createWorkOrder', 'Create Work Order')}
                 </button>
               </div>
             </div>
@@ -480,7 +497,7 @@ export function VehicleReportCard({ van, onClose, onUpdateVan, userRole, onCreat
           {van.grounded && (
             <div className="px-4 sm:px-6 lg:px-8 py-3 sm:py-4 border-t border-navy-800 bg-navy-900/80">
               <div className="max-w-6xl mx-auto flex items-center justify-end gap-2">
-                <button onClick={onClose} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">Close</button>
+                <button onClick={onClose} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">{t('vehicleReport.close', 'Close')}</button>
               </div>
             </div>
           )}
@@ -501,6 +518,7 @@ const INSPECTION_SECTIONS = [
 
 
 function VendorCard({ vendor, selected, onSelect, neededServices }) {
+  const { t } = useTranslation('fleet');
   const matchedServices = neededServices?.length > 0
     ? vendor.services.filter((s) => neededServices.includes(s))
     : vendor.services;
@@ -519,7 +537,7 @@ function VendorCard({ vendor, selected, onSelect, neededServices }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             <span className="text-sm font-semibold text-white truncate">{vendor.name}</span>
-            {vendor.preferred && <Badge variant="gold"><Star size={9} className="inline fill-current mr-0.5" /> Preferred</Badge>}
+            {vendor.preferred && <Badge variant="gold"><Star size={9} className="inline fill-current mr-0.5" /> {t('vendorCard.preferred', 'Preferred')}</Badge>}
             <div className="flex items-center gap-0.5 text-[11px]">
               <Star size={10} className="text-accent-gold fill-accent-gold" />
               <span className="text-white font-semibold">{vendor.rating}</span>
@@ -556,9 +574,9 @@ function VendorCard({ vendor, selected, onSelect, neededServices }) {
         })}
       </div>
       <div className="mt-2 pt-2 border-t border-navy-700/40 flex items-center justify-between text-[10px] text-navy-400">
-        <span>{vendor.activeJobs} active jobs</span>
+        <span>{t('vendorCard.activeJobsFmt', { count: vendor.activeJobs, defaultValue: `${vendor.activeJobs} active jobs` })}</span>
         {hasMatch && matchedServices.length > 0 && (
-          <span className="text-accent-green font-semibold">{matchedServices.length} matching service{matchedServices.length > 1 ? 's' : ''}</span>
+          <span className="text-accent-green font-semibold">{t('vendorCard.matchingServicesFmt', { count: matchedServices.length, defaultValue: `${matchedServices.length} matching service${matchedServices.length > 1 ? 's' : ''}` })}</span>
         )}
       </div>
     </button>
@@ -566,6 +584,7 @@ function VendorCard({ vendor, selected, onSelect, neededServices }) {
 }
 
 export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectId, initialDefectIds, initialDefects, vans, user, onClose, onCreate }) {
+  const { t } = useTranslation('fleet');
   // ── Bulk mode: caller passed defect ids via the array prop (one WO covering
   // N defects, even if N === 1). The legacy single-defect path uses
   // `initialDefectId` (singular) and goes through the per-defect form.
@@ -721,18 +740,18 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
         <div className="px-4 sm:px-6 lg:px-8 py-4 border-b border-navy-800 bg-navy-900/80 backdrop-blur">
           <div className="max-w-6xl mx-auto flex items-start justify-between gap-3">
             <div className="flex items-center gap-3">
-              <button onClick={onClose} className="text-navy-300 hover:text-white p-2 -ml-2 rounded-md hover:bg-navy-800 cursor-pointer" title="Back">
+              <button onClick={onClose} className="text-navy-300 hover:text-white p-2 -ml-2 rounded-md hover:bg-navy-800 cursor-pointer" title={t('createWO.backTitle', 'Back')}>
                 <ArrowRight size={18} className="rotate-180" />
               </button>
               <div className="w-10 h-10 rounded-lg bg-accent-blue/15 border border-accent-blue/40 flex items-center justify-center shrink-0">
                 <ClipboardList size={18} className="text-accent-blue" />
               </div>
               <div>
-                <h3 className="text-lg sm:text-xl font-semibold text-white">Create Work Order</h3>
-                <p className="text-[11px] text-navy-400">Send repair work to your chosen vendor</p>
+                <h3 className="text-lg sm:text-xl font-semibold text-white">{t('createWO.title', 'Create Work Order')}</h3>
+                <p className="text-[11px] text-navy-400">{t('createWO.subtitle', 'Send repair work to your chosen vendor')}</p>
               </div>
             </div>
-            <button onClick={onClose} className="text-navy-400 hover:text-white p-2 -mr-2 shrink-0 rounded-md hover:bg-navy-800" title="Close"><X size={20} /></button>
+            <button onClick={onClose} className="text-navy-400 hover:text-white p-2 -mr-2 shrink-0 rounded-md hover:bg-navy-800" title={t('createWO.closeTitle', 'Close')}><X size={20} /></button>
           </div>
         </div>
 
@@ -750,10 +769,12 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
               </div>
               <div className="flex items-center justify-between text-[10px] sm:text-[11px] text-navy-400">
                 <span className={step >= 1 ? 'text-white font-semibold' : ''}>
-                  {bulkMode ? `1. ${bulkIds.length} Defects` : '1. Vehicle & Defect'}
+                  {bulkMode
+                    ? t('createWO.step1BulkFmt', { count: bulkIds.length, defaultValue: `1. ${bulkIds.length} Defects` })
+                    : t('createWO.step1Default', '1. Vehicle & Defect')}
                 </span>
-                <span className={step >= 2 ? 'text-white font-semibold' : ''}>2. Choose Vendor</span>
-                <span className={step >= 3 ? 'text-white font-semibold' : ''}>3. Review & Send</span>
+                <span className={step >= 2 ? 'text-white font-semibold' : ''}>{t('createWO.step2', '2. Choose Vendor')}</span>
+                <span className={step >= 3 ? 'text-white font-semibold' : ''}>{t('createWO.step3', '3. Review & Send')}</span>
               </div>
             </div>
           </div>
@@ -769,37 +790,37 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                   className="w-16 h-16 mx-auto rounded-full bg-accent-green/15 border border-accent-green/40 flex items-center justify-center mb-4">
                   <CheckCircle2 size={32} className="text-accent-green" />
                 </motion.div>
-                <h4 className="text-lg font-semibold text-white mb-1">Work order sent to {vendor.name}</h4>
+                <h4 className="text-lg font-semibold text-white mb-1">{t('createWO.successHeadingFmt', { vendor: vendor.name, defaultValue: `Work order sent to ${vendor.name}` })}</h4>
                 <p className="text-sm text-navy-400 mb-4">
                   {bulkMode
-                    ? `${vendor.name} received one work order covering ${bulkIds.length} defects on ${van?.id}. You'll get a single update when they accept, decline or complete.`
-                    : `${vendor.name} has been notified and will see this in their Work Orders hub. You'll receive an update when they accept, decline or complete.`}
+                    ? t('createWO.successBodyBulkFmt', { vendor: vendor.name, count: bulkIds.length, vehicleId: van?.id, defaultValue: `${vendor.name} received one work order covering ${bulkIds.length} defects on ${van?.id}. You'll get a single update when they accept, decline or complete.` })
+                    : t('createWO.successBodySingleFmt', { vendor: vendor.name, defaultValue: `${vendor.name} has been notified and will see this in their Work Orders hub. You'll receive an update when they accept, decline or complete.` })}
                 </p>
                 <div className="inline-flex flex-col gap-1 px-4 py-3 rounded-lg bg-navy-800/60 border border-navy-700/40 text-left">
-                  <div className="text-[11px] text-navy-400">Work Order ID</div>
+                  <div className="text-[11px] text-navy-400">{t('createWO.workOrderId', 'Work Order ID')}</div>
                   <div className="text-sm font-mono text-accent-blue">{createdWoId}</div>
                   <div className="text-[11px] text-navy-400 mt-1">
-                    Vehicle: <span className="text-white">{van?.id}</span> · Vendor: <span className="text-white">{vendor?.name}</span>
-                    {bulkMode && <> · <span className="text-white">{bulkIds.length} defects</span></>}
+                    {t('createWO.successDetailVehicle', 'Vehicle:')} <span className="text-white">{van?.id}</span> · {t('createWO.successDetailVendor', 'Vendor:')} <span className="text-white">{vendor?.name}</span>
+                    {bulkMode && <> · <span className="text-white">{t('createWO.successDetailDefectsFmt', { count: bulkIds.length, defaultValue: `${bulkIds.length} defects` })}</span></>}
                   </div>
-                  {isRush && <div className="text-[11px] text-accent-red mt-1 flex items-center gap-1"><Flame size={10} /> Rush Order — scheduled tonight</div>}
+                  {isRush && <div className="text-[11px] text-accent-red mt-1 flex items-center gap-1"><Flame size={10} /> {t('createWO.rushBadge', 'Rush Order — scheduled tonight')}</div>}
                 </div>
               </motion.div>
             ) : step === 1 ? (
               <motion.div key="s1" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
                 {/* Vehicle selection */}
                 <div>
-                  <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Vehicle</label>
+                  <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('createWO.vehicle', 'Vehicle')}</label>
                   <div className="relative">
                     <button onClick={() => setVanDropdownOpen(!vanDropdownOpen)}
                       className="w-full flex items-center justify-between px-4 py-3 rounded-lg border border-navy-700 bg-navy-800/50 text-left hover:border-navy-600 cursor-pointer min-h-[52px]">
                       {van ? (
                         <div className="min-w-0 flex-1">
                           <div className="text-sm font-semibold text-white truncate">{van.id} <span className="text-navy-400 font-normal">— {van.model}</span></div>
-                          <div className="text-[11px] text-navy-400 truncate">{van.plate} · {van.mileage?.toLocaleString()} mi</div>
+                          <div className="text-[11px] text-navy-400 truncate">{van.plate} · {van.mileage?.toLocaleString()} {t('myVehicles.milesShort', 'mi')}</div>
                         </div>
                       ) : (
-                        <span className="text-sm text-navy-400">Select a vehicle…</span>
+                        <span className="text-sm text-navy-400">{t('createWO.selectVehicle', 'Select a vehicle…')}</span>
                       )}
                       <ChevronDown size={16} className={`text-navy-400 shrink-0 ml-2 transition-transform ${vanDropdownOpen ? 'rotate-180' : ''}`} />
                     </button>
@@ -814,7 +835,7 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                               }`}>
                               <div className="min-w-0 flex-1">
                                 <div className="text-sm font-semibold text-white truncate">{v.id} <span className="text-navy-400 font-normal">— {v.model}</span></div>
-                                <div className="text-[11px] text-navy-400 truncate">{v.plate} · {v.defectCount} defect{v.defectCount !== 1 ? 's' : ''}</div>
+                                <div className="text-[11px] text-navy-400 truncate">{v.plate} · {t('vehicleReport.defectFmt', { count: v.defectCount, defaultValue: `${v.defectCount} defect${v.defectCount !== 1 ? 's' : ''}` })}</div>
                               </div>
                               {van?.id === v.id && <Check size={14} className="text-accent-green shrink-0" />}
                             </button>
@@ -831,37 +852,37 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
                       !isPM ? 'bg-accent-blue text-white' : 'text-navy-400 hover:text-white'
                     }`}>
-                    <AlertTriangle size={11} /> Defect repair
+                    <AlertTriangle size={11} /> {t('createWO.modeDefect', 'Defect repair')}
                   </button>
                   <button onClick={() => setIsPM(true)}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
                       isPM ? 'bg-accent-green text-white' : 'text-navy-400 hover:text-white'
                     }`}>
-                    <Plus size={11} /> Schedule PM
+                    <Plus size={11} /> {t('createWO.modeSchedulePM', 'Schedule PM')}
                   </button>
                 </div>
 
                 {/* PM mode: show PM type selector instead of Section */}
                 {isPM ? (
                   <div>
-                    <label className="text-xs font-semibold text-navy-300 mb-1.5 block">PM service type</label>
+                    <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('createWO.pmServiceType', 'PM service type')}</label>
                     <select value={pmType} onChange={(e) => setPmType(e.target.value)}
                       className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-green cursor-pointer">
-                      <option>Oil Change</option>
-                      <option>Tire Rotation</option>
-                      <option>Brake Inspection</option>
-                      <option>Full Service</option>
-                      <option>Alignment</option>
-                      <option>Coolant Flush</option>
-                      <option>Transmission Service</option>
-                      <option>Cabin Air Filter</option>
-                      <option>Other PM</option>
+                      <option>{t('createWO.pmType.oilChange', 'Oil Change')}</option>
+                      <option>{t('createWO.pmType.tireRotation', 'Tire Rotation')}</option>
+                      <option>{t('createWO.pmType.brakeInspection', 'Brake Inspection')}</option>
+                      <option>{t('createWO.pmType.fullService', 'Full Service')}</option>
+                      <option>{t('createWO.pmType.alignment', 'Alignment')}</option>
+                      <option>{t('createWO.pmType.coolantFlush', 'Coolant Flush')}</option>
+                      <option>{t('createWO.pmType.transmissionService', 'Transmission Service')}</option>
+                      <option>{t('createWO.pmType.cabinAirFilter', 'Cabin Air Filter')}</option>
+                      <option>{t('createWO.pmType.otherPM', 'Other PM')}</option>
                     </select>
-                    <p className="text-[10px] text-navy-400 mt-1">No inspection required — scheduled preventive maintenance.</p>
+                    <p className="text-[10px] text-navy-400 mt-1">{t('createWO.pmHint', 'No inspection required — scheduled preventive maintenance.')}</p>
                   </div>
                 ) : (
                   <div>
-                    <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Vehicle section</label>
+                    <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('createWO.vehicleSection', 'Vehicle section')}</label>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
                       {INSPECTION_SECTIONS.map((s) => (
                         <button key={s.id} onClick={() => setSection(s.id)}
@@ -877,17 +898,21 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
 
                 {/* Part */}
                 <div>
-                  <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Part (optional)</label>
+                  <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('createWO.partOptional', 'Part (optional)')}</label>
                   <input value={part} onChange={(e) => setPart(e.target.value)}
-                    placeholder={isPM ? 'e.g. Oil filter, Brake pads' : 'e.g. Windshield, Brake pads, Headlight'}
+                    placeholder={isPM
+                      ? t('createWO.partPlaceholderPM', 'e.g. Oil filter, Brake pads')
+                      : t('createWO.partPlaceholderDefect', 'e.g. Windshield, Brake pads, Headlight')}
                     className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue" />
                 </div>
 
                 {/* Description */}
                 <div>
-                  <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Description{isPM ? ' (optional)' : ''}</label>
+                  <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('createWO.description', 'Description')}{isPM ? t('createWO.descriptionOptionalSuffix', ' (optional)') : ''}</label>
                   <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3}
-                    placeholder={isPM ? 'e.g. Routine 5,000 mi synthetic oil change' : 'e.g. Crack in windshield spreading from stone chip — driver side, approximately 8 inches'}
+                    placeholder={isPM
+                      ? t('createWO.descriptionPlaceholderPM', 'e.g. Routine 5,000 mi synthetic oil change')
+                      : t('createWO.descriptionPlaceholderDefect', 'e.g. Crack in windshield spreading from stone chip — driver side, approximately 8 inches')}
                     className="w-full rounded-lg px-3 py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue resize-none" />
                 </div>
 
@@ -895,7 +920,7 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                 {!isPM && (
                   <div>
                     <label className="text-xs font-semibold text-navy-300 mb-1.5 block flex items-center gap-1.5">
-                      <ImageIcon size={12} className="text-accent-blue" /> Damage Photos
+                      <ImageIcon size={12} className="text-accent-blue" /> {t('createWO.damagePhotos', 'Damage Photos')}
                     </label>
                     <label className={`block border-2 border-dashed rounded-xl p-4 cursor-pointer transition-all hover:bg-navy-800/40 ${
                       damagePhotos.length > 0 ? 'border-accent-blue/50 bg-accent-blue/5' : 'border-navy-700/60 bg-navy-800/20'
@@ -905,9 +930,9 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                           <Camera size={18} className="text-accent-blue" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="text-sm font-semibold text-white">Damage Photos</div>
-                          <div className="text-[11px] text-navy-400">JPG/PNG &mdash; wide shot + close-ups recommended</div>
-                          <div className="text-[11px] text-navy-500 mt-1">Click to browse or drop multiple files</div>
+                          <div className="text-sm font-semibold text-white">{t('createWO.damagePhotos', 'Damage Photos')}</div>
+                          <div className="text-[11px] text-navy-400">{t('createWO.uploadHintLong', 'JPG/PNG — wide shot + close-ups recommended')}</div>
+                          <div className="text-[11px] text-navy-500 mt-1">{t('createWO.uploadHint', 'Click to browse or drop multiple files')}</div>
                         </div>
                         <Send size={14} className="text-navy-400 mt-1 rotate-180" />
                       </div>
@@ -942,8 +967,8 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                   <label className="flex items-start gap-3 p-3 rounded-lg bg-navy-800/40 border border-navy-700/40 cursor-pointer hover:border-navy-600">
                     <input type="checkbox" checked={isRush} onChange={() => setIsRush(!isRush)} className="mt-0.5 w-5 h-5" />
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5"><Flame size={12} className="text-accent-red" /><span className="text-sm font-semibold text-white">Mark as Rush Order</span></div>
-                      <div className="text-[11px] text-navy-400">Vendor is asked to schedule this tonight. Expect a priority fee.</div>
+                      <div className="flex items-center gap-1.5"><Flame size={12} className="text-accent-red" /><span className="text-sm font-semibold text-white">{t('createWO.markRush', 'Mark as Rush Order')}</span></div>
+                      <div className="text-[11px] text-navy-400">{t('createWO.rushBody', 'Vendor is asked to schedule this tonight. Expect a priority fee.')}</div>
                     </div>
                   </label>
                 )}
@@ -951,7 +976,7 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                 {/* PM scheduled date — only in PM mode */}
                 {isPM && (
                   <div>
-                    <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Scheduled date</label>
+                    <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('createWO.scheduledDate', 'Scheduled date')}</label>
                     <input type="date" value={preferredDate} onChange={(e) => setPreferredDate(e.target.value)}
                       className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-green" />
                   </div>
@@ -962,14 +987,14 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                 {bulkMode && (
                   <div className="rounded-lg border border-accent-blue/40 bg-accent-blue/5 px-3 py-2 flex items-center gap-2 text-xs text-navy-200">
                     <ClipboardList size={12} className="text-accent-blue shrink-0" />
-                    Bundling <strong className="text-white">{bulkIds.length} defects</strong> from <span className="font-mono text-white">{van?.id}</span> into one work order.
+                    {t('createWO.successDetailDefectsFmt', { count: bulkIds.length, defaultValue: `${bulkIds.length} defects` })} · <span className="font-mono text-white">{van?.id}</span>
                   </div>
                 )}
                 <div className="flex items-center gap-2 text-xs text-navy-400 mb-2 flex-wrap">
-                  <span>Choose a vendor to process this work order</span>
+                  <span>{t('createWO.chooseVendor', 'Choose a vendor to process this work order')}</span>
                   {neededServices.length > 0 && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-accent-green/10 border border-accent-green/30 text-accent-green">
-                      <Zap size={10} /> Services needed: {neededServices.join(', ')}
+                      <Zap size={10} /> {t('createWO.servicesNeededFmt', { list: neededServices.join(', '), defaultValue: `Services needed: ${neededServices.join(', ')}` })}
                     </span>
                   )}
                 </div>
@@ -979,7 +1004,7 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
               </motion.div>
             ) : (
               <motion.div key="s3" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
-                <div className="text-xs text-navy-400">Review your work order before sending.</div>
+                <div className="text-xs text-navy-400">{t('createWO.reviewIntro', 'Review your work order before sending.')}</div>
 
                 {/* Vehicle + defect summary */}
                 <div className="rounded-xl border border-navy-700/60 bg-navy-800/40 p-4 space-y-2">
@@ -988,20 +1013,20 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                     <span className="text-sm font-semibold text-white">{van?.id} · {van?.model}</span>
                     {bulkMode && (
                       <span className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-blue/15 border border-accent-blue/40 text-[10px] font-semibold text-accent-blue">
-                        {bulkIds.length} defects
+                        {t('createWO.successDetailDefectsFmt', { count: bulkIds.length, defaultValue: `${bulkIds.length} defects` })}
                       </span>
                     )}
                   </div>
-                  <div className="flex justify-between text-sm gap-3"><span className="text-navy-400">Plate</span><span className="text-white font-mono">{van?.plate}</span></div>
+                  <div className="flex justify-between text-sm gap-3"><span className="text-navy-400">{t('createWO.plate', 'Plate')}</span><span className="text-white font-mono">{van?.plate}</span></div>
                   {!bulkMode && (
                     <>
-                      <div className="flex justify-between text-sm gap-3"><span className="text-navy-400">Section</span><span className="text-white">{section}</span></div>
-                      {part && <div className="flex justify-between text-sm gap-3"><span className="text-navy-400">Part</span><span className="text-white">{part}</span></div>}
+                      <div className="flex justify-between text-sm gap-3"><span className="text-navy-400">{t('createWO.section', 'Section')}</span><span className="text-white">{section}</span></div>
+                      {part && <div className="flex justify-between text-sm gap-3"><span className="text-navy-400">{t('createWO.partOptional', 'Part')}</span><span className="text-white">{part}</span></div>}
                     </>
                   )}
-                  {isRush && <div className="flex justify-between text-sm gap-3"><span className="text-navy-400">Priority</span><Badge variant="red"><Flame size={9} className="inline mr-0.5" /> Rush Order</Badge></div>}
+                  {isRush && <div className="flex justify-between text-sm gap-3"><span className="text-navy-400">{t('createWO.priority', 'Priority')}</span><Badge variant="red"><Flame size={9} className="inline mr-0.5" /> {t('createWO.rushOrderBadge', 'Rush Order')}</Badge></div>}
                   <div className="pt-2 border-t border-navy-700/40">
-                    <div className="text-[11px] text-navy-400 mb-1">{bulkMode ? 'Defects in this work order' : 'Description'}</div>
+                    <div className="text-[11px] text-navy-400 mb-1">{bulkMode ? t('createWO.defectsListLabel', 'Defects in this work order') : t('createWO.description', 'Description')}</div>
                     {bulkMode ? (
                       <ul className="space-y-1.5 max-h-48 overflow-y-auto">
                         {bulkDefects.map((d) => (
@@ -1030,28 +1055,28 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                 <div className="rounded-xl border border-accent-blue/40 bg-accent-blue/5 p-4">
                   <div className="flex items-center gap-2 mb-2">
                     <Send size={14} className="text-accent-blue" />
-                    <span className="text-sm font-semibold text-white">Sending to {vendor?.name}</span>
-                    {vendor?.preferred && <Badge variant="gold"><Star size={9} className="inline fill-current mr-0.5" /> Preferred</Badge>}
+                    <span className="text-sm font-semibold text-white">{t('createWO.sendingToFmt', { vendor: vendor?.name, defaultValue: `Sending to ${vendor?.name}` })}</span>
+                    {vendor?.preferred && <Badge variant="gold"><Star size={9} className="inline fill-current mr-0.5" /> {t('createWO.preferred', 'Preferred')}</Badge>}
                   </div>
                   <div className="flex items-center gap-2 text-[11px] text-navy-300 flex-wrap">
                     <span className="flex items-center gap-1"><Star size={10} className="text-accent-gold fill-accent-gold" /> {vendor?.rating}</span>
                     <span className="text-navy-600">·</span>
                     <span className="flex items-center gap-1"><MapPin size={10} /> {vendor?.city}</span>
                     <span className="text-navy-600">·</span>
-                    <span className="flex items-center gap-1"><Clock size={10} /> Response time: {vendor?.responseTime}</span>
+                    <span className="flex items-center gap-1"><Clock size={10} /> {t('createWO.responseTimeFmt', { time: vendor?.responseTime, defaultValue: `Response time: ${vendor?.responseTime}` })}</span>
                   </div>
                 </div>
 
                 {/* Optional extras */}
                 <div>
-                  <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Preferred completion date (optional)</label>
+                  <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('createWO.preferredCompletionLabel', 'Preferred completion date (optional)')}</label>
                   <input type="date" value={preferredDate} onChange={(e) => setPreferredDate(e.target.value)}
                     className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue" />
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Extra notes for vendor (optional)</label>
+                  <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('createWO.extraNotesLabel', 'Extra notes for vendor (optional)')}</label>
                   <textarea value={extraNotes} onChange={(e) => setExtraNotes(e.target.value)} rows={2}
-                    placeholder="e.g. Van available after 3pm. Gate code 4827. Call Maria if issues: 206-555-0142"
+                    placeholder={t('createWO.notesPlaceholder', 'e.g. Van available after 3pm. Gate code 4827. Call Maria if issues: 206-555-0142')}
                     className="w-full rounded-lg px-3 py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue resize-none" />
                 </div>
 
@@ -1060,8 +1085,8 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                   <Info size={12} className="text-accent-green mt-0.5 shrink-0" />
                   <div className="text-navy-200">
                     {bulkMode
-                      ? <>Matches your auto-approval rules. This WO will be <strong className="text-accent-green">processed automatically</strong> unless cost exceeds your cap.</>
-                      : <>Matches your auto-approval rules for {section}. This WO will be <strong className="text-accent-green">processed automatically</strong> unless cost exceeds your cap.</>}
+                      ? <>{t('createWO.autoApproveBannerBulk', 'Matches your auto-approval rules. This WO will be')} <strong className="text-accent-green">{t('createWO.autoApproveProcessed', 'processed automatically')}</strong> {t('createWO.autoApproveSuffix', 'unless cost exceeds your cap.')}</>
+                      : <>{t('createWO.autoApproveBannerSectionFmt', { section, defaultValue: `Matches your auto-approval rules for ${section}. This WO will be` })} <strong className="text-accent-green">{t('createWO.autoApproveProcessed', 'processed automatically')}</strong> {t('createWO.autoApproveSuffix', 'unless cost exceeds your cap.')}</>}
                   </div>
                 </div>
               </motion.div>
@@ -1096,20 +1121,20 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                       : 'text-navy-300 hover:text-white hover:bg-navy-800'
                   }`}>
                   {step === 1
-                    ? <><X size={12} className="inline mr-1" /> Reject</>
+                    ? <><X size={12} className="inline mr-1" /> {t('createWO.reject', 'Reject')}</>
                     : (bulkMode && step === 2)
-                      ? <><X size={12} className="inline mr-1" /> Cancel</>
-                      : 'Back'}
+                      ? <><X size={12} className="inline mr-1" /> {t('createWO.cancel', 'Cancel')}</>
+                      : t('createWO.back', 'Back')}
                 </button>
                 {step < 3 ? (
                   <button onClick={() => setStep(step + 1)} disabled={!canGoNext}
                     className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-gradient-to-r from-accent-blue to-accent-purple text-white hover:opacity-90 disabled:opacity-40 cursor-pointer">
-                    Next <ArrowRight size={14} />
+                    {t('createWO.next', 'Next')} <ArrowRight size={14} />
                   </button>
                 ) : (
                   <button onClick={handleSubmit} disabled={submitting}
                     className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-gradient-to-r from-accent-blue to-accent-purple text-white hover:opacity-90 disabled:opacity-40 cursor-pointer">
-                    {submitting ? (<><motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full" /> Sending…</>) : (<>Send to Vendor <Send size={14} /></>)}
+                    {submitting ? (<><motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full" /> {t('createWO.sending', 'Sending…')}</>) : (<>{t('createWO.sendToVendor', 'Send to Vendor')} <Send size={14} /></>)}
                   </button>
                 )}
               </div>
@@ -1118,7 +1143,7 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
         )}
         {success && (
           <div className="flex items-center justify-end px-4 sm:px-6 lg:px-8 py-3 sm:py-4 border-t border-navy-800">
-            <button onClick={onClose} className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-accent-green text-white hover:opacity-90 cursor-pointer">Done</button>
+            <button onClick={onClose} className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-accent-green text-white hover:opacity-90 cursor-pointer">{t('createWO.done', 'Done')}</button>
           </div>
         )}
       </motion.div>
@@ -1128,6 +1153,7 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
 
 // ---------- Main Component ----------
 export default function FleetSnapshot({ user, embedded = false }) {
+  const { t } = useTranslation('fleet');
   const [selectedVan, setSelectedVan] = useState(null);
   const [showFlexFleet, setShowFlexFleet] = useState(false);
   const [showCreateWO, setShowCreateWO] = useState(false);
@@ -1201,8 +1227,8 @@ export default function FleetSnapshot({ user, embedded = false }) {
       {/* Header — hidden when embedded (Real DVIC renders its own header) */}
       {!embedded && (
         <div className="mb-4 sm:mb-6">
-          <h2 className="text-2xl font-bold text-white mb-1">QC DVIC</h2>
-          <p className="text-navy-400 text-sm">Heatmap view &mdash; defects per vehicle at a glance</p>
+          <h2 className="text-2xl font-bold text-white mb-1">{t('fleetSnapshot.heading', 'QC DVIC')}</h2>
+          <p className="text-navy-400 text-sm">{t('fleetSnapshot.subtitle', 'Heatmap view — defects per vehicle at a glance')}</p>
         </div>
       )}
 
@@ -1216,13 +1242,13 @@ export default function FleetSnapshot({ user, embedded = false }) {
             </div>
             <div className="min-w-0">
               <div className="text-sm font-semibold text-white">
-                <span className="text-accent-blue">{stats.keysRecorded}</span> keys recorded &middot; {dateStr}, {timeStr}
+                <span className="text-accent-blue">{stats.keysRecorded}</span> {t('fleetSnapshot.keysRecordedLabel', 'keys recorded')} &middot; {dateStr}, {timeStr}
               </div>
               <div className="text-xs text-navy-400">
-                <span className="text-white font-medium">{stats.total}</span> vehicles
-                {stats.withIssues > 0 && (<>&nbsp;·&nbsp;<span className="text-accent-orange font-medium">{stats.withIssues}</span> with issues</>)}
-                
-                {stats.grounded > 0 && (<>&nbsp;·&nbsp;<span className="text-accent-red font-medium">{stats.grounded}</span> grounded</>)}
+                <span className="text-white font-medium">{stats.total}</span> {t('fleetSnapshot.vehiclesLabel', 'vehicles')}
+                {stats.withIssues > 0 && (<>&nbsp;·&nbsp;<span className="text-accent-orange font-medium">{stats.withIssues}</span> {t('fleetSnapshot.withIssues', 'with issues')}</>)}
+
+                {stats.grounded > 0 && (<>&nbsp;·&nbsp;<span className="text-accent-red font-medium">{stats.grounded}</span> {t('fleetSnapshot.groundedLabel', 'grounded')}</>)}
               </div>
             </div>
           </div>
@@ -1231,11 +1257,11 @@ export default function FleetSnapshot({ user, embedded = false }) {
             {/* Filter toggles */}
             <label className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-navy-700 bg-navy-800/40 cursor-pointer text-xs text-navy-300">
               <input type="checkbox" checked={includeCustom} onChange={() => setIncludeCustom(!includeCustom)} className="rounded" />
-              Custom Defects
+              {t('fleetSnapshot.filter.customDefects', 'Custom Defects')}
             </label>
             <label className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-navy-700 bg-navy-800/40 cursor-pointer text-xs text-navy-300">
               <input type="checkbox" checked={includeBody} onChange={() => setIncludeBody(!includeBody)} className="rounded" />
-              Body Defects
+              {t('fleetSnapshot.filter.bodyDefects', 'Body Defects')}
             </label>
 
             {/* DSP filter (only for non-DSP users) */}
@@ -1244,7 +1270,7 @@ export default function FleetSnapshot({ user, embedded = false }) {
                 <button onClick={() => setDspFilterOpen(!dspFilterOpen)}
                   className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-navy-700 bg-navy-800/40 text-xs text-navy-300 hover:text-white cursor-pointer">
                   <Filter size={12} />
-                  {dspFilter === 'all' ? 'All DSPs' : uniqueDsps.find((d) => d.id === dspFilter)?.name}
+                  {dspFilter === 'all' ? t('fleetSnapshot.filter.allDsps', 'All DSPs') : uniqueDsps.find((d) => d.id === dspFilter)?.name}
                   <ChevronDown size={11} />
                 </button>
                 {dspFilterOpen && (
@@ -1253,7 +1279,7 @@ export default function FleetSnapshot({ user, embedded = false }) {
                     <div className="absolute top-full right-0 mt-1 w-56 bg-navy-900 border border-navy-700 rounded-lg shadow-2xl z-20 overflow-hidden">
                       <button onClick={() => { setDspFilter('all'); setDspFilterOpen(false); }}
                         className="w-full flex items-center justify-between px-3 py-2 text-left text-xs text-white hover:bg-navy-800 border-b border-navy-800">
-                        All DSPs {dspFilter === 'all' && <Check size={12} className="text-accent-green" />}
+                        {t('fleetSnapshot.filter.allDsps', 'All DSPs')} {dspFilter === 'all' && <Check size={12} className="text-accent-green" />}
                       </button>
                       {uniqueDsps.map((d) => (
                         <button key={d.id} onClick={() => { setDspFilter(d.id); setDspFilterOpen(false); }}
@@ -1271,7 +1297,7 @@ export default function FleetSnapshot({ user, embedded = false }) {
             {isDsp && (
               <button onClick={() => openCreateWO()}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-accent-blue text-white text-xs font-semibold hover:opacity-90 cursor-pointer shadow-lg shadow-accent-blue/20">
-                <ClipboardList size={12} /> Create Work Order
+                <ClipboardList size={12} /> {t('fleetSnapshot.createWorkOrder', 'Create Work Order')}
               </button>
             )}
           </div>
@@ -1305,12 +1331,12 @@ export default function FleetSnapshot({ user, embedded = false }) {
                   <div className="flex items-center gap-2 min-w-0">
                     <Users size={14} className="text-accent-blue shrink-0" />
                     <h3 className="text-sm font-semibold text-white truncate">{group.dspName}</h3>
-                    <Badge variant="gray" size="md">{group.vans.length} vans</Badge>
+                    <Badge variant="gray" size="md">{t('fleetSnapshot.groupVansFmt', { count: group.vans.length, defaultValue: `${group.vans.length} vans` })}</Badge>
                   </div>
                   <div className="flex items-center gap-2 text-[11px]">
-                    
-                    {groupIssues > 0 && groupCritical !== groupIssues && <span className="text-accent-orange">{groupIssues} with issues</span>}
-                    {groupIssues === 0 && <span className="text-accent-green">All clean</span>}
+
+                    {groupIssues > 0 && groupCritical !== groupIssues && <span className="text-accent-orange">{t('fleetSnapshot.groupIssuesFmt', { count: groupIssues, defaultValue: `${groupIssues} with issues` })}</span>}
+                    {groupIssues === 0 && <span className="text-accent-green">{t('fleetSnapshot.groupAllClean', 'All clean')}</span>}
                   </div>
                 </div>
                 <div className="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-12 gap-1.5 sm:gap-2">

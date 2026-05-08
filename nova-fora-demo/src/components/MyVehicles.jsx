@@ -178,6 +178,7 @@ const FMC_OPTIONS = [
 const MAKES = ['Ford', 'Mercedes', 'Ram', 'Chevrolet', 'Isuzu'];
 
 function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) {
+  const { t } = useTranslation('fleet');
   const isEdit = !!vehicle;
   const [form, setForm] = useState(vehicle ? {
     fleetId: vehicle.fleetId,
@@ -235,10 +236,10 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
     if (!vinClientValid) {
       setSaveError(
         vinHasIllegalChars
-          ? 'VIN contains I / O / Q — those letters are reserved (use 1 / 0 / 0).'
+          ? t('vehicleModal.vinErrorReserved', 'VIN contains I / O / Q — those letters are reserved (use 1 / 0 / 0).')
           : !vinLengthOk
-            ? `VIN must be exactly 17 characters (got ${vinUpper.length}).`
-            : 'VIN format is invalid.',
+            ? t('vehicleModal.vinErrorLengthFmt', { count: vinUpper.length, defaultValue: `VIN must be exactly 17 characters (got ${vinUpper.length}).` })
+            : t('vehicleModal.vinErrorFormat', 'VIN format is invalid.'),
       );
       return;
     }
@@ -274,8 +275,16 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
               <Truck size={16} className="text-accent-green" />
             </div>
             <div>
-              <h3 className="text-base font-semibold text-white">{readOnly ? 'Vehicle Details' : isEdit ? 'Edit Vehicle' : 'Add New Vehicle'}</h3>
-              <p className="text-[11px] text-navy-400">{readOnly ? `${vehicle.fleetId} · ${vehicle.dsp}` : isEdit ? `Modify ${vehicle.fleetId}` : 'Register a new van in your fleet'}</p>
+              <h3 className="text-base font-semibold text-white">
+                {readOnly ? t('vehicleModal.titleReadOnly', 'Vehicle Details')
+                  : isEdit ? t('vehicleModal.titleEdit', 'Edit Vehicle')
+                  : t('vehicleModal.titleAdd', 'Add New Vehicle')}
+              </h3>
+              <p className="text-[11px] text-navy-400">
+                {readOnly ? `${vehicle.fleetId} · ${vehicle.dsp}`
+                  : isEdit ? t('vehicleModal.subtitleEditFmt', { fleetId: vehicle.fleetId, defaultValue: `Modify ${vehicle.fleetId}` })
+                  : t('vehicleModal.subtitleAdd', 'Register a new van in your fleet')}
+              </p>
             </div>
           </div>
           <button onClick={onClose} className="text-navy-400 hover:text-white p-2 -mr-2"><X size={20} /></button>
@@ -284,12 +293,12 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
         <div className="px-4 sm:px-6 py-5 overflow-y-auto flex-1 space-y-4">
           {isEdit && !readOnly && (
             <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-accent-green/10 border border-accent-green/30 text-xs text-accent-green">
-              <CheckCircle2 size={12} /> All fields are editable at once &mdash; no need to click a pencil per field.
+              <CheckCircle2 size={12} /> {t('vehicleModal.allEditable', 'All fields are editable at once — no need to click a pencil per field.')}
             </div>
           )}
           {readOnly && (
             <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-accent-blue/10 border border-accent-blue/30 text-xs text-accent-blue">
-              <Eye size={12} /> Read-only &mdash; vehicles are managed by the DSP owner
+              <Eye size={12} /> {t('vehicleModal.readOnlyHint', 'Read-only — vehicles are managed by the DSP owner')}
             </div>
           )}
 
@@ -297,7 +306,7 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
             <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-accent-red/10 border border-accent-red/30 text-xs text-accent-red">
               <AlertCircle size={14} className="shrink-0 mt-0.5" />
               <div>
-                <div className="font-semibold mb-0.5">Couldn't save</div>
+                <div className="font-semibold mb-0.5">{t('vehicleModal.saveError', "Couldn't save")}</div>
                 <div className="text-accent-red/90">{saveError}</div>
               </div>
             </div>
@@ -307,7 +316,7 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">Fleet ID *</label>
+              <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">{t('vehicleModal.fleetIdLabel', 'Fleet ID *')}</label>
               <input value={form.fleetId} onChange={(e) => update('fleetId', e.target.value)}
                 placeholder="VAN-1099"
                 disabled={isEdit}
@@ -316,7 +325,7 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
                 }`} />
             </div>
             <div>
-              <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">License Plate *</label>
+              <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">{t('vehicleModal.plateLabel', 'License Plate *')}</label>
               <input value={form.plate} onChange={(e) => update('plate', e.target.value.toUpperCase())}
                 placeholder="WA-1A99-AZ"
                 className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue" />
@@ -325,9 +334,9 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
 
           <div>
             <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">
-              VIN *
+              {t('vehicleModal.vinLabel', 'VIN *')}
               {form.vin && !vinClientValid && (
-                <span className="ml-1 normal-case font-normal text-accent-red">— invalid</span>
+                <span className="ml-1 normal-case font-normal text-accent-red">{t('vehicleModal.vinInvalid', '— invalid')}</span>
               )}
             </label>
             <input value={form.vin} onChange={(e) => update('vin', e.target.value.toUpperCase())}
@@ -344,33 +353,33 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
                 <AlertCircle size={11} className="shrink-0 mt-0.5" />
                 <span>
                   {vinHasIllegalChars
-                    ? <>VIN cannot contain <span className="font-mono font-bold">I</span>, <span className="font-mono font-bold">O</span>, or <span className="font-mono font-bold">Q</span> — those letters are reserved (use 1, 0, 0).</>
+                    ? t('vehicleModal.vinHelpReserved', 'VIN cannot contain I, O, or Q — those letters are reserved (use 1, 0, 0).')
                     : !vinLengthOk
-                      ? `VIN must be exactly 17 characters — you typed ${vinUpper.length}.`
-                      : 'VIN format invalid — only A-Z (no I/O/Q) and 0-9 allowed.'}
+                      ? t('vehicleModal.vinHelpLengthFmt', { count: vinUpper.length, defaultValue: `VIN must be exactly 17 characters — you typed ${vinUpper.length}.` })
+                      : t('vehicleModal.vinHelpFormat', 'VIN format invalid — only A-Z (no I/O/Q) and 0-9 allowed.')}
                 </span>
               </p>
             )}
             {!form.vin && (
-              <p className="text-[10px] text-navy-500 mt-1">17 characters · no <span className="font-mono">I</span>, <span className="font-mono">O</span>, or <span className="font-mono">Q</span></p>
+              <p className="text-[10px] text-navy-500 mt-1">{t('vehicleModal.vinHelpEmpty', '17 characters · no I, O, or Q')}</p>
             )}
           </div>
 
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">Year</label>
+              <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">{t('vehicleModal.yearLabel', 'Year')}</label>
               <input type="number" value={form.year} onChange={(e) => update('year', parseInt(e.target.value, 10))}
                 className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue" />
             </div>
             <div>
-              <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">Make</label>
+              <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">{t('vehicleModal.makeLabel', 'Make')}</label>
               <select value={form.make} onChange={(e) => update('make', e.target.value)}
                 className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue cursor-pointer">
                 {MAKES.map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
             </div>
             <div>
-              <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">Color</label>
+              <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">{t('vehicleModal.colorLabel', 'Color')}</label>
               <select value={form.color} onChange={(e) => update('color', e.target.value)}
                 className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue cursor-pointer">
                 {['White', 'Blue', 'Silver', 'Black', 'Gray'].map((c) => <option key={c} value={c}>{c}</option>)}
@@ -379,28 +388,26 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
           </div>
 
           <div>
-            <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">Model *</label>
+            <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">{t('vehicleModal.modelLabel', 'Model *')}</label>
             <input value={form.model} onChange={(e) => update('model', e.target.value)}
-              placeholder="Transit 250"
+              placeholder={t('vehicleModal.modelPlaceholder', 'Transit 250')}
               className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue" />
           </div>
 
           <div>
             <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">
-              Vehicle Type *
-              <span className="ml-1 normal-case font-normal text-navy-500">— drives the inspection checklist</span>
+              {t('vehicleModal.vehicleTypeLabel', 'Vehicle Type *')}
             </label>
             <select value={form.vehicleClass} onChange={(e) => update('vehicleClass', e.target.value)}
               className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue cursor-pointer">
-              {VEHICLE_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              {VEHICLE_TYPES.map((vt) => <option key={vt.value} value={vt.value}>{vt.label}</option>)}
             </select>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">
-                Ownership
-                <span className="ml-1 normal-case font-normal text-navy-500">— from Cortex `ownershipType`</span>
+                {t('vehicleModal.ownershipLabel', 'Ownership')}
               </label>
               <select value={form.ownership} onChange={(e) => update('ownership', e.target.value)}
                 className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue cursor-pointer">
@@ -409,15 +416,14 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
             </div>
             <div>
               <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">
-                FMC
-                <span className="ml-1 normal-case font-normal text-navy-500">— from Cortex `vehicleProvider`</span>
+                {t('vehicleModal.fmcLabel', 'FMC')}
               </label>
               <input
                 type="text"
                 value={form.fmc || ''}
                 onChange={(e) => update('fmc', e.target.value)}
                 list="fmc-options"
-                placeholder="e.g. Element, LP, Budget…"
+                placeholder={t('vehicleModal.fmcPlaceholder', 'e.g. Element, LP, Budget…')}
                 maxLength={50}
                 className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue"
               />
@@ -434,7 +440,7 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
             <>
               <span /> {/* spacer */}
               <button onClick={onClose} className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-navy-800 border border-navy-700 text-white hover:bg-navy-700 cursor-pointer">
-                Close
+                {t('vehicleModal.close', 'Close')}
               </button>
             </>
           ) : (
@@ -442,14 +448,16 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
               {isEdit && onDelete ? (
                 <button onClick={() => setShowConfirmDelete(true)}
                   className="flex items-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-medium text-accent-red hover:bg-accent-red/10 cursor-pointer">
-                  <Trash2 size={14} /> Delete
+                  <Trash2 size={14} /> {t('vehicleModal.delete', 'Delete')}
                 </button>
               ) : (
-                <button onClick={onClose} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">Cancel</button>
+                <button onClick={onClose} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">{t('vehicleModal.cancel', 'Cancel')}</button>
               )}
               <button onClick={handleSave} disabled={!isValid || submitting}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-gradient-to-r from-accent-green to-accent-blue text-white hover:opacity-90 disabled:opacity-40 cursor-pointer">
-                {submitting ? (<><motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full" /> Saving…</>) : (<><Check size={14} /> {isEdit ? 'Save Changes' : 'Add Vehicle'}</>)}
+                {submitting
+                  ? (<><motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full" /> {t('vehicleModal.saving', 'Saving…')}</>)
+                  : (<><Check size={14} /> {isEdit ? t('vehicleModal.saveChanges', 'Save Changes') : t('vehicleModal.addVehicle', 'Add Vehicle')}</>)}
               </button>
             </>
           )}
@@ -465,11 +473,11 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
                 <div className="w-12 h-12 rounded-full bg-accent-red/15 flex items-center justify-center mx-auto mb-3">
                   <AlertTriangle size={22} className="text-accent-red" />
                 </div>
-                <h4 className="text-base font-semibold text-white mb-1">Delete {vehicle.fleetId}?</h4>
-                <p className="text-xs text-navy-400 mb-4">This removes the vehicle from your fleet. Historical inspection data is kept.</p>
+                <h4 className="text-base font-semibold text-white mb-1">{t('vehicleModal.confirmDeleteTitleFmt', { fleetId: vehicle.fleetId, defaultValue: `Delete ${vehicle.fleetId}?` })}</h4>
+                <p className="text-xs text-navy-400 mb-4">{t('vehicleModal.confirmDeleteBody', 'This removes the vehicle from your fleet. Historical inspection data is kept.')}</p>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => setShowConfirmDelete(false)} className="flex-1 px-4 py-2 rounded-lg border border-navy-600 text-navy-300 text-sm hover:bg-navy-800 cursor-pointer">Cancel</button>
-                  <button onClick={() => { onDelete(vehicle); onClose(); }} className="flex-1 px-4 py-2 rounded-lg bg-accent-red text-white text-sm font-semibold hover:opacity-90 cursor-pointer">Delete</button>
+                  <button onClick={() => setShowConfirmDelete(false)} className="flex-1 px-4 py-2 rounded-lg border border-navy-600 text-navy-300 text-sm hover:bg-navy-800 cursor-pointer">{t('vehicleModal.cancel', 'Cancel')}</button>
+                  <button onClick={() => { onDelete(vehicle); onClose(); }} className="flex-1 px-4 py-2 rounded-lg bg-accent-red text-white text-sm font-semibold hover:opacity-90 cursor-pointer">{t('vehicleModal.delete', 'Delete')}</button>
                 </div>
               </motion.div>
             </motion.div>
@@ -484,6 +492,7 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
 // Bulk Upload Modal — 3-step flow with DELTA PREVIEW
 // ============================================================
 function BulkUploadModal({ currentFleet, onApply, onClose }) {
+  const { t } = useTranslation('fleet');
   const [step, setStep] = useState(1);
   const [file, setFile] = useState(null);
   const [parsing, setParsing] = useState(false);
@@ -644,8 +653,8 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
               <FileSpreadsheet size={16} className="text-accent-blue" />
             </div>
             <div>
-              <h3 className="text-base font-semibold text-white">Bulk Upload Vehicles</h3>
-              <p className="text-[11px] text-navy-400">Sync your Amazon Logistics Fleet Data spreadsheet</p>
+              <h3 className="text-base font-semibold text-white">{t('bulkUpload.title', 'Bulk Upload Vehicles')}</h3>
+              <p className="text-[11px] text-navy-400">{t('bulkUpload.subtitle', 'Sync your Amazon Logistics Fleet Data spreadsheet')}</p>
             </div>
           </div>
           <button onClick={onClose} className="text-navy-400 hover:text-white p-2 -mr-2"><X size={20} /></button>
@@ -663,9 +672,9 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
               ))}
             </div>
             <div className="flex items-center justify-between text-[10px] sm:text-[11px] text-navy-400 mb-2">
-              <span className={step >= 1 ? 'text-white font-semibold' : ''}>1. Upload file</span>
-              <span className={step >= 2 ? 'text-white font-semibold' : ''}>2. Review delta</span>
-              <span className={step >= 3 ? 'text-white font-semibold' : ''}>3. Apply</span>
+              <span className={step >= 1 ? 'text-white font-semibold' : ''}>{t('bulkUpload.stepProgress.upload', '1. Upload file')}</span>
+              <span className={step >= 2 ? 'text-white font-semibold' : ''}>{t('bulkUpload.stepProgress.review', '2. Review delta')}</span>
+              <span className={step >= 3 ? 'text-white font-semibold' : ''}>{t('bulkUpload.stepProgress.apply', '3. Apply')}</span>
             </div>
           </div>
         )}
@@ -678,16 +687,16 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
                   className="w-16 h-16 mx-auto rounded-full bg-accent-green/15 border border-accent-green/40 flex items-center justify-center mb-4">
                   <CheckCircle2 size={32} className="text-accent-green" />
                 </motion.div>
-                <h4 className="text-lg font-semibold text-white mb-1">Fleet synchronized</h4>
+                <h4 className="text-lg font-semibold text-white mb-1">{t('bulkUpload.successHeading', 'Fleet synchronized')}</h4>
                 <p className="text-sm text-navy-400 mb-4">
-                  <span className="text-accent-green">+{applyResults?.summary?.created ?? 0} added</span> &middot;{' '}
-                  <span className="text-accent-blue">{applyResults?.summary?.updated ?? 0} updated</span> &middot;{' '}
-                  <span className="text-navy-300">{applyResults?.summary?.skipped ?? 0} unchanged</span>
+                  <span className="text-accent-green">{t('bulkUpload.deltaSummary.added', { count: applyResults?.summary?.created ?? 0, defaultValue: `+${applyResults?.summary?.created ?? 0} added` })}</span> &middot;{' '}
+                  <span className="text-accent-blue">{t('bulkUpload.deltaSummary.updated', { count: applyResults?.summary?.updated ?? 0, defaultValue: `${applyResults?.summary?.updated ?? 0} updated` })}</span> &middot;{' '}
+                  <span className="text-navy-300">{t('bulkUpload.deltaSummary.unchanged', { count: applyResults?.summary?.skipped ?? 0, defaultValue: `${applyResults?.summary?.skipped ?? 0} unchanged` })}</span>
                   {(applyResults?.summary?.deactivated ?? 0) > 0 && (
-                    <> &middot; <span className="text-accent-red">{applyResults.summary.deactivated} deactivated</span></>
+                    <> &middot; <span className="text-accent-red">{t('bulkUpload.deltaSummary.deactivated', { count: applyResults.summary.deactivated, defaultValue: `${applyResults.summary.deactivated} deactivated` })}</span></>
                   )}
                   {(applyResults?.summary?.error ?? 0) > 0 && (
-                    <> &middot; <span className="text-accent-red">{applyResults.summary.error} error{applyResults.summary.error > 1 ? 's' : ''}</span></>
+                    <> &middot; <span className="text-accent-red">{t('bulkUpload.deltaSummary.errorFmt', { count: applyResults.summary.error, defaultValue: `${applyResults.summary.error} error${applyResults.summary.error > 1 ? 's' : ''}` })}</span></>
                   )}
                 </p>
                 {(applyResults?.summary?.error ?? 0) > 0 && (
@@ -705,9 +714,7 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
                 <div className="rounded-lg bg-accent-blue/10 border border-accent-blue/30 p-3 text-xs text-navy-200 flex items-start gap-2">
                   <Info size={14} className="text-accent-blue mt-0.5 shrink-0" />
                   <div>
-                    Upload your <strong className="text-white">Fleet Data spreadsheet</strong> from Amazon Logistics.
-                    Nova Fora will compare it with your current fleet and show you exactly what will change
-                    &mdash; <strong className="text-white">nothing is deactivated silently.</strong>
+                    {t('bulkUpload.introBodyPart1', 'Upload your')} <strong className="text-white">{t('bulkUpload.introTitle', 'Fleet Data spreadsheet')}</strong> {t('bulkUpload.introBodyPart2', 'from Amazon Logistics. Nova Fora will compare it with your current fleet and show you exactly what will change —')} <strong className="text-white">{t('bulkUpload.introBodyPart3', 'nothing is deactivated silently.')}</strong>
                   </div>
                 </div>
 
@@ -716,10 +723,10 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
                     <Upload size={24} className="text-accent-blue" />
                   </div>
                   <div className="text-sm font-semibold text-white mb-1">
-                    {parsing ? 'Parsing file…' : file ? file.name : 'Drop your CSV / XLSX file here'}
+                    {parsing ? t('bulkUpload.dropzoneParsing', 'Parsing file…') : file ? file.name : t('bulkUpload.dropzoneIdle', 'Drop your CSV / XLSX file here')}
                   </div>
                   <div className="text-[11px] text-navy-400">
-                    {parsing ? 'Detecting columns and matching fleet IDs…' : 'or click to browse'}
+                    {parsing ? t('bulkUpload.dropzoneDetecting', 'Detecting columns and matching fleet IDs…') : t('bulkUpload.dropzoneClickHint', 'or click to browse')}
                   </div>
                   <input
                     type="file"
@@ -736,13 +743,7 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
                 </label>
 
                 <div className="text-xs text-navy-400 leading-relaxed">
-                  <span className="text-navy-300 font-semibold">Source:</span> the
-                  {' '}<span className="font-mono">Fleet Data</span> export from your Amazon Logistics
-                  Cortex portal (Active vehicles, .xlsx). Required columns:
-                  {' '}<span className="font-mono text-navy-300">vin · vehicleName · licensePlateNumber · make · model · year</span>.
-                  {' '}<span className="font-mono">serviceTier</span> (vehicle type) and{' '}
-                  <span className="font-mono">ownershipType</span> (Branded / Owner / Rented) are
-                  picked up automatically when present.
+                  {t('bulkUpload.sourceHint', 'Source: the Fleet Data export from your Amazon Logistics Cortex portal (Active vehicles, .xlsx). Required columns: vin · vehicleName · licensePlateNumber · make · model · year. serviceTier (vehicle type) and ownershipType (Branded / Owner / Rented) are picked up automatically when present.')}
                 </div>
 
                 {parseError && (
@@ -759,17 +760,17 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
                   <div className="rounded-lg bg-accent-green/10 border border-accent-green/30 p-3 text-center">
                     <Plus size={16} className="mx-auto text-accent-green mb-1" />
                     <div className="text-lg font-bold text-white">{delta.newVans.length}</div>
-                    <div className="text-[10px] text-navy-400">To add</div>
+                    <div className="text-[10px] text-navy-400">{t('bulkUpload.toAdd', 'To add')}</div>
                   </div>
                   <div className="rounded-lg bg-accent-blue/10 border border-accent-blue/30 p-3 text-center">
                     <Edit3 size={16} className="mx-auto text-accent-blue mb-1" />
                     <div className="text-lg font-bold text-white">{delta.updatedVans.length}</div>
-                    <div className="text-[10px] text-navy-400">To update</div>
+                    <div className="text-[10px] text-navy-400">{t('bulkUpload.toUpdate', 'To update')}</div>
                   </div>
                   <div className="rounded-lg bg-accent-red/10 border border-accent-red/30 p-3 text-center">
                     <Minus size={16} className="mx-auto text-accent-red mb-1" />
                     <div className="text-lg font-bold text-white">{delta.deactivatedVans.length}</div>
-                    <div className="text-[10px] text-navy-400">To deactivate</div>
+                    <div className="text-[10px] text-navy-400">{t('bulkUpload.toDeactivate', 'To deactivate')}</div>
                   </div>
                 </div>
 
@@ -778,16 +779,15 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
                   <div className="flex items-start gap-2 p-3 rounded-lg bg-accent-orange/10 border border-accent-orange/40 text-xs text-navy-200">
                     <AlertTriangle size={14} className="text-accent-orange mt-0.5 shrink-0" />
                     <div>
-                      <strong className="text-accent-orange">{parseResult.errors.length}</strong> row(s) skipped
-                      due to validation errors. Top reasons:
+                      {t('bulkUpload.rowsSkippedFmt', { count: parseResult.errors.length, defaultValue: `${parseResult.errors.length} row(s) skipped due to validation errors. Top reasons:` })}
                       <ul className="mt-1 list-disc list-inside text-[11px] text-navy-300 space-y-0.5">
                         {parseResult.errors.slice(0, 3).map((e) => (
                           <li key={e.rowIndex} className="truncate">
-                            Row {e.rowIndex}: {e.error}
+                            {t('bulkUpload.rowErrorFmt', { row: e.rowIndex, error: e.error, defaultValue: `Row ${e.rowIndex}: ${e.error}` })}
                           </li>
                         ))}
                         {parseResult.errors.length > 3 && (
-                          <li className="text-navy-400">…and {parseResult.errors.length - 3} more</li>
+                          <li className="text-navy-400">{t('bulkUpload.moreErrorsFmt', { count: parseResult.errors.length - 3, defaultValue: `…and ${parseResult.errors.length - 3} more` })}</li>
                         )}
                       </ul>
                     </div>
@@ -816,11 +816,11 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
                     <div className="rounded-lg border border-navy-700 bg-navy-900/50 p-3 text-[11px] text-navy-200 space-y-2">
                       <div className="flex items-center gap-2 text-navy-300 font-semibold">
                         <Info size={12} />
-                        Cortex column mapping
+                        {t('bulkUpload.cortexMapping', 'Cortex column mapping')}
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
-                          <div className="text-navy-400 mb-1">serviceTier → vehicle_class</div>
+                          <div className="text-navy-400 mb-1">{t('bulkUpload.serviceTierMap', 'serviceTier → vehicle_class')}</div>
                           <ul className="space-y-0.5">
                             {Object.entries(tierCount)
                               .sort((a, b) => b[1] - a[1])
@@ -833,7 +833,7 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
                           </ul>
                         </div>
                         <div>
-                          <div className="text-navy-400 mb-1">ownershipType → ownership</div>
+                          <div className="text-navy-400 mb-1">{t('bulkUpload.ownershipTypeMap', 'ownershipType → ownership')}</div>
                           <ul className="space-y-0.5">
                             {Object.entries(ownCount)
                               .sort((a, b) => b[1] - a[1])
@@ -850,9 +850,9 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
                         <div className="flex items-start gap-1.5 text-accent-orange pt-1 border-t border-navy-800">
                           <AlertTriangle size={12} className="mt-0.5 shrink-0" />
                           <span>
-                            {unknownTier > 0 && <>{unknownTier} row(s) had an unrecognized <span className="font-mono">serviceTier</span> — defaulted to <span className="font-mono">regular_cargo_van</span>. </>}
-                            {unknownOwn > 0 && <>{unknownOwn} row(s) had an unrecognized <span className="font-mono">ownershipType</span> — defaulted to <span className="font-mono">amazon_owned</span>.</>}
-                            {' '}Edit the affected vehicles after upload if needed.
+                            {unknownTier > 0 && <>{t('bulkUpload.unknownTierFmt', { count: unknownTier, defaultValue: `${unknownTier} row(s) had an unrecognized serviceTier — defaulted to regular_cargo_van.` })} </>}
+                            {unknownOwn > 0 && <>{t('bulkUpload.unknownOwnFmt', { count: unknownOwn, defaultValue: `${unknownOwn} row(s) had an unrecognized ownershipType — defaulted to amazon_owned.` })}</>}
+                            {' '}{t('bulkUpload.unknownEditHint', 'Edit the affected vehicles after upload if needed.')}
                           </span>
                         </div>
                       )}
@@ -866,9 +866,7 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
                     <div className="flex items-start gap-2 mb-2">
                       <AlertTriangle size={14} className="text-accent-red mt-0.5 shrink-0" />
                       <div>
-                        <strong className="text-accent-red">{delta.deactivatedVans.length}</strong>{' '}
-                        vehicle{delta.deactivatedVans.length > 1 ? 's are' : ' is'} present in your
-                        fleet but missing from the uploaded sheet.
+                        {t('bulkUpload.missingFromSheetFmt', { count: delta.deactivatedVans.length, defaultValue: `${delta.deactivatedVans.length} vehicle${delta.deactivatedVans.length > 1 ? 's are' : ' is'} present in your fleet but missing from the uploaded sheet.` })}
                       </div>
                     </div>
                     <label className="flex items-center gap-2 cursor-pointer ml-6 select-none">
@@ -879,8 +877,7 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
                         className="w-4 h-4 accent-accent-red"
                       />
                       <span className="text-[11px] text-navy-200">
-                        Deactivate them. <span className="text-navy-400">Historical defects
-                        + work orders preserved; they just stop appearing in the inspector picker.</span>
+                        {t('bulkUpload.deactivateThemLabel', 'Deactivate them.')} <span className="text-navy-400">{t('bulkUpload.deactivateThemHint', 'Historical defects + work orders preserved; they just stop appearing in the inspector picker.')}</span>
                       </span>
                     </label>
                   </div>
@@ -891,7 +888,7 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
                   <div className="flex items-start gap-2 p-3 rounded-lg bg-accent-red/10 border border-accent-red/40 text-xs text-accent-red">
                     <AlertTriangle size={14} className="shrink-0 mt-0.5" />
                     <div>
-                      <div className="font-semibold mb-0.5">Couldn't apply</div>
+                      <div className="font-semibold mb-0.5">{t('bulkUpload.applyError', "Couldn't apply")}</div>
                       <div className="text-accent-red/90">{applyError}</div>
                     </div>
                   </div>
@@ -900,7 +897,7 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
                 {/* New vehicles */}
                 {delta.newVans.length > 0 && (
                   <DeltaSection
-                    title={`New vehicles (${delta.newVans.length})`}
+                    title={t('bulkUpload.newVehiclesTitleFmt', { count: delta.newVans.length, defaultValue: `New vehicles (${delta.newVans.length})` })}
                     icon={Plus}
                     color="accent-green"
                   >
@@ -916,7 +913,7 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
                             {v.fmc && <><span className="text-navy-500"> · FMC </span><span>{v.fmc}</span></>}
                           </div>
                         </div>
-                        <Badge variant="green" size="md">New</Badge>
+                        <Badge variant="green" size="md">{t('bulkUpload.newBadge', 'New')}</Badge>
                       </div>
                     ))}
                   </DeltaSection>
@@ -925,7 +922,7 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
                 {/* Updated vehicles */}
                 {delta.updatedVans.length > 0 && (
                   <DeltaSection
-                    title={`Updates (${delta.updatedVans.length})`}
+                    title={t('bulkUpload.updatesTitleFmt', { count: delta.updatedVans.length, defaultValue: `Updates (${delta.updatedVans.length})` })}
                     icon={Edit3}
                     color="accent-blue"
                   >
@@ -933,7 +930,7 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
                       <div key={v.fleetId} className="py-2 px-3 rounded-lg bg-accent-blue/5 border border-accent-blue/20">
                         <div className="flex items-center justify-between mb-1">
                           <div className="text-sm font-semibold text-white">{v.fleetId} <span className="text-navy-400 font-normal">— {v.year} {v.make} {v.model}</span></div>
-                          <Badge variant="blue" size="md">Changes</Badge>
+                          <Badge variant="blue" size="md">{t('bulkUpload.changesBadge', 'Changes')}</Badge>
                         </div>
                         <div className="space-y-0.5">
                           {v.changes.map((c, i) => (
@@ -953,7 +950,7 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
                 {/* Deactivations */}
                 {delta.deactivatedVans.length > 0 && (
                   <DeltaSection
-                    title={`Deactivations (${delta.deactivatedVans.length})`}
+                    title={t('bulkUpload.deactivationsTitleFmt', { count: delta.deactivatedVans.length, defaultValue: `Deactivations (${delta.deactivatedVans.length})` })}
                     icon={Minus}
                     color="accent-red"
                     defaultOpen
@@ -962,9 +959,9 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
                       <div key={v.fleetId} className="flex items-center justify-between py-2 px-3 rounded-lg bg-accent-red/5 border border-accent-red/20">
                         <div className="min-w-0 flex-1">
                           <div className="text-sm font-semibold text-white truncate">{v.fleetId} <span className="text-navy-400 font-normal">— {v.year} {v.make} {v.model}</span></div>
-                          <div className="text-[11px] text-navy-400 truncate">Not found in uploaded sheet — will be deactivated</div>
+                          <div className="text-[11px] text-navy-400 truncate">{t('bulkUpload.deactivatedHint', 'Not found in uploaded sheet — will be deactivated')}</div>
                         </div>
-                        <Badge variant="red" size="md">Deactivate</Badge>
+                        <Badge variant="red" size="md">{t('bulkUpload.deactivateBadge', 'Deactivate')}</Badge>
                       </div>
                     ))}
                   </DeltaSection>
@@ -977,19 +974,19 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
         {!success && (
           <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-3 sm:py-4 border-t border-navy-800 bg-navy-900/80">
             <button onClick={() => (step === 1 ? onClose() : setStep(step - 1))} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">
-              {step === 1 ? 'Cancel' : 'Back'}
+              {step === 1 ? t('bulkUpload.cancel', 'Cancel') : t('bulkUpload.back', 'Back')}
             </button>
             {step === 2 && (
               <button onClick={handleApply} disabled={applying}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-gradient-to-r from-accent-blue to-accent-purple text-white hover:opacity-90 disabled:opacity-40 cursor-pointer">
-                {applying ? (<><motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full" /> Applying…</>) : (<>Confirm & Apply <Check size={14} /></>)}
+                {applying ? (<><motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full" /> {t('bulkUpload.applying', 'Applying…')}</>) : (<>{t('bulkUpload.confirmApply', 'Confirm & Apply')} <Check size={14} /></>)}
               </button>
             )}
           </div>
         )}
         {success && (
           <div className="flex justify-end px-4 sm:px-6 py-3 sm:py-4 border-t border-navy-800">
-            <button onClick={onClose} className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-accent-green text-white hover:opacity-90 cursor-pointer">Done</button>
+            <button onClick={onClose} className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-accent-green text-white hover:opacity-90 cursor-pointer">{t('bulkUpload.doneButton', 'Done')}</button>
           </div>
         )}
       </motion.div>
