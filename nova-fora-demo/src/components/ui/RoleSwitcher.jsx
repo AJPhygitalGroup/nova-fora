@@ -138,7 +138,6 @@ export default function RoleSwitcher({ user, onSwitchRole, onLogout }) {
                             : 'bg-navy-800 border-navy-700 text-navy-300 hover:text-white'
                         }`}
                       >
-                        <span>{lang.flag}</span>
                         <span className="tracking-wide">{lang.shortCode}</span>
                         {active && <Check size={11} />}
                       </button>

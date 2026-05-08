@@ -4,11 +4,12 @@ V2.2: catalog is filtered server-side by vehicle_class so the wizard only
 sees rules that apply to the vehicle being inspected. Frontend caches per
 (user, vehicle_class) tuple for the session.
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
 from app.db import get_session
+from app.i18n_helpers import get_request_language
 from app.models.defect_catalog import VehicleClass
 from app.models.user import User
 from app.schemas.defect_catalog import CatalogResponse
@@ -23,6 +24,7 @@ router = APIRouter(prefix="/defect-catalog", tags=["catalog"])
     summary="Defect taxonomy filtered for a given vehicle_class",
 )
 async def get_defect_catalog(
+    request: Request,
     response: Response,
     vehicle_class: str = Query(
         ...,
@@ -41,6 +43,6 @@ async def get_defect_catalog(
             + ", ".join(v.value for v in VehicleClass),
         ) from None
 
-    catalog = await build_catalog(session, vc)
+    catalog = await build_catalog(session, vc, lang=get_request_language(request))
     response.headers["Cache-Control"] = "private, max-age=300"
     return catalog

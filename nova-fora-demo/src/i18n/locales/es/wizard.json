@@ -93,33 +93,54 @@
       "vansFmt_other": "{{count}} vans en la flota"
     },
     "step2": {
-      "heading": "¿Recibiste las llaves?",
-      "hint": "Confirma cuántos juegos de llaves te entregó el DSP antes de inspeccionar.",
-      "keyCountLabel": "Juegos de llaves recibidos",
-      "confirmCta": "Sí, tengo las llaves",
-      "confirmedBadge": "Llaves recibidas",
-      "changeBtn": "Cambiar"
+      "headingPart1": "¿Cuántas llaves entregó",
+      "headingPart2": "?",
+      "hint": "Cuenta las llaves físicas que recibiste. Este número se registra una vez para toda la sesión y se concilia cuando las devuelves.",
+      "keysReceivedLabel": "Llaves recibidas",
+      "enterNumberCta": "Ingresa un número para continuar",
+      "confirmCta_one": "Confirmar — recibí {{count}} llave",
+      "confirmCta_other": "Confirmar — recibí {{count}} llaves",
+      "loggedFmt_one": "Registrado: <strong>{{count}}</strong> llave",
+      "loggedFmt_other": "Registrado: <strong>{{count}}</strong> llaves",
+      "loggedLabel": "Registrado:",
+      "keysWord_one": "llave",
+      "keysWord_other": "llaves",
+      "editBtn": "Editar",
+      "tipPart1": "Tip: si",
+      "tipPart2": "no entrega llaves para algunas vans (las guardan en una caja, etc.), registra ahora el número real que recibiste. Puedes marcar esas vans en el paso de revisión."
     },
     "step3": {
       "heading": "Elige un vehículo para inspeccionar",
       "empty": "Aún no hay vehículos disponibles para este DSP.",
       "searchPlaceholder": "Fleet ID, VIN, placa…",
-      "alreadyInspected": "Ya se inspeccionó hoy"
+      "alreadyInspected": "Ya se inspeccionó hoy",
+      "noMatch": "Ningún vehículo coincide con la búsqueda.",
+      "noVisibleFmt": "{{dsp}} no tiene vehículos en tu visibilidad."
     },
     "step4": {
-      "heading": "¿Listo para inspeccionar este vehículo?",
-      "startBtn": "Iniciar inspección",
+      "vehicleReady": "Vehículo listo",
+      "startInspection": "Iniciar inspección",
       "orDivider": "O",
       "notInspectedHeading": "Vehículo no inspeccionado",
-      "notInspectedHint": "Elige un motivo y registramos la inspección como incompleta.",
-      "reasonLabel": "Motivo",
-      "submitIncomplete": "Enviar incompleta"
+      "notInspectedHint": "Toca un motivo — lo registramos y te llevamos de vuelta al selector de vehículos.",
+      "recording": "Registrando…",
+      "reasons": {
+        "vehicle_wont_start": "El vehículo no enciende",
+        "not_at_lot": "Vehículo no está en el lote",
+        "no_keys": "No están las llaves del vehículo"
+      }
     },
     "step5": {
       "heading": "Lectura del odómetro",
       "placeholder": "ej. 86209",
       "photoLabel": "Foto del odómetro (opcional)",
-      "photoHint": "Una toma amplia del tablero ayuda en disputas."
+      "photoHint": "Una toma amplia del tablero ayuda en disputas.",
+      "photoAttached": "Foto adjunta. Puedes continuar con la inspección.",
+      "photoRequired": "Se requiere una foto del odómetro para iniciar la inspección.",
+      "startToAttach": "Iniciar inspección para adjuntar la foto del odómetro",
+      "creatingDraft": "Creando borrador…",
+      "draftHint": "Iniciamos un borrador para que la foto se asocie a la inspección. El borrador se vuelve el registro de inspección cuando lo envíes al final.",
+      "enterMileageFirst": "Primero ingresa el kilometraje actual"
     },
     "step6": {
       "heading": "Revisar y enviar",
@@ -145,7 +166,54 @@
       "vehicleLabel": "Vehículo",
       "odometerLabel": "Odómetro",
       "defectsLabel": "Defectos",
-      "ready": "Listo para enviar"
+      "ready": "Listo para enviar",
+      "keysReceivedFromFmt": "llaves recibidas de {{dsp}}",
+      "immutableHint": "Una vez enviada, esta inspección queda inmutable. El dueño del DSP aún puede reconocer defectos o enviarlos a vendors.",
+      "draftLabel": "Borrador"
+    },
+    "step5Defects": {
+      "hint": "Toca \"Agregar defecto\" por cada problema que encuentres en el recorrido. Cada defecto pasa por una forma rápida de 3-5 toques y luego puedes adjuntar fotos.",
+      "addDefect": "Agregar defecto",
+      "skipHint": "Si todo está bien, puedes saltar — las inspecciones vacías se marcan como APROBADAS.",
+      "otherSection": "Otro"
+    },
+    "statusBadge": {
+      "inspected": "Inspeccionado",
+      "flagged": "Con defectos",
+      "conditional": "Condicional",
+      "notInspected": "No inspeccionado"
+    },
+    "postSubmit": {
+      "headingFmt": "Listo, {{name}}.",
+      "summaryFmt_one": "{{id}} · {{fleetId}} · {{count}} defecto",
+      "summaryFmt_other": "{{id}} · {{fleetId}} · {{count}} defectos",
+      "resultLabelFmt": "Resultado: {{result}}",
+      "sessionStatusPart1": "inspeccionados",
+      "sessionStatusPart2": "pendientes en",
+      "inspectAnotherVan": "Inspeccionar otra van",
+      "loadingRemaining": "Cargando pendientes…",
+      "noMoreVans": "No quedan vans pendientes en este DSP",
+      "vansRemainingFmt_one": "{{count}} van pendiente en {{dsp}}",
+      "vansRemainingFmt_other": "{{count}} vans pendientes en {{dsp}}",
+      "completeDspFmt": "Completar inspección de {{dsp}}",
+      "allInspectedHint": "Todas las vans inspeccionadas — finaliza la sesión",
+      "someRemainingHint_one": "{{count}} van aún sin inspeccionar — tendrás que marcarla",
+      "someRemainingHint_other": "{{count}} vans aún sin inspeccionar — tendrás que marcarlas",
+      "pauseAndClose": "Pausar y cerrar (retoma desde tu panel)"
+    },
+    "completeWarning": {
+      "notInspectedHeadingFmt_one": "{{count}} van no inspeccionada",
+      "notInspectedHeadingFmt_other": "{{count}} vans no inspeccionadas",
+      "descFmt": "Inspeccionaste {{inspected}} de {{total}} vans en {{dsp}}. Elige un motivo por cada van pendiente para que el DSP sepa por qué no se inspeccionó. Cada una quedará marcada en su panel con el motivo.",
+      "reasonsCountFmt": "{{picked}} de {{total}} motivos elegidos",
+      "back": "Atrás",
+      "flagAndCompleteFmt_one": "Marcar {{count}} y completar",
+      "flagAndCompleteFmt_other": "Marcar {{count}} y completar"
+    },
+    "fleetDone": {
+      "headingFmt": "Flota {{dsp}} — lista.",
+      "subtitleFmt": "Excelente trabajo, {{name}}. El panel del DSP se está actualizando ahora.",
+      "done": "Listo"
     },
     "session": {
       "label": "Esta sesión",

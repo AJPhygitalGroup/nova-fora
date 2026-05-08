@@ -282,6 +282,9 @@ export default function Layout({ user, onSwitchRole, onLogout, onImpersonate, im
                 )}
               </button>
 
+              {/* Language toggle (compact) */}
+              <LanguageToggle />
+
               {/* Theme toggle */}
               <button
                 onClick={toggleTheme}
@@ -402,5 +405,37 @@ export default function Layout({ user, onSwitchRole, onLogout, onImpersonate, im
       {/* Notifications side panel */}
       <NotificationsPanel user={user} open={showNotifs} onClose={() => setShowNotifs(false)} />
     </div>
+  );
+}
+
+
+// ─────────────────────────────────────────────────────
+// Compact ES/US toggle in the top bar — same persistence path as the
+// dropdown picker in RoleSwitcher (localStorage + PATCH /auth/me/language).
+// ─────────────────────────────────────────────────────
+import { setLanguage as setI18nLang, SUPPORTED_LANGUAGES } from '../i18n';
+import { auth as authApi } from '../api/client';
+
+function LanguageToggle() {
+  const { i18n } = useTranslation();
+  const current = (i18n.resolvedLanguage || i18n.language || 'es').slice(0, 2);
+
+  const next = SUPPORTED_LANGUAGES.find((l) => l.code !== current) || SUPPORTED_LANGUAGES[0];
+  const active = SUPPORTED_LANGUAGES.find((l) => l.code === current) || SUPPORTED_LANGUAGES[0];
+
+  const handleClick = async () => {
+    await setI18nLang(next.code);
+    // Best-effort sync to user record (no-op if not authenticated yet).
+    authApi.setLanguage(next.code).catch(() => {});
+  };
+
+  return (
+    <button
+      onClick={handleClick}
+      title={`${active.nativeLabel} → ${next.nativeLabel}`}
+      className="hidden sm:flex items-center justify-center px-2.5 h-9 rounded-lg border border-navy-700/60 bg-navy-800/60 text-navy-200 hover:text-white hover:bg-navy-700/60 transition-all cursor-pointer text-xs font-semibold"
+    >
+      <span className="tracking-wide">{active.shortCode}</span>
+    </button>
   );
 }

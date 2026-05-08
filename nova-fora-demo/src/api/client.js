@@ -106,6 +106,18 @@ async function _raw(path, options = {}) {
     headers.Authorization = `Bearer ${token}`;
   }
 
+  // Send the user's chosen UI language so backend catalogs (defect labels,
+  // DVIC items, error messages) can return localized strings. Backend
+  // collapses regional variants like es-MX → es internally.
+  if (!('Accept-Language' in headers)) {
+    try {
+      const lang = (typeof localStorage !== 'undefined' && localStorage.getItem('nf-lang')) || 'es';
+      headers['Accept-Language'] = lang;
+    } catch {
+      // localStorage might be unavailable in some embeddings — silently skip.
+    }
+  }
+
   const res = await fetch(`${BASE_URL}${path}`, { ...options, headers });
 
   if (res.status === 204) return null;
@@ -585,16 +597,26 @@ export const catalog = {
     if (!vehicleClass) {
       return Promise.reject(new Error('vehicle_class is required'));
     }
-    if (_catalogPromises.has(vehicleClass)) {
-      return _catalogPromises.get(vehicleClass);
+    // Cache per (vehicle_class + lang) — switching ES↔EN must re-fetch
+    // localized labels rather than serve stale text from the previous lang.
+    const lang = (() => {
+      try {
+        return (typeof localStorage !== 'undefined' && localStorage.getItem('nf-lang')) || 'es';
+      } catch {
+        return 'es';
+      }
+    })();
+    const key = `${vehicleClass}::${lang}`;
+    if (_catalogPromises.has(key)) {
+      return _catalogPromises.get(key);
     }
     const promise = apiFetch(
       `/defect-catalog?vehicle_class=${encodeURIComponent(vehicleClass)}`
     ).catch((err) => {
-      _catalogPromises.delete(vehicleClass);
+      _catalogPromises.delete(key);
       throw err;
     });
-    _catalogPromises.set(vehicleClass, promise);
+    _catalogPromises.set(key, promise);
     return promise;
   },
 
@@ -648,12 +670,21 @@ export const catalog = {
 // ─────────────────────────────────────────────────────
 const _dvicTemplateCache = new Map();
 
+function _currentLang() {
+  try {
+    return (typeof localStorage !== 'undefined' && localStorage.getItem('nf-lang')) || 'es';
+  } catch {
+    return 'es';
+  }
+}
+
 export const dvicTemplate = {
   load(vehicleClass, ownership = null) {
     if (!vehicleClass) {
       return Promise.reject(new Error('vehicle_class is required'));
     }
-    const cacheKey = `${vehicleClass}::${ownership || 'any'}`;
+    // Cache per-language so es and en don't pollute each other's strings.
+    const cacheKey = `${vehicleClass}::${ownership || 'any'}::${_currentLang()}`;
     if (_dvicTemplateCache.has(cacheKey)) {
       return _dvicTemplateCache.get(cacheKey);
     }
@@ -672,7 +703,7 @@ export const dvicTemplate = {
       _dvicTemplateCache.clear();
       return;
     }
-    const cacheKey = `${vehicleClass}::${ownership || 'any'}`;
+    const cacheKey = `${vehicleClass}::${ownership || 'any'}::${_currentLang()}`;
     _dvicTemplateCache.delete(cacheKey);
   },
 };

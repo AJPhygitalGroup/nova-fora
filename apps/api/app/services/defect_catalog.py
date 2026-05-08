@@ -19,6 +19,14 @@ from app.defect_labels import (
     TYPE_LABELS,
     VEHICLE_CLASS_LABELS,
 )
+from app.defect_labels_es import (
+    PART_LABELS_ES,
+    POSITION_LABELS_ES,
+    SYSTEM_LABELS_ES,
+    TYPE_LABELS_ES,
+    VEHICLE_CLASS_LABELS_ES,
+)
+from app.i18n_helpers import localize_label_dict
 from app.models.defect_catalog import (
     DefectApplicability,
     DefectPart,
@@ -40,7 +48,7 @@ from app.schemas.defect_catalog import (
 
 
 async def build_catalog(
-    session: AsyncSession, vehicle_class: VehicleClass
+    session: AsyncSession, vehicle_class: VehicleClass, lang: str = "en"
 ) -> CatalogResponse:
     """Assemble the catalog filtered for one vehicle_class.
 
@@ -84,8 +92,10 @@ async def build_catalog(
                 pos_enum = DefectPosition(pos_str)
             except ValueError:
                 continue
-            pos_labels = POSITION_LABELS.get(
-                pos_enum, {"label": pos_str, "icon": "•"}
+            pos_labels = localize_label_dict(
+                POSITION_LABELS.get(pos_enum, {"label": pos_str, "icon": "•"}),
+                POSITION_LABELS_ES.get(pos_enum),
+                lang,
             )
             valid_positions.append(
                 PositionInfo(
@@ -100,8 +110,10 @@ async def build_catalog(
             if isinstance(rule.defect_type, DefectType)
             else DefectType(rule.defect_type)
         )
-        type_labels = TYPE_LABELS.get(
-            type_enum, {"label": type_enum.value, "icon": "❓"}
+        type_labels = localize_label_dict(
+            TYPE_LABELS.get(type_enum, {"label": type_enum.value, "icon": "❓"}),
+            TYPE_LABELS_ES.get(type_enum),
+            lang,
         )
         type_info = DefectTypeInfo(
             id=type_enum,
@@ -134,7 +146,11 @@ async def build_catalog(
     for part_id in DefectPart:
         if part_id not in types_by_part:
             continue
-        labels = PART_LABELS.get(part_id, {"label": part_id.value, "icon": "❓"})
+        labels = localize_label_dict(
+            PART_LABELS.get(part_id, {"label": part_id.value, "icon": "❓"}),
+            PART_LABELS_ES.get(part_id),
+            lang,
+        )
         parts.append(
             PartInfo(
                 id=part_id,
@@ -149,7 +165,11 @@ async def build_catalog(
     # Systems
     systems: list[SystemInfo] = []
     for sys_id in DefectSystem:
-        labels = SYSTEM_LABELS.get(sys_id, {"label": sys_id.value, "icon": "❓"})
+        labels = localize_label_dict(
+            SYSTEM_LABELS.get(sys_id, {"label": sys_id.value, "icon": "❓"}),
+            SYSTEM_LABELS_ES.get(sys_id),
+            lang,
+        )
         systems.append(SystemInfo(id=sys_id, label=labels["label"], icon=labels["icon"]))
 
     # parts_by_system (primary only)
@@ -162,9 +182,11 @@ async def build_catalog(
                 parts_by_system[app_.system].append(part.id)
                 break
 
-    vc_label = VEHICLE_CLASS_LABELS.get(vehicle_class, {}).get(
-        "label", vehicle_class.value
-    )
+    vc_label = localize_label_dict(
+        VEHICLE_CLASS_LABELS.get(vehicle_class, {}),
+        VEHICLE_CLASS_LABELS_ES.get(vehicle_class),
+        lang,
+    ).get("label", vehicle_class.value)
 
     return CatalogResponse(
         vehicle_class=vehicle_class,

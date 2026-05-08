@@ -8,7 +8,7 @@ the V2.2 catalog (rule + applicability) so the wizard can show:
 Empty array → vehicle_class doesn't have a template seeded yet (e.g.
 electric_vehicle, box_truck_dot until those PDFs land).
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -16,6 +16,20 @@ from app.auth.dependencies import get_current_user
 from app.db import get_session
 from app.defect_labels import (
     PART_LABELS, POSITION_LABELS, TYPE_LABELS, VEHICLE_CLASS_LABELS,
+)
+from app.defect_labels_es import (
+    DVIC_CATEGORY_LABELS_ES,
+    DVIC_DESCRIPTION_LABELS_ES,
+    DVIC_SECTION_META_ES,
+    PART_LABELS_ES,
+    POSITION_LABELS_ES,
+    TYPE_LABELS_ES,
+    VEHICLE_CLASS_LABELS_ES,
+)
+from app.i18n_helpers import (
+    get_request_language,
+    localize_label_dict,
+    localize_string,
 )
 from app.models.defect_catalog import (
     DefectApplicability,
@@ -65,6 +79,7 @@ _SECTION_META = {
     summary="DVIC checklist for a vehicle_class — drives the section-first wizard",
 )
 async def get_dvic_template(
+    request: Request,
     response: Response,
     vehicle_class: str = Query(...,
         description="custom_delivery_van | regular_cargo_van | step_van_dot | "
@@ -76,6 +91,7 @@ async def get_dvic_template(
     current: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    lang = get_request_language(request)
     try:
         vc = VehicleClass(vehicle_class)
     except ValueError:
@@ -123,17 +139,26 @@ async def get_dvic_template(
         sec_key = tpl.section if isinstance(tpl.section, str) else tpl.section.value
         cat_key = tpl.part_category
 
-        # Resolve display labels from the static dictionaries
+        # Resolve display labels from the static dictionaries (English) and
+        # merge the Spanish overrides if the request asked for `es`.
         try:
             part_enum = DefectPart(rule.part if isinstance(rule.part, str) else rule.part.value)
-            part_lbl = PART_LABELS.get(part_enum, {})
+            part_lbl = localize_label_dict(
+                PART_LABELS.get(part_enum, {}),
+                PART_LABELS_ES.get(part_enum),
+                lang,
+            )
         except ValueError:
             part_lbl = {}
         try:
             type_enum = DefectType(
                 rule.defect_type if isinstance(rule.defect_type, str) else rule.defect_type.value
             )
-            type_lbl = TYPE_LABELS.get(type_enum, {})
+            type_lbl = localize_label_dict(
+                TYPE_LABELS.get(type_enum, {}),
+                TYPE_LABELS_ES.get(type_enum),
+                lang,
+            )
         except ValueError:
             type_lbl = {}
         pos_lbl = {}
@@ -141,13 +166,17 @@ async def get_dvic_template(
             pos_v = tpl.position if isinstance(tpl.position, str) else tpl.position.value
             try:
                 pos_enum = DefectPosition(pos_v)
-                pos_lbl = POSITION_LABELS.get(pos_enum, {})
+                pos_lbl = localize_label_dict(
+                    POSITION_LABELS.get(pos_enum, {}),
+                    POSITION_LABELS_ES.get(pos_enum),
+                    lang,
+                )
             except ValueError:
                 pass
 
         item = {
             "id": tpl.id,
-            "description": tpl.description,
+            "description": localize_string(tpl.description, DVIC_DESCRIPTION_LABELS_ES, lang),
             "ordering": tpl.ordering,
             "photo_required": tpl.photo_required,
             "requires_branding": tpl.requires_branding,
@@ -189,7 +218,9 @@ async def get_dvic_template(
         cats = by_section.get(sec.value, {})
         if not cats:
             continue
-        meta = _SECTION_META[sec]
+        meta = localize_label_dict(
+            _SECTION_META[sec], DVIC_SECTION_META_ES.get(sec), lang
+        )
         # Order categories by the smallest ordering inside them
         cats_sorted = sorted(
             cats.items(),
@@ -202,7 +233,7 @@ async def get_dvic_template(
             "description": meta["description"],
             "categories": [
                 {
-                    "name": name,
+                    "name": localize_string(name, DVIC_CATEGORY_LABELS_ES, lang),
                     "items": items,
                 }
                 for name, items in cats_sorted
@@ -210,7 +241,9 @@ async def get_dvic_template(
             "item_count": sum(len(items) for _, items in cats_sorted),
         })
 
-    vc_label = VEHICLE_CLASS_LABELS.get(vc, {}).get("label", vc.value)
+    vc_label = localize_label_dict(
+        VEHICLE_CLASS_LABELS.get(vc, {}), VEHICLE_CLASS_LABELS_ES.get(vc), lang
+    ).get("label", vc.value)
 
     response.headers["Cache-Control"] = "private, max-age=300"
     return {

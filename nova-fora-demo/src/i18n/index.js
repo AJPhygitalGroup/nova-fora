@@ -36,7 +36,7 @@ import esDash    from './locales/es/dashboard.json';
 
 export const SUPPORTED_LANGUAGES = [
   { code: 'es', shortCode: 'ES', label: 'Español', flag: '🇲🇽', nativeLabel: 'Español' },
-  { code: 'en', shortCode: 'US', label: 'English', flag: '🇺🇸', nativeLabel: 'English' },
+  { code: 'en', shortCode: 'EN', label: 'English', flag: '🇺🇸', nativeLabel: 'English' },
 ];
 
 export const NAMESPACES = ['common', 'auth', 'layout', 'wizard', 'fleet', 'admin', 'dashboard'];
@@ -97,10 +97,22 @@ i18n
  * Change language + sync to localStorage. The /auth/me/language PATCH is
  * fired separately by the toggle UI (RoleSwitcher) when the user is logged
  * in — we don't do it here because i18n can be called pre-auth (login page).
+ *
+ * Side effect: bust the catalog/DVIC caches in api/client so the next fetch
+ * pulls localized labels from the backend instead of serving stale text.
+ * We import lazily to avoid a circular import (api/client imports nothing
+ * from i18n at module load time).
  */
-export function setLanguage(lang) {
-  if (!['es', 'en'].includes(lang)) return Promise.resolve();
+export async function setLanguage(lang) {
+  if (!['es', 'en'].includes(lang)) return;
   localStorage.setItem('nf-lang', lang);
+  try {
+    const { catalog, dvicTemplate } = await import('../api/client.js');
+    catalog?.invalidate?.();
+    dvicTemplate?.invalidate?.();
+  } catch {
+    // api/client may not be loaded yet — pre-auth contexts have no cache.
+  }
   return i18n.changeLanguage(lang);
 }
 

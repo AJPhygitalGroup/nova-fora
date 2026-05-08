@@ -93,33 +93,54 @@
       "vansFmt_other": "{{count}} vans in fleet"
     },
     "step2": {
-      "heading": "Did you receive the keys?",
-      "hint": "Confirm how many key sets the DSP handed you before you start inspecting.",
-      "keyCountLabel": "Key sets received",
-      "confirmCta": "Yes, I have the keys",
-      "confirmedBadge": "Keys received",
-      "changeBtn": "Change"
+      "headingPart1": "How many keys did",
+      "headingPart2": "hand over?",
+      "hint": "Count the physical keys you received. This number is logged once for the whole session and reconciled when you return them.",
+      "keysReceivedLabel": "Keys received",
+      "enterNumberCta": "Enter a number to continue",
+      "confirmCta_one": "Confirm — I received {{count}} key",
+      "confirmCta_other": "Confirm — I received {{count}} keys",
+      "loggedFmt_one": "Logged: <strong>{{count}}</strong> key",
+      "loggedFmt_other": "Logged: <strong>{{count}}</strong> keys",
+      "loggedLabel": "Logged:",
+      "keysWord_one": "key",
+      "keysWord_other": "keys",
+      "editBtn": "Edit",
+      "tipPart1": "Tip: if",
+      "tipPart2": "doesn't hand keys for some vans (kept in box, etc.), record the actual number you received now. You can flag those vans in the review step."
     },
     "step3": {
       "heading": "Pick a vehicle to inspect",
       "empty": "No vehicles available for this DSP yet.",
       "searchPlaceholder": "Fleet ID, VIN, plate…",
-      "alreadyInspected": "Already inspected today"
+      "alreadyInspected": "Already inspected today",
+      "noMatch": "No vehicles match the search.",
+      "noVisibleFmt": "{{dsp}} has no vehicles in your visibility."
     },
     "step4": {
-      "heading": "Ready to inspect this vehicle?",
-      "startBtn": "Start inspection",
+      "vehicleReady": "Vehicle ready",
+      "startInspection": "Start Inspection",
       "orDivider": "Or",
       "notInspectedHeading": "Vehicle not inspected",
-      "notInspectedHint": "Pick a reason and we'll log the inspection as incomplete.",
-      "reasonLabel": "Reason",
-      "submitIncomplete": "Submit incomplete"
+      "notInspectedHint": "Tap a reason — we'll record it and drop you back at the vehicle picker.",
+      "recording": "Recording…",
+      "reasons": {
+        "vehicle_wont_start": "Vehicle won't start",
+        "not_at_lot": "Vehicle not at the lot",
+        "no_keys": "Vehicle keys not present"
+      }
     },
     "step5": {
       "heading": "Odometer reading",
       "placeholder": "e.g. 86209",
       "photoLabel": "Odometer photo (optional)",
-      "photoHint": "A wide shot of the dashboard helps disputes."
+      "photoHint": "A wide shot of the dashboard helps disputes.",
+      "photoAttached": "Photo attached. You can continue to the inspection.",
+      "photoRequired": "A photo of the odometer is required to start the inspection.",
+      "startToAttach": "Start inspection to attach the odometer photo",
+      "creatingDraft": "Creating draft…",
+      "draftHint": "We start a draft so the photo can be tied to the inspection. The draft becomes the inspection record once you submit at the end.",
+      "enterMileageFirst": "Enter the current mileage first"
     },
     "step6": {
       "heading": "Review & submit",
@@ -145,7 +166,54 @@
       "vehicleLabel": "Vehicle",
       "odometerLabel": "Odometer",
       "defectsLabel": "Defects",
-      "ready": "Ready to submit"
+      "ready": "Ready to submit",
+      "keysReceivedFromFmt": "keys received from {{dsp}}",
+      "immutableHint": "Once submitted, this inspection becomes immutable. Defects can still be acknowledged or routed to vendors by the DSP owner.",
+      "draftLabel": "Draft"
+    },
+    "step5Defects": {
+      "hint": "Tap \"Add defect\" for any issue you find during the walkthrough. Each defect goes through a quick 3-5 tap form, then you can attach photos.",
+      "addDefect": "Add defect",
+      "skipHint": "If everything's fine, you can skip ahead — empty inspections are PASSED.",
+      "otherSection": "Other"
+    },
+    "statusBadge": {
+      "inspected": "Inspected",
+      "flagged": "Flagged",
+      "conditional": "Conditional",
+      "notInspected": "Not inspected"
+    },
+    "postSubmit": {
+      "headingFmt": "All set, {{name}}.",
+      "summaryFmt_one": "{{id}} · {{fleetId}} · {{count}} defect",
+      "summaryFmt_other": "{{id}} · {{fleetId}} · {{count}} defects",
+      "resultLabelFmt": "Result: {{result}}",
+      "sessionStatusPart1": "inspected",
+      "sessionStatusPart2": "remaining in",
+      "inspectAnotherVan": "Inspect another van",
+      "loadingRemaining": "Loading remaining…",
+      "noMoreVans": "No more vans pending in this DSP",
+      "vansRemainingFmt_one": "{{count}} van remaining in {{dsp}}",
+      "vansRemainingFmt_other": "{{count}} vans remaining in {{dsp}}",
+      "completeDspFmt": "Complete {{dsp}} inspection",
+      "allInspectedHint": "All vans inspected — finalize the session",
+      "someRemainingHint_one": "{{count}} van not yet inspected — you'll need to flag it",
+      "someRemainingHint_other": "{{count}} vans not yet inspected — you'll need to flag them",
+      "pauseAndClose": "Pause & close (resume from your dashboard)"
+    },
+    "completeWarning": {
+      "notInspectedHeadingFmt_one": "{{count}} van not inspected",
+      "notInspectedHeadingFmt_other": "{{count}} vans not inspected",
+      "descFmt": "You inspected {{inspected}} of {{total}} vans in {{dsp}}. Pick a reason for each remaining van so the DSP knows why it wasn't inspected. Each one will be flagged in their dashboard with the reason.",
+      "reasonsCountFmt": "{{picked}} of {{total}} reasons picked",
+      "back": "Back",
+      "flagAndCompleteFmt_one": "Flag {{count}} & complete",
+      "flagAndCompleteFmt_other": "Flag {{count}} & complete"
+    },
+    "fleetDone": {
+      "headingFmt": "{{dsp}} fleet — done.",
+      "subtitleFmt": "Great work, {{name}}. The DSP dashboard is being updated now.",
+      "done": "Done"
     },
     "session": {
       "label": "This session",

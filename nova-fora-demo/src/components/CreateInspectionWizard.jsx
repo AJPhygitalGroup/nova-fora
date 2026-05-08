@@ -785,6 +785,7 @@ function Step1DspPicker({ dsps, loading, value, onChange }) {
 // Step 2: Key recorder (mandatory after DSP)
 // ─────────────────────────────────────────────────────
 function Step2KeyRecorder({ dsp, keysReceived, onKeysChange, keysConfirmed, onConfirm, onUnconfirm }) {
+  const { t } = useTranslation('wizard');
   const num = keysReceived ? parseInt(keysReceived, 10) : null;
   const isValid = num !== null && !Number.isNaN(num) && num >= 0;
 
@@ -793,18 +794,19 @@ function Step2KeyRecorder({ dsp, keysReceived, onKeysChange, keysConfirmed, onCo
       <div className="flex items-center gap-2 mb-2">
         <KeyRound size={16} className="text-accent-blue" />
         <h3 className="text-sm font-semibold text-white">
-          How many keys did <span className="text-accent-blue">{dsp?.name}</span> hand over?
+          {t('createInspection.step2.headingPart1')}{' '}
+          <span className="text-accent-blue">{dsp?.name}</span>
+          {t('createInspection.step2.headingPart2')}
         </h3>
       </div>
       <p className="text-xs text-navy-400 -mt-2">
-        Count the physical keys you received. This number is logged once for the
-        whole session and reconciled when you return them.
+        {t('createInspection.step2.hint')}
       </p>
 
       {/* Big numeric input */}
       <div className="rounded-xl border border-navy-700 bg-navy-900/60 p-5">
         <label className="text-[10px] uppercase tracking-wide text-navy-400 block mb-2">
-          Keys received
+          {t('createInspection.step2.keysReceivedLabel')}
         </label>
         <div className="flex items-center gap-2">
           <button
@@ -852,28 +854,29 @@ function Step2KeyRecorder({ dsp, keysReceived, onKeysChange, keysConfirmed, onCo
           className="w-full py-3 rounded-lg bg-accent-blue text-white font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
         >
           {isValid
-            ? `Confirm — I received ${num} key${num === 1 ? '' : 's'}`
-            : 'Enter a number to continue'}
+            ? t('createInspection.step2.confirmCta', { count: num })
+            : t('createInspection.step2.enterNumberCta')}
         </button>
       ) : (
         <div className="flex items-center gap-2 p-3 rounded-lg bg-accent-green/10 border border-accent-green/40">
           <Check size={16} className="text-accent-green shrink-0" />
           <span className="text-sm text-white">
-            Logged: <span className="font-bold">{num}</span> key{num === 1 ? '' : 's'}
+            {t('createInspection.step2.loggedLabel')}{' '}
+            <span className="font-bold">{num}</span>{' '}
+            {t('createInspection.step2.keysWord', { count: num })}
           </span>
           <button
             onClick={onUnconfirm}
             className="ml-auto text-[11px] text-navy-300 hover:text-white underline cursor-pointer"
           >
-            Edit
+            {t('createInspection.step2.editBtn')}
           </button>
         </div>
       )}
 
       <p className="text-[11px] text-navy-500 text-center">
-        Tip: if {dsp?.name} doesn't hand keys for some vans (kept in box, etc.),
-        record the actual number you received now. You can flag those vans in the
-        review step.
+        {t('createInspection.step2.tipPart1')} {dsp?.name}{' '}
+        {t('createInspection.step2.tipPart2')}
       </p>
     </div>
   );
@@ -967,8 +970,8 @@ function Step3VehiclePicker({ dsp, vehicles, inspectedTodayMap, value, onChange 
       {sorted.length === 0 && (
         <div className="py-8 text-center text-sm text-navy-400">
           {vehicles.length === 0
-            ? `${dsp?.name} has no vehicles in your visibility.`
-            : 'No vehicles match the search.'}
+            ? t('createInspection.step3.noVisibleFmt', { dsp: dsp?.name, defaultValue: `${dsp?.name} has no vehicles in your visibility.` })
+            : t('createInspection.step3.noMatch', 'No vehicles match the search.')}
         </div>
       )}
     </div>
@@ -981,30 +984,38 @@ function Step3VehiclePicker({ dsp, vehicles, inspectedTodayMap, value, onChange 
 //   conditional  → gold ⚠ "Conditional"
 //   incomplete   → red ⛔ "Not inspected · {reason}"
 function VehicleStatusBadge({ status }) {
+  const { t } = useTranslation('wizard');
   if (!status) return null;
   if (status.result === 'passed') {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-green/15 border border-accent-green/40 text-[10px] font-semibold text-accent-green shrink-0">
-        <Check size={10} /> Inspected
+        <Check size={10} /> {t('createInspection.statusBadge.inspected', 'Inspected')}
       </span>
     );
   }
   if (status.result === 'flagged') {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-orange/15 border border-accent-orange/40 text-[10px] font-semibold text-accent-orange shrink-0">
-        <AlertTriangle size={10} /> Flagged · {status.defectCount}
+        <AlertTriangle size={10} /> {t('createInspection.statusBadge.flagged', 'Flagged')} · {status.defectCount}
       </span>
     );
   }
   if (status.result === 'conditional') {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-gold/15 border border-accent-gold/40 text-[10px] font-semibold text-accent-gold shrink-0">
-        <AlertTriangle size={10} /> Conditional
+        <AlertTriangle size={10} /> {t('createInspection.statusBadge.conditional', 'Conditional')}
       </span>
     );
   }
   if (status.result === 'incomplete') {
-    const label = INCOMPLETE_REASON_LABELS[status.incompleteReason] || 'Not inspected';
+    // Reason text comes from a translation key that mirrors the value name;
+    // fall back to the static English label if no translation is found.
+    const reasonKey = status.incompleteReason
+      ? `createInspection.step4.reasons.${status.incompleteReason}`
+      : null;
+    const label = reasonKey
+      ? t(reasonKey, INCOMPLETE_REASON_LABELS[status.incompleteReason] || 'Not inspected')
+      : t('createInspection.statusBadge.notInspected', 'Not inspected');
     return (
       <span
         className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-red/15 border border-accent-red/40 text-[10px] font-semibold text-accent-red shrink-0 max-w-full"
@@ -1061,12 +1072,13 @@ function Step4StartGate({
   onStart,
   onMarkNotInspected,
 }) {
+  const { t } = useTranslation('wizard');
   return (
     <div className="space-y-5">
       {/* Vehicle context — confirm the tech's standing in front of the right van */}
       <div className="rounded-lg bg-navy-900/60 border border-navy-700 p-3">
         <div className="text-[10px] uppercase tracking-wide text-navy-400 mb-1">
-          Vehicle ready
+          {t('createInspection.step4.vehicleReady')}
         </div>
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
@@ -1088,13 +1100,13 @@ function Step4StartGate({
         className="w-full py-5 rounded-xl bg-gradient-to-r from-accent-blue to-accent-purple text-white font-bold text-base flex items-center justify-center gap-2 hover:opacity-90 disabled:opacity-40 cursor-pointer shadow-lg shadow-accent-blue/20"
       >
         <PlayCircle size={20} />
-        Start Inspection
+        {t('createInspection.step4.startInspection')}
       </button>
 
       {/* Visual divider */}
       <div className="flex items-center gap-3 my-1">
         <div className="flex-1 border-t border-navy-700" />
-        <span className="text-[10px] uppercase tracking-wide text-navy-500">Or</span>
+        <span className="text-[10px] uppercase tracking-wide text-navy-500">{t('createInspection.step4.orDivider')}</span>
         <div className="flex-1 border-t border-navy-700" />
       </div>
 
@@ -1102,10 +1114,10 @@ function Step4StartGate({
       <div className="rounded-xl border border-navy-700 bg-navy-900/40 p-4">
         <div className="flex items-center gap-2 mb-2">
           <Ban size={14} className="text-accent-orange" />
-          <div className="text-sm font-semibold text-white">Vehicle not inspected</div>
+          <div className="text-sm font-semibold text-white">{t('createInspection.step4.notInspectedHeading')}</div>
         </div>
         <p className="text-[11px] text-navy-400 mb-3">
-          Tap a reason — we'll record it and drop you back at the vehicle picker.
+          {t('createInspection.step4.notInspectedHint')}
         </p>
         <div className="grid grid-cols-1 gap-2">
           {INCOMPLETE_REASONS.map((r) => (
@@ -1116,14 +1128,14 @@ function Step4StartGate({
               className="flex items-center gap-2 px-3 py-3 rounded-lg border border-navy-700 bg-navy-800 hover:border-accent-orange/50 hover:bg-accent-orange/10 text-left text-sm text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
             >
               <AlertTriangle size={14} className="text-accent-orange shrink-0" />
-              <span className="flex-1">{r.label}</span>
+              <span className="flex-1">{t(`createInspection.step4.reasons.${r.value}`, r.label)}</span>
               <ArrowRight size={14} className="text-navy-400" />
             </button>
           ))}
         </div>
         {incompleteSubmitting && (
           <div className="mt-3 flex items-center gap-2 text-xs text-navy-300">
-            <Loader2 size={12} className="animate-spin" /> Recording…
+            <Loader2 size={12} className="animate-spin" /> {t('createInspection.step4.recording')}
           </div>
         )}
         {incompleteError && (
@@ -1213,8 +1225,8 @@ function Step4Odometer({
                 : 'bg-accent-orange/10 border-accent-orange/40 text-accent-orange'
             }`}>
               {photoLanded
-                ? <><Check size={12} className="shrink-0 mt-0.5" /> Photo attached. You can continue to the inspection.</>
-                : <><AlertCircle size={12} className="shrink-0 mt-0.5" /> A photo of the odometer is required to start the inspection.</>}
+                ? <><Check size={12} className="shrink-0 mt-0.5" /> {t('createInspection.step5.photoAttached', 'Photo attached. You can continue to the inspection.')}</>
+                : <><AlertCircle size={12} className="shrink-0 mt-0.5" /> {t('createInspection.step5.photoRequired', 'A photo of the odometer is required to start the inspection.')}</>}
             </div>
           </>
         ) : (
@@ -1222,15 +1234,16 @@ function Step4Odometer({
             <button
               onClick={onEnsureDraft}
               disabled={creatingDraft || !mileageValid}
-              title={!mileageValid ? 'Enter the current mileage first' : ''}
+              title={!mileageValid ? t('createInspection.step5.enterMileageFirst', 'Enter the current mileage first') : ''}
               className="w-full flex items-center justify-center gap-2 py-3 rounded-lg border-2 border-dashed border-accent-orange/40 bg-accent-orange/5 text-accent-orange hover:bg-accent-orange/10 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-sm font-semibold"
             >
               {creatingDraft ? <Loader2 size={14} className="animate-spin" /> : <Camera size={14} />}
-              {creatingDraft ? 'Creating draft…' : 'Start inspection to attach the odometer photo'}
+              {creatingDraft
+                ? t('createInspection.step5.creatingDraft', 'Creating draft…')
+                : t('createInspection.step5.startToAttach', 'Start inspection to attach the odometer photo')}
             </button>
             <p className="mt-2 text-[11px] text-navy-400">
-              We start a draft so the photo can be tied to the inspection. The
-              draft becomes the inspection record once you submit at the end.
+              {t('createInspection.step5.draftHint', 'We start a draft so the photo can be tied to the inspection. The draft becomes the inspection record once you submit at the end.')}
             </p>
           </>
         )}
@@ -1250,17 +1263,17 @@ function Step4Odometer({
 // Step 5 (v2): flat defects list + DefectWizard overlay launch
 // ─────────────────────────────────────────────────────
 function Step5Defects({ inspectionId, defects, onOpenWizard, onRemoveDefect }) {
+  const { t } = useTranslation('wizard');
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 mb-1">
         <ClipboardList size={16} className="text-accent-blue" />
         <h3 className="text-sm font-semibold text-white">
-          Defects {defects.length > 0 && <span className="text-navy-400 font-normal">({defects.length})</span>}
+          {t('createInspection.review.defectsLabel')} {defects.length > 0 && <span className="text-navy-400 font-normal">({defects.length})</span>}
         </h3>
       </div>
       <p className="text-xs text-navy-400 -mt-1">
-        Tap "Add defect" for any issue you find during the walkthrough.
-        Each defect goes through a quick 3-5 tap form, then you can attach photos.
+        {t('createInspection.step5Defects.hint', 'Tap "Add defect" for any issue you find during the walkthrough. Each defect goes through a quick 3-5 tap form, then you can attach photos.')}
       </p>
 
       {/* Defect cards */}
@@ -1277,12 +1290,12 @@ function Step5Defects({ inspectionId, defects, onOpenWizard, onRemoveDefect }) {
         onClick={onOpenWizard}
         className="w-full flex items-center justify-center gap-2 px-4 py-4 rounded-xl border-2 border-dashed border-accent-blue/40 bg-accent-blue/5 hover:bg-accent-blue/10 text-accent-blue cursor-pointer font-semibold text-sm transition-all"
       >
-        <Plus size={16} /> Add defect
+        <Plus size={16} /> {t('createInspection.step5Defects.addDefect', 'Add defect')}
       </button>
 
       {defects.length === 0 && (
         <p className="text-[11px] text-navy-500 text-center pt-2">
-          If everything's fine, you can skip ahead — empty inspections are PASSED.
+          {t('createInspection.step5Defects.skipHint', "If everything's fine, you can skip ahead — empty inspections are PASSED.")}
         </p>
       )}
     </div>
@@ -1290,6 +1303,7 @@ function Step5Defects({ inspectionId, defects, onOpenWizard, onRemoveDefect }) {
 }
 
 function V2DefectCard({ defect, onRemove }) {
+  const { t } = useTranslation('wizard');
   const positionLine = defect.positionLabel ? ` (${defect.positionLabel})` : '';
   return (
     <div className="rounded-lg border border-navy-700 bg-navy-900/60 p-3">
@@ -1311,7 +1325,7 @@ function V2DefectCard({ defect, onRemove }) {
         <button
           onClick={onRemove}
           className="text-navy-400 hover:text-accent-red p-1 -mr-1 rounded shrink-0"
-          title="Remove defect"
+          title={t('dvic.committedList.removeTitle')}
         >
           <Trash2 size={14} />
         </button>
@@ -1337,7 +1351,7 @@ function Step6Review({ dsp, keysReceived, vehicle, odometer, defects, totalDefec
   const sectionGroups = (() => {
     const map = {};
     for (const d of defects) {
-      const section = d.section || 'Other';
+      const section = d.section || t('createInspection.step5Defects.otherSection', 'Other');
       if (!map[section]) map[section] = [];
       map[section].push(d);
     }
@@ -1354,7 +1368,7 @@ function Step6Review({ dsp, keysReceived, vehicle, odometer, defects, totalDefec
         <KeyRound size={14} className="text-accent-blue" />
         <div className="text-sm text-white">
           <span className="font-bold">{keysReceived || '—'}</span>{' '}
-          <span className="text-navy-400">keys received from {dsp?.name}</span>
+          <span className="text-navy-400">{t('createInspection.review.keysReceivedFromFmt', { dsp: dsp?.name, defaultValue: `keys received from ${dsp?.name}` })}</span>
         </div>
       </div>
 
@@ -1418,7 +1432,7 @@ function Step6Review({ dsp, keysReceived, vehicle, odometer, defects, totalDefec
       )}
 
       <div className="text-[11px] text-navy-500 font-mono text-center">
-        Draft: {inspectionId || '—'}
+        {t('createInspection.review.draftLabel', 'Draft')}: {inspectionId || '—'}
       </div>
     </div>
   );
@@ -1431,12 +1445,13 @@ function PostSubmitChoice({
   user, dsp, submitResult, totalDefects, remainingVehicles, inspectedSession,
   loadingToday, onInspectAnother, onSwitchDsp, onCompleteFleet, onClose,
 }) {
+  const { t } = useTranslation('wizard');
   const remaining = remainingVehicles.length;
-  const isSinglePending = remaining === 1;
   const sessionTotal = inspectedSession.length;
+  const firstName = user?.name?.split(' ')[0] || 'tech';
 
   return (
-    <FullScreenShell title="Inspection submitted" onClose={onClose}>
+    <FullScreenShell title={t('createInspection.submittedTitle', 'Inspection submitted')} onClose={onClose}>
       <div className="max-w-md mx-auto px-4 py-8">
         {/* Hero */}
         <div className="text-center mb-7">
@@ -1449,27 +1464,32 @@ function PostSubmitChoice({
             <Check size={28} className="text-accent-green" />
           </motion.div>
           <h2 className="text-xl font-bold text-white mb-1">
-            All set, {user?.name?.split(' ')[0] || 'tech'}.
+            {t('createInspection.postSubmit.headingFmt', { name: firstName, defaultValue: `All set, ${firstName}.` })}
           </h2>
           <p className="text-navy-400 mb-1 font-mono text-xs">
-            {submitResult.id} &middot; {submitResult.fleetId} &middot; {totalDefects} defect{totalDefects === 1 ? '' : 's'}
+            {t('createInspection.postSubmit.summaryFmt', {
+              count: totalDefects,
+              id: submitResult.id,
+              fleetId: submitResult.fleetId,
+              defaultValue: `${submitResult.id} · ${submitResult.fleetId} · ${totalDefects} defect${totalDefects === 1 ? '' : 's'}`,
+            })}
           </p>
           <p className={`text-sm font-semibold ${
             submitResult.result === 'passed' ? 'text-accent-green' :
             submitResult.result === 'flagged' ? 'text-accent-red' :
             submitResult.result === 'conditional' ? 'text-accent-gold' : 'text-navy-300'
           }`}>
-            Result: {submitResult.result}
+            {t('createInspection.postSubmit.resultLabelFmt', { result: submitResult.result, defaultValue: `Result: ${submitResult.result}` })}
           </p>
         </div>
 
         {/* Session counter */}
         <div className="rounded-lg border border-navy-700 bg-navy-900/60 p-3 mb-5 text-center">
-          <div className="text-[11px] uppercase tracking-wide text-navy-400 mb-0.5">This session</div>
+          <div className="text-[11px] uppercase tracking-wide text-navy-400 mb-0.5">{t('createInspection.session.label', 'This session')}</div>
           <div className="text-sm text-white">
-            <span className="font-bold">{sessionTotal}</span> inspected
+            <span className="font-bold">{sessionTotal}</span> {t('createInspection.postSubmit.sessionStatusPart1', 'inspected')}
             {' · '}
-            <span className="text-accent-orange font-bold">{remaining}</span> remaining in {dsp?.name}
+            <span className="text-accent-orange font-bold">{remaining}</span> {t('createInspection.postSubmit.sessionStatusPart2', 'remaining in')} {dsp?.name}
           </div>
         </div>
 
@@ -1489,14 +1509,18 @@ function PostSubmitChoice({
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-sm font-semibold text-white">
-                Inspect another van
+                {t('createInspection.postSubmit.inspectAnotherVan', 'Inspect another van')}
               </div>
               <div className="text-[11px] text-navy-300">
                 {loadingToday
-                  ? 'Loading remaining…'
+                  ? t('createInspection.postSubmit.loadingRemaining', 'Loading remaining…')
                   : remaining === 0
-                  ? 'No more vans pending in this DSP'
-                  : `${remaining} ${isSinglePending ? 'van' : 'vans'} remaining in ${dsp?.name}`}
+                  ? t('createInspection.postSubmit.noMoreVans', 'No more vans pending in this DSP')
+                  : t('createInspection.postSubmit.vansRemainingFmt', {
+                      count: remaining,
+                      dsp: dsp?.name,
+                      defaultValue: `${remaining} ${remaining === 1 ? 'van' : 'vans'} remaining in ${dsp?.name}`,
+                    })}
               </div>
             </div>
             <ArrowRight size={16} className="text-accent-blue shrink-0" />
@@ -1513,8 +1537,8 @@ function PostSubmitChoice({
               <Building2 size={18} className="text-navy-300" />
             </div>
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-semibold text-white">Inspect another DSP</div>
-              <div className="text-[11px] text-navy-400">Start a new session for a different fleet</div>
+              <div className="text-sm font-semibold text-white">{t('createInspection.session.anotherDspTitle', 'Inspect another DSP')}</div>
+              <div className="text-[11px] text-navy-400">{t('createInspection.session.anotherDspHint', 'Start a new session for a different fleet')}</div>
             </div>
             <ArrowRight size={16} className="text-navy-400 shrink-0" />
           </div>
@@ -1545,12 +1569,15 @@ function PostSubmitChoice({
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-sm font-semibold text-white">
-                Complete {dsp?.name} inspection
+                {t('createInspection.postSubmit.completeDspFmt', { dsp: dsp?.name, defaultValue: `Complete ${dsp?.name} inspection` })}
               </div>
               <div className="text-[11px] text-navy-300">
                 {remaining === 0
-                  ? 'All vans inspected — finalize the session'
-                  : `${remaining} van${isSinglePending ? '' : 's'} not yet inspected — you'll need to flag them`}
+                  ? t('createInspection.postSubmit.allInspectedHint', 'All vans inspected — finalize the session')
+                  : t('createInspection.postSubmit.someRemainingHint', {
+                      count: remaining,
+                      defaultValue: `${remaining} van${remaining === 1 ? '' : 's'} not yet inspected — you'll need to flag them`,
+                    })}
               </div>
             </div>
             <ArrowRight size={16} className="text-navy-400 shrink-0" />
@@ -1562,7 +1589,7 @@ function PostSubmitChoice({
           onClick={onClose}
           className="w-full mt-6 text-[11px] text-navy-500 hover:text-navy-300 cursor-pointer"
         >
-          Pause &amp; close (resume from your dashboard)
+          {t('createInspection.postSubmit.pauseAndClose', 'Pause & close (resume from your dashboard)')}
         </button>
       </div>
     </FullScreenShell>
@@ -1576,13 +1603,15 @@ function CompleteWarningScreen({
   dsp, remainingVehicles, inspectedSession, bulkSkipReasons, setBulkSkipReasons,
   bulkSubmitting, bulkError, onCancel, onConfirm, onClose,
 }) {
+  const { t } = useTranslation('wizard');
   const allReasonPicked = remainingVehicles.every((v) => bulkSkipReasons[v.id]);
   const reasonsCount = remainingVehicles.filter((v) => bulkSkipReasons[v.id]).length;
+  const totalVans = inspectedSession.length + remainingVehicles.length;
 
   return (
     <FullScreenShell
-      title="Vans not yet inspected"
-      subtitle={`${remainingVehicles.length} pending in ${dsp?.name}`}
+      title={t('createInspection.fleetEmptyTitle', 'Vans not yet inspected')}
+      subtitle={t('createInspection.fleetPendingFmt', { count: remainingVehicles.length, name: dsp?.name, defaultValue: `${remainingVehicles.length} pending in ${dsp?.name}` })}
       onClose={onClose}
     >
       <div className="max-w-2xl mx-auto px-4 py-6 pb-32">
@@ -1592,13 +1621,18 @@ function CompleteWarningScreen({
             <AlertTriangle size={20} className="text-accent-orange shrink-0 mt-0.5" />
             <div className="flex-1 min-w-0">
               <div className="text-sm font-bold text-white mb-1">
-                {remainingVehicles.length} van{remainingVehicles.length === 1 ? '' : 's'} not inspected
+                {t('createInspection.completeWarning.notInspectedHeadingFmt', {
+                  count: remainingVehicles.length,
+                  defaultValue: `${remainingVehicles.length} van${remainingVehicles.length === 1 ? '' : 's'} not inspected`,
+                })}
               </div>
               <p className="text-xs text-navy-200">
-                You inspected {inspectedSession.length} of {inspectedSession.length + remainingVehicles.length} vans in {dsp?.name}.
-                Pick a reason for each remaining van so the DSP knows why it
-                wasn't inspected. Each one will be flagged in their dashboard
-                with the reason.
+                {t('createInspection.completeWarning.descFmt', {
+                  inspected: inspectedSession.length,
+                  total: totalVans,
+                  dsp: dsp?.name,
+                  defaultValue: `You inspected ${inspectedSession.length} of ${totalVans} vans in ${dsp?.name}. Pick a reason for each remaining van so the DSP knows why it wasn't inspected. Each one will be flagged in their dashboard with the reason.`,
+                })}
               </p>
             </div>
           </div>
@@ -1636,7 +1670,7 @@ function CompleteWarningScreen({
                           : 'bg-navy-800 border-navy-700 text-navy-300 hover:text-white hover:border-navy-600'
                       }`}
                     >
-                      {r.label}
+                      {t(`createInspection.step4.reasons.${r.value}`, r.label)}
                     </button>
                   ))}
                 </div>
@@ -1653,7 +1687,11 @@ function CompleteWarningScreen({
         )}
 
         <div className="text-[11px] text-navy-500 text-center">
-          {reasonsCount} of {remainingVehicles.length} reasons picked
+          {t('createInspection.completeWarning.reasonsCountFmt', {
+            picked: reasonsCount,
+            total: remainingVehicles.length,
+            defaultValue: `${reasonsCount} of ${remainingVehicles.length} reasons picked`,
+          })}
         </div>
       </div>
 
@@ -1664,7 +1702,7 @@ function CompleteWarningScreen({
             onClick={onCancel}
             className="px-4 py-2 rounded-md border border-navy-700 text-navy-300 hover:text-white hover:border-navy-600 cursor-pointer text-sm"
           >
-            Back
+            {t('createInspection.completeWarning.back', 'Back')}
           </button>
           <button
             onClick={onConfirm}
@@ -1672,7 +1710,10 @@ function CompleteWarningScreen({
             className="flex items-center gap-1.5 px-4 py-2 rounded-md bg-accent-red text-white font-semibold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-sm"
           >
             {bulkSubmitting ? <Loader2 size={14} className="animate-spin" /> : <AlertTriangle size={14} />}
-            Flag {remainingVehicles.length} &amp; complete
+            {t('createInspection.completeWarning.flagAndCompleteFmt', {
+              count: remainingVehicles.length,
+              defaultValue: `Flag ${remainingVehicles.length} & complete`,
+            })}
           </button>
         </div>
       </div>
@@ -1684,9 +1725,10 @@ function CompleteWarningScreen({
 // Fleet done — final celebration
 // ─────────────────────────────────────────────────────
 function FleetDoneScreen({ user, dsp, inspectedSession, skippedCount, onClose }) {
-  const total = inspectedSession.length + skippedCount;
+  const { t } = useTranslation('wizard');
+  const firstName = user?.name?.split(' ')[0] || 'tech';
   return (
-    <FullScreenShell title="Fleet inspection complete" onClose={onClose}>
+    <FullScreenShell title={t('createInspection.completedTitle', 'Fleet inspection complete')} onClose={onClose}>
       <div className="max-w-md mx-auto px-4 py-12 text-center">
         <motion.div
           initial={{ scale: 0 }}
@@ -1697,17 +1739,16 @@ function FleetDoneScreen({ user, dsp, inspectedSession, skippedCount, onClose })
           <Check size={48} className="text-accent-green" />
         </motion.div>
         <h2 className="text-2xl font-bold text-white mb-2">
-          {dsp?.name} fleet — done.
+          {t('createInspection.fleetDone.headingFmt', { dsp: dsp?.name, defaultValue: `${dsp?.name} fleet — done.` })}
         </h2>
         <p className="text-navy-300 text-sm mb-6">
-          Great work, {user?.name?.split(' ')[0] || 'tech'}. The DSP dashboard
-          is being updated now.
+          {t('createInspection.fleetDone.subtitleFmt', { name: firstName, defaultValue: `Great work, ${firstName}. The DSP dashboard is being updated now.` })}
         </p>
 
         <div className="grid grid-cols-2 gap-2 mb-6">
           <div className="rounded-lg border border-accent-green/40 bg-accent-green/10 p-3">
             <div className="text-2xl font-bold text-accent-green">{inspectedSession.length}</div>
-            <div className="text-[10px] uppercase tracking-wide text-navy-300">Inspected</div>
+            <div className="text-[10px] uppercase tracking-wide text-navy-300">{t('createInspection.doneCard.inspected', 'Inspected')}</div>
           </div>
           <div
             className={`rounded-lg border p-3 ${
@@ -1719,7 +1760,7 @@ function FleetDoneScreen({ user, dsp, inspectedSession, skippedCount, onClose })
             <div className={`text-2xl font-bold ${skippedCount > 0 ? 'text-accent-red' : 'text-navy-400'}`}>
               {skippedCount}
             </div>
-            <div className="text-[10px] uppercase tracking-wide text-navy-300">Flagged</div>
+            <div className="text-[10px] uppercase tracking-wide text-navy-300">{t('createInspection.doneCard.flagged', 'Flagged')}</div>
           </div>
         </div>
 
@@ -1727,7 +1768,7 @@ function FleetDoneScreen({ user, dsp, inspectedSession, skippedCount, onClose })
           onClick={onClose}
           className="w-full py-3 rounded-lg bg-accent-blue text-white font-semibold cursor-pointer"
         >
-          Done
+          {t('createInspection.fleetDone.done', 'Done')}
         </button>
       </div>
     </FullScreenShell>
