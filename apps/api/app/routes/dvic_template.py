@@ -85,8 +85,9 @@ async def get_dvic_template(
             + ", ".join(v.value for v in VehicleClass),
         ) from None
 
-    # Validate ownership if provided. None / "branded" → show every item;
-    # "owner" or "rented" → hide branded-only items.
+    # Validate ownership if provided. None / amazon_* → show every item;
+    # dsp_owned / rental → hide branded-only items (no DOT decal, no Prime
+    # decal on vans the DSP owns or rents from a third party).
     own = None
     if ownership is not None:
         try:
@@ -97,7 +98,7 @@ async def get_dvic_template(
                 f"unknown ownership: {ownership!r}. Valid: "
                 + ", ".join(o.value for o in Ownership),
             ) from None
-    hide_branded = own in (Ownership.OWNER, Ownership.RENTED)
+    hide_branded = own in (Ownership.DSP_OWNED, Ownership.RENTAL)
 
     # Fetch all template items for this class, joined with rule + applicability
     stmt = (

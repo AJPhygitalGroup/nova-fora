@@ -145,28 +145,28 @@ VEHICLE_SEED_SAFETY_FIRST = [
     # (fleet_id, vin, plate, year, make, model, mileage, vehicle_class, ownership)
     # Branded Cargo Vans (the bulk of the fleet)
     ("SF013", "1FMCU9GD5MUA00013", "WA-3K13-AZ", 2021, "Mercedes", "Sprinter 2500", 86209,
-     "regular_cargo_van",   "branded"),
+     "regular_cargo_van",   "amazon_owned"),
     ("SF021", "1FMCU9GD5MUA00021", "WA-3K21-AZ", 2021, "Mercedes", "Sprinter 2500", 91248,
-     "regular_cargo_van",   "branded"),
+     "regular_cargo_van",   "amazon_owned"),
     ("SF016", "1FMCU9GD5MUA00016", "WA-3K16-AZ", 2021, "Mercedes", "Sprinter 2500", 95073,
-     "regular_cargo_van",   "branded"),
+     "regular_cargo_van",   "amazon_owned"),
     ("SF005", "1FMCU9GD5MUA00005", "WA-3K05-AZ", 2020, "Ford",     "Transit 250",  83646,
-     "regular_cargo_van",   "branded"),
+     "regular_cargo_van",   "amazon_owned"),
     # CDV — physically distinct (purpose-built), shares Cargo DVIC, branded
     ("SF025", "1FMCU9GD5MUA00025", "WA-3K25-AZ", 2022, "Ram",      "ProMaster 2500", 84267,
-     "custom_delivery_van", "branded"),
+     "custom_delivery_van", "amazon_owned"),
     # Owner-financed cargo van (no DOT/Prime decals)
     ("SF026", "1FMCU9GD5MUA00026", "WA-3K26-AZ", 2022, "Ram",      "ProMaster 2500", 0,
-     "regular_cargo_van",   "owner"),
+     "regular_cargo_van",   "dsp_owned"),
     # Rented cargo van (no DOT/Prime decals)
     ("SF004", "1FMCU9GD5MUA00004", "WA-3K04-AZ", 2020, "Ford",     "Transit 250",  90708,
-     "regular_cargo_van",   "rented"),
+     "regular_cargo_van",   "rental"),
     # Step Van DOT — DOT-regulated, branded
     ("SF006", "1FMCU9GD5MUA00006", "WA-3K06-AZ", 2020, "Ford",     "Transit 250",  99597,
-     "step_van_dot",        "branded"),
+     "step_van_dot",        "amazon_owned"),
     # Box Truck (AMXL) — DOT-regulated, branded
     ("SF030", "1FMCU9GD5MUA00030", "WA-3K30-AZ", 2023, "Isuzu",    "NPR HD",       42150,
-     "box_truck_dot",       "branded"),
+     "box_truck_dot",       "amazon_owned"),
 ]
 
 

@@ -56,9 +56,19 @@ class UserResponse(BaseModel):
 def _role_label(role: UserRole) -> str:
     """Human-readable role used by the frontend (Role in top nav, etc.)."""
     labels = {
-        UserRole.DSP_OWNER: "DSP Fleet Owner",
-        UserRole.VENDOR_ADMIN: "Vendor Admin",
-        UserRole.TECHNICIAN: "Technician",
-        UserRole.SITE_ADMIN: "Site Admin",
+        # DSP
+        UserRole.DSP_OWNER:      "DSP Fleet Owner",
+        UserRole.DSP_MANAGER:    "DSP Manager",
+        UserRole.DSP_INSPECTOR:  "DSP Inspector",
+        UserRole.DSP_VIEWER:     "DSP Viewer",
+        # Vendor
+        UserRole.VENDOR_ADMIN:   "Vendor Admin",
+        UserRole.SERVICE_WRITER: "Service Writer",
+        UserRole.TECHNICIAN:     "Technician",
+        UserRole.VENDOR_VIEWER:  "Vendor Viewer",
+        # Platform
+        UserRole.SITE_ADMIN:     "Site Admin",
     }
-    return labels[role]
+    # Defensive fallback — the enum may grow; never crash /auth/me on an
+    # unmapped role.
+    return labels.get(role, str(role).replace("_", " ").title())

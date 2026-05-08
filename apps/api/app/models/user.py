@@ -1,14 +1,27 @@
 """User model — one row per human using the platform.
 
-Roles used by the frontend demo (src/data/mockData.js):
-  - dsp_owner     (e.g. Tamika Gambrell @ Ribrell 21)
-  - vendor_admin  (e.g. Olger Joya @ Dulles Midas)
-  - technician    (e.g. David Torres @ Dulles Midas)
-  - site_admin    (e.g. Maria Chen @ Nova Fora)
+Role taxonomy (single role per user, stored as VARCHAR per CLAUDE.md rule #2):
 
-For MVP we store a single role per user. If multi-role becomes needed
-(Sec. 3.2 of the plan mentions it), we add a `user_roles` association table
-in a later migration.
+DSP organization (org_type=dsp):
+  - dsp_owner       Owner — billing, users, fleet, full authority. Can invite anyone in the org.
+  - dsp_manager     Fleet manager — fleet, defects, schedule, WOs. No billing/users.
+                    Can invite inspectors + viewers.
+  - dsp_inspector   Runs DVIC walkarounds + reports defects. Read-only on WOs.
+  - dsp_viewer      Read-only across the DSP.
+
+Vendor organization (org_type=vendor):
+  - vendor_admin    Owner/admin — billing, users, WO acceptance, tech assignment. Can invite anyone.
+  - service_writer  Receives WOs, assigns technicians, talks with DSP. No billing/users.
+                    Can invite technicians + viewers.
+  - technician      Picks up assigned WOs, marks progress, completes.
+  - vendor_viewer   Read-only.
+
+Platform (org_type=platform):
+  - site_admin      Nova Fora team — full system access.
+
+Permission helpers live in `app/services/permissions.py` — most code should
+ask `is_org_admin(user)` rather than checking specific role values, so adding
+roles in the future doesn't require touching every gate.
 """
 from datetime import datetime
 from enum import Enum
@@ -21,9 +34,19 @@ from app.models.base import timestamp_column, utc_now
 
 
 class UserRole(str, Enum):
+    # DSP roles
     DSP_OWNER = "dsp_owner"
+    DSP_MANAGER = "dsp_manager"
+    DSP_INSPECTOR = "dsp_inspector"
+    DSP_VIEWER = "dsp_viewer"
+
+    # Vendor roles
     VENDOR_ADMIN = "vendor_admin"
+    SERVICE_WRITER = "service_writer"
     TECHNICIAN = "technician"
+    VENDOR_VIEWER = "vendor_viewer"
+
+    # Platform
     SITE_ADMIN = "site_admin"
 
 

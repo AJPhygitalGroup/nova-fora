@@ -51,7 +51,7 @@ export default function DvicWizard({
   inspectionId,
   vehicleId,
   vehicleClass,
-  ownership = 'branded',
+  ownership = 'amazon_owned',
   onCommitted,
   defects = [],
   onRemoveDefect,

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import Layout from './components/Layout';
 import Login from './components/Login';
+import SignupAcceptPage from './components/SignupAcceptPage';
 import { auth, getAccessToken, clearTokens, APIError } from './api/client';
 
 export default function App() {
@@ -85,6 +86,17 @@ export default function App() {
       setAdminUser(null);
     }
   };
+
+  // ── Sign-up via invitation: bypass auth bootstrap entirely ────────
+  // /signup/accept?token=… is a public landing for invitees. We detect it
+  // by path (no router used elsewhere). On success the page hands the
+  // freshly-authenticated user up via onAccepted, which routes them into
+  // the normal Layout flow.
+  const isSignupAccept =
+    typeof window !== 'undefined' && window.location.pathname === '/signup/accept';
+  if (isSignupAccept && !user) {
+    return <SignupAcceptPage onAccepted={(me) => setUser(me)} />;
+  }
 
   // ── Bootstrapping splash ─────────────────────────────
   if (bootstrapping) {

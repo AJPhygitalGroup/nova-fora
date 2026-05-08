@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import Badge from './ui/Badge';
 import VehicleDetailPage from './VehicleDetailPage';
+import { getViewMode } from '../lib/permissions';
 import { FlexFleetModal } from './FleetSnapshot';
 import { vehicles as vehiclesApi, APIError } from '../api/client';
 
@@ -60,14 +61,13 @@ function enrichVehicle(v) {
 }
 
 // Transform a VehicleResponse from the real API into the shape the existing
-// components expect. The backend now persists vehicle_class + ownership;
-// fmc, color, location are still frontend-only metadata until the admin panel
+// components expect. The backend persists vehicle_class, ownership, and fmc;
+// color and location are still frontend-only metadata until the admin panel
 // owns them (post-Jun 15).
 function fromApiVehicle(v) {
   // API returns (camelCase via snakeToCamel): id (VAN-XXXX), dspId, dsp,
   // fleetId, vin, plate, year, make, model, mileage, grounded, groundedReason,
-  // defectCount, lastInspected, photos, isActive, vehicleClass, ownership.
-  const FMC_DEFAULTS = ['Wheels', 'Element', 'Rented/Owned'];
+  // defectCount, lastInspected, photos, isActive, vehicleClass, ownership, fmc.
   const seed = parseInt(String(v.id).replace(/\D/g, ''), 10) || 0;
 
   return {
@@ -87,9 +87,10 @@ function fromApiVehicle(v) {
     grounded: v.grounded,
     groundedReason: v.groundedReason,
     isActive: v.isActive ?? true,
-    // Real persisted fields (V2.2 + ownership):
+    // Real persisted fields (V2.2 + ownership + fmc):
     vehicleClass: v.vehicleClass || 'regular_cargo_van',
-    ownership: v.ownership || 'branded',
+    ownership: LEGACY_OWNERSHIP_TO_GRANULAR[v.ownership] || v.ownership || 'amazon_owned',
+    fmc: v.fmc || '',
     // Derived (stubbed until inspections are live)
     defectCount: v.defectCount ?? 0,
     lastInspected: v.lastInspected || 'Never',
@@ -97,8 +98,7 @@ function fromApiVehicle(v) {
     inspector: v.inspector || '—',
     // Frontend-only metadata (not stored server-side yet)
     color: ['White', 'Blue', 'Silver', 'Black', 'Gray'][seed % 5],
-    fmc: FMC_DEFAULTS[seed % FMC_DEFAULTS.length],
-    isFmcManaged: true,
+    isFmcManaged: !!v.fmc,
     location: 'parking_lot',
   };
 }
@@ -127,10 +127,14 @@ const VEHICLE_TYPES = [
   { value: 'box_truck_dot',       label: 'Box Truck (AMXL)' },
   { value: 'electric_vehicle',    label: 'Electric Vehicle' },
 ];
+// Mirror Amazon Cortex `ownershipType`. Two of these (amazon_owned,
+// amazon_leased) carry Amazon DOT + Prime decals; the other two don't —
+// the wizard reads this to filter branded-only DVIC items.
 const OWNERSHIPS = [
-  { value: 'branded', label: 'Branded' },
-  { value: 'owner',   label: 'Owner'   },
-  { value: 'rented',  label: 'Rented'  },
+  { value: 'amazon_owned',  label: 'Amazon-Owned'  },
+  { value: 'amazon_leased', label: 'Amazon-Leased' },
+  { value: 'dsp_owned',     label: 'DSP-Owned'     },
+  { value: 'rental',        label: 'Rental'        },
 ];
 
 // Used by the table view + filter pills to render the right label
@@ -151,14 +155,25 @@ const LEGACY_VEHICLE_CLASS_TO_TYPE = {
   'Owned':         'regular_cargo_van',
 };
 const LEGACY_VEHICLE_CLASS_TO_OWNERSHIP = {
-  'Branded Cargo': 'branded',
-  'Step Van':      'branded',
-  'Box Truck':     'branded',
-  'Rental':        'rented',
-  'Owned':         'owner',
+  'Branded Cargo': 'amazon_owned',
+  'Step Van':      'amazon_owned',
+  'Box Truck':     'amazon_owned',
+  'Rental':        'rental',
+  'Owned':         'dsp_owned',
+};
+// Pre-V2.2 ownership values (branded/owner/rented) → granular Cortex values
+const LEGACY_OWNERSHIP_TO_GRANULAR = {
+  'branded': 'amazon_owned',
+  'owner':   'dsp_owned',
+  'rented':  'rental',
 };
 
-const FMC_OPTIONS = ['Wheels', 'Element', 'Rented/Owned', 'Holman', 'Enterprise Fleet', 'Other'];
+// Common FMC values shown as autocomplete suggestions. The field is
+// free-text — Amazon's vehicleProvider column may carry anything.
+const FMC_OPTIONS = [
+  'Element', 'LP', 'Wheels', 'Holman', 'ARI',
+  'Budget', 'Penske', 'Enterprise', 'Merchants',
+];
 const MAKES = ['Ford', 'Mercedes', 'Ram', 'Chevrolet', 'Isuzu'];
 
 function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) {
@@ -180,9 +195,9 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
         ? vehicle.vehicleClass
         : (LEGACY_VEHICLE_CLASS_TO_TYPE[vehicle.vehicleClass] || 'regular_cargo_van'),
     ownership:
-      vehicle.ownership
-        || LEGACY_VEHICLE_CLASS_TO_OWNERSHIP[vehicle.vehicleClass]
-        || 'branded',
+      LEGACY_OWNERSHIP_TO_GRANULAR[vehicle.ownership] || vehicle.ownership
+      || LEGACY_VEHICLE_CLASS_TO_OWNERSHIP[vehicle.vehicleClass]
+      || 'amazon_owned',
     fmc: vehicle.fmc,
   } : {
     fleetId: '',
@@ -193,8 +208,8 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
     vin: '',
     plate: '',
     vehicleClass: 'regular_cargo_van',
-    ownership: 'branded',
-    fmc: 'Wheels',
+    ownership: 'amazon_owned',
+    fmc: '',
   });
   const [submitting, setSubmitting] = useState(false);
   const [saveError, setSaveError] = useState(null);
@@ -384,7 +399,7 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
             <div>
               <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">
                 Ownership
-                <span className="ml-1 normal-case font-normal text-navy-500">— Branded carries DOT + Prime decals</span>
+                <span className="ml-1 normal-case font-normal text-navy-500">— from Cortex `ownershipType`</span>
               </label>
               <select value={form.ownership} onChange={(e) => update('ownership', e.target.value)}
                 className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue cursor-pointer">
@@ -392,11 +407,22 @@ function VehicleModal({ vehicle, onSave, onClose, onDelete, readOnly = false }) 
               </select>
             </div>
             <div>
-              <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">FMC</label>
-              <select value={form.fmc} onChange={(e) => update('fmc', e.target.value)}
-                className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue cursor-pointer">
-                {FMC_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
-              </select>
+              <label className="text-[11px] font-semibold text-navy-300 mb-1.5 block uppercase tracking-wide">
+                FMC
+                <span className="ml-1 normal-case font-normal text-navy-500">— from Cortex `vehicleProvider`</span>
+              </label>
+              <input
+                type="text"
+                value={form.fmc || ''}
+                onChange={(e) => update('fmc', e.target.value)}
+                list="fmc-options"
+                placeholder="e.g. Element, LP, Budget…"
+                maxLength={50}
+                className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue"
+              />
+              <datalist id="fmc-options">
+                {FMC_OPTIONS.map((f) => <option key={f} value={f} />)}
+              </datalist>
             </div>
           </div>
           </fieldset>
@@ -462,82 +488,145 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
   const [parsing, setParsing] = useState(false);
   const [applying, setApplying] = useState(false);
   const [success, setSuccess] = useState(false);
+  // Real parsed state (replaces the mock delta)
+  const [parseResult, setParseResult] = useState(null);  // { mapped, errors, skipped, missingColumns }
+  const [parseError, setParseError] = useState(null);
+  const [deactivateMissing, setDeactivateMissing] = useState(false);
+  const [applyResults, setApplyResults] = useState(null);  // backend response
+  const [applyError, setApplyError] = useState(null);
 
-  // Mock parsed delta — calculated when file is uploaded
+  // Real delta computed from the parsed XLSX rows.
+  // Match by VIN (globally unique) — fleet_id is DSP-internal and can collide
+  // when a DSP renames a van.
   const delta = useMemo(() => {
-    if (!file || step < 2) return null;
-    const currentIds = currentFleet.map((v) => v.fleetId);
+    if (!parseResult || !parseResult.mapped) return null;
+    const incoming = parseResult.mapped;
+    const byVinExisting = new Map(currentFleet.map((v) => [v.vin?.toUpperCase(), v]));
+    const incomingVins = new Set(incoming.map((v) => v.vin));
 
-    // Simulated incoming CSV: 3 new + 2 modified + current minus 1 deactivation
-    const incoming = [
-      // New vehicles
-      { fleetId: 'VAN-9001', year: 2024, make: 'Ford', model: 'Transit 350 HD', vin: '1FTBW3XM9024NEW0001', plate: 'WA-9A01-AZ', color: 'White', vehicleClass: 'Branded Cargo', fmc: 'Wheels' },
-      { fleetId: 'VAN-9002', year: 2024, make: 'Mercedes', model: 'eSprinter', vin: '1FTBW3XM9024NEW0002', plate: 'WA-9A02-AZ', color: 'White', vehicleClass: 'Branded Cargo', fmc: 'Wheels' },
-      { fleetId: 'VAN-9003', year: 2024, make: 'Ram', model: 'ProMaster 3500', vin: '1FTBW3XM9024NEW0003', plate: 'WA-9A03-AZ', color: 'Blue',  vehicleClass: 'Rental',        fmc: 'Rented/Owned' },
+    const newVans = [];
+    const updatedVans = [];
+    const unchangedVans = [];
 
-      // Updates to existing (first 2 current vehicles — VIN/plate correction)
-      ...currentFleet.slice(0, 2).map((v, i) => ({
-        fleetId: v.fleetId,
-        year: v.year,
-        make: v.make,
-        model: v.model,
-        vin: v.vin.slice(0, 14) + 'UPD',
-        plate: i === 0 ? 'WA-NEW-99' : v.plate,
-        color: v.color,
-        vehicleClass: v.vehicleClass,
-        fmc: v.fmc,
-      })),
-
-      // Keep the rest (but exclude the last one = deactivation)
-      ...currentFleet.slice(2, -1).map((v) => ({
-        fleetId: v.fleetId, year: v.year, make: v.make, model: v.model,
-        vin: v.vin, plate: v.plate, color: v.color, vehicleClass: v.vehicleClass, fmc: v.fmc,
-      })),
-    ];
-
-    const incomingIds = incoming.map((v) => v.fleetId);
-
-    const newVans = incoming.filter((v) => !currentIds.includes(v.fleetId));
-    const updatedVans = incoming.filter((v) => {
-      const existing = currentFleet.find((c) => c.fleetId === v.fleetId);
-      if (!existing) return false;
-      return existing.vin !== v.vin || existing.plate !== v.plate || existing.color !== v.color || existing.fmc !== v.fmc;
-    }).map((v) => {
-      const existing = currentFleet.find((c) => c.fleetId === v.fleetId);
+    for (const inc of incoming) {
+      const existing = byVinExisting.get(inc.vin);
+      if (!existing) {
+        newVans.push(inc);
+        continue;
+      }
       const changes = [];
-      if (existing.vin !== v.vin) changes.push({ field: 'VIN', old: existing.vin, new: v.vin });
-      if (existing.plate !== v.plate) changes.push({ field: 'Plate', old: existing.plate, new: v.plate });
-      if (existing.color !== v.color) changes.push({ field: 'Color', old: existing.color, new: v.color });
-      if (existing.fmc !== v.fmc) changes.push({ field: 'FMC', old: existing.fmc, new: v.fmc });
-      return { ...v, changes };
-    });
-    const deactivatedVans = currentFleet.filter((v) => !incomingIds.includes(v.fleetId));
+      const cmp = (field, label, normalize = (x) => x) => {
+        if (normalize(existing[field]) !== normalize(inc[field])) {
+          changes.push({ field: label, old: existing[field], new: inc[field] });
+        }
+      };
+      cmp('fleetId', 'Fleet ID');
+      cmp('plate', 'Plate', (p) => (p || '').toUpperCase());
+      cmp('year', 'Year', Number);
+      cmp('make', 'Make');
+      cmp('model', 'Model');
+      cmp('vehicleClass', 'Type');
+      cmp('ownership', 'Ownership');
+      if (changes.length) updatedVans.push({ ...inc, changes });
+      else unchangedVans.push(inc);
+    }
+
+    const deactivatedVans = currentFleet.filter(
+      (v) => v.isActive !== false && !incomingVins.has(v.vin?.toUpperCase()),
+    );
 
     return {
       totalInFile: incoming.length,
       currentTotal: currentFleet.length,
       newVans,
       updatedVans,
+      unchangedVans,
       deactivatedVans,
     };
-  }, [file, step, currentFleet]);
+  }, [parseResult, currentFleet]);
 
-  const handleFile = (f) => {
+  const handleFile = async (f) => {
     setFile({ name: f.name, size: f.size });
     setParsing(true);
-    setTimeout(() => {
-      setParsing(false);
+    setParseError(null);
+    setParseResult(null);
+    try {
+      // Defer xlsx import so the bundle only pays for it when the user
+      // actually opens the upload modal (~600 KB gzipped library).
+      // SheetJS is CommonJS — Vite exposes `read` and `utils` as named
+      // exports on the namespace object, NOT under .default.
+      const [XLSX, parserMod] = await Promise.all([
+        import('xlsx'),
+        import('../lib/amazonFleetParser'),
+      ]);
+      const xlsxRead = XLSX.read || XLSX.default?.read;
+      const sheetToJson = XLSX.utils?.sheet_to_json || XLSX.default?.utils?.sheet_to_json;
+      const { parseFleetSheet } = parserMod;
+      if (typeof xlsxRead !== 'function' || typeof sheetToJson !== 'function') {
+        throw new Error('XLSX library failed to load — refresh and try again.');
+      }
+      const buf = await f.arrayBuffer();
+      const wb = xlsxRead(buf, { type: 'array', cellDates: false });
+      const firstSheet = wb.SheetNames[0];
+      if (!firstSheet) throw new Error('No sheets in this file.');
+      const ws = wb.Sheets[firstSheet];
+      // header: 1 → array of arrays (rows of cell values, header in row 0)
+      const rows = sheetToJson(ws, {
+        header: 1,
+        defval: null,
+        raw: true,
+        blankrows: false,
+      });
+      const result = parseFleetSheet(rows);
+      if (result.missingColumns?.length) {
+        throw new Error(
+          `Missing required column(s): ${result.missingColumns.join(', ')}.\n`
+          + 'Expected the Amazon Logistics Fleet Data spreadsheet — at minimum: '
+          + 'vin, vehicleName, licensePlateNumber, make, model, year.',
+        );
+      }
+      setParseResult(result);
       setStep(2);
-    }, 1200);
+    } catch (err) {
+      setParseError(err?.message || String(err));
+    } finally {
+      setParsing(false);
+    }
   };
 
-  const handleApply = () => {
+  const handleApply = async () => {
+    if (!parseResult?.mapped?.length) return;
     setApplying(true);
-    setTimeout(() => {
-      onApply(delta);
-      setApplying(false);
+    setApplyError(null);
+    setApplyResults(null);
+    try {
+      const { vehicles: vehiclesApi } = await import('../api/client');
+      const rows = parseResult.mapped.map((m) => ({
+        fleetId: m.fleetId,
+        vin: m.vin,
+        plate: m.plate,
+        year: m.year,
+        make: m.make,
+        model: m.model,
+        mileage: m.mileage ?? 0,
+        vehicleClass: m.vehicleClass,
+        ownership: m.ownership,
+        fmc: m.fmc ?? null,
+      }));
+      const res = await vehiclesApi.bulkUpsert({
+        rows,
+        deactivateMissing,
+      });
+      setApplyResults(res);
       setSuccess(true);
-    }, 1400);
+      // Bubble the result up so the parent can refresh the fleet list
+      onApply?.(res);
+    } catch (err) {
+      const msg = err?.detail || err?.message || 'Upload failed';
+      setApplyError(typeof msg === 'string' ? msg : 'Upload failed');
+    } finally {
+      setApplying(false);
+    }
   };
 
   return (
@@ -590,14 +679,25 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
                 </motion.div>
                 <h4 className="text-lg font-semibold text-white mb-1">Fleet synchronized</h4>
                 <p className="text-sm text-navy-400 mb-4">
-                  <span className="text-accent-green">+{delta.newVans.length} added</span> &middot;{' '}
-                  <span className="text-accent-blue">{delta.updatedVans.length} updated</span> &middot;{' '}
-                  <span className="text-accent-red">{delta.deactivatedVans.length} deactivated</span>
+                  <span className="text-accent-green">+{applyResults?.summary?.created ?? 0} added</span> &middot;{' '}
+                  <span className="text-accent-blue">{applyResults?.summary?.updated ?? 0} updated</span> &middot;{' '}
+                  <span className="text-navy-300">{applyResults?.summary?.skipped ?? 0} unchanged</span>
+                  {(applyResults?.summary?.deactivated ?? 0) > 0 && (
+                    <> &middot; <span className="text-accent-red">{applyResults.summary.deactivated} deactivated</span></>
+                  )}
+                  {(applyResults?.summary?.error ?? 0) > 0 && (
+                    <> &middot; <span className="text-accent-red">{applyResults.summary.error} error{applyResults.summary.error > 1 ? 's' : ''}</span></>
+                  )}
                 </p>
-                <div className="inline-flex flex-col gap-1 px-4 py-3 rounded-lg bg-navy-800/60 border border-navy-700/40 text-left">
-                  <div className="text-[11px] text-navy-400">Sync ID</div>
-                  <div className="text-sm font-mono text-accent-blue">SYNC-{new Date().getFullYear()}{String(new Date().getMonth() + 1).padStart(2, '0')}{String(new Date().getDate()).padStart(2, '0')}-{Math.floor(1000 + Math.random() * 9000)}</div>
-                </div>
+                {(applyResults?.summary?.error ?? 0) > 0 && (
+                  <div className="text-left max-h-48 overflow-y-auto mt-3 rounded-lg border border-accent-red/30 bg-accent-red/5 p-2 space-y-1">
+                    {applyResults.results.filter((r) => r.action === 'error').map((r) => (
+                      <div key={r.vin} className="text-[11px] text-navy-300">
+                        <span className="font-mono text-accent-red">{r.fleetId} / {r.vin}</span>: {r.error}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </motion.div>
             ) : step === 1 ? (
               <motion.div key="s1" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
@@ -634,12 +734,22 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
                   )}
                 </label>
 
-                <div className="flex items-center gap-2 text-xs text-navy-400">
-                  <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-navy-700 hover:bg-navy-800 cursor-pointer text-navy-300">
-                    <Download size={12} /> Download template
-                  </button>
-                  <span className="text-navy-500">Expected columns: Fleet ID, VIN, Year, Make, Model, Plate, Class, FMC</span>
+                <div className="text-xs text-navy-400 leading-relaxed">
+                  <span className="text-navy-300 font-semibold">Source:</span> the
+                  {' '}<span className="font-mono">Fleet Data</span> export from your Amazon Logistics
+                  Cortex portal (Active vehicles, .xlsx). Required columns:
+                  {' '}<span className="font-mono text-navy-300">vin · vehicleName · licensePlateNumber · make · model · year</span>.
+                  {' '}<span className="font-mono">serviceTier</span> (vehicle type) and{' '}
+                  <span className="font-mono">ownershipType</span> (Branded / Owner / Rented) are
+                  picked up automatically when present.
                 </div>
+
+                {parseError && (
+                  <div className="flex items-start gap-2 p-3 rounded-lg bg-accent-red/10 border border-accent-red/40 text-xs text-accent-red">
+                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                    <div className="whitespace-pre-line">{parseError}</div>
+                  </div>
+                )}
               </motion.div>
             ) : step === 2 ? (
               <motion.div key="s2" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
@@ -662,13 +772,126 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
                   </div>
                 </div>
 
-                {/* Warning for deactivations */}
-                {delta.deactivatedVans.length > 0 && (
-                  <div className="flex items-start gap-2 p-3 rounded-lg bg-accent-red/10 border border-accent-red/40 text-xs text-navy-200">
-                    <AlertTriangle size={14} className="text-accent-red mt-0.5 shrink-0" />
+                {/* Parse warnings — rows the parser couldn't accept */}
+                {parseResult?.errors?.length > 0 && (
+                  <div className="flex items-start gap-2 p-3 rounded-lg bg-accent-orange/10 border border-accent-orange/40 text-xs text-navy-200">
+                    <AlertTriangle size={14} className="text-accent-orange mt-0.5 shrink-0" />
                     <div>
-                      <strong className="text-accent-red">Warning:</strong> {delta.deactivatedVans.length} vehicle{delta.deactivatedVans.length > 1 ? 's are' : ' is'} missing from your uploaded sheet and will be deactivated.
-                      Historical data is preserved but {delta.deactivatedVans.length > 1 ? 'they' : 'it'} won't be inspectable anymore.
+                      <strong className="text-accent-orange">{parseResult.errors.length}</strong> row(s) skipped
+                      due to validation errors. Top reasons:
+                      <ul className="mt-1 list-disc list-inside text-[11px] text-navy-300 space-y-0.5">
+                        {parseResult.errors.slice(0, 3).map((e) => (
+                          <li key={e.rowIndex} className="truncate">
+                            Row {e.rowIndex}: {e.error}
+                          </li>
+                        ))}
+                        {parseResult.errors.length > 3 && (
+                          <li className="text-navy-400">…and {parseResult.errors.length - 3} more</li>
+                        )}
+                      </ul>
+                    </div>
+                  </div>
+                )}
+
+                {/* Mapping audit — show how Cortex serviceTier and
+                    ownershipType collapse into NF vehicle_class +
+                    ownership. Inspectors see this before applying so
+                    nothing maps unexpectedly. */}
+                {(() => {
+                  const mapped = parseResult?.mapped || [];
+                  if (mapped.length === 0) return null;
+                  const tierCount = {};
+                  const ownCount = {};
+                  let unknownTier = 0, unknownOwn = 0;
+                  for (const m of mapped) {
+                    const tk = `${m._meta?.serviceTier || '(blank)'} → ${m.vehicleClass}`;
+                    tierCount[tk] = (tierCount[tk] || 0) + 1;
+                    const ok = `${m._meta?.ownershipType || '(blank)'} → ${m.ownership}`;
+                    ownCount[ok] = (ownCount[ok] || 0) + 1;
+                    if (m._meta?.vehicleClassSource === 'fallback-unknown') unknownTier += 1;
+                    if (m._meta?.ownershipSource === 'fallback-unknown')   unknownOwn += 1;
+                  }
+                  return (
+                    <div className="rounded-lg border border-navy-700 bg-navy-900/50 p-3 text-[11px] text-navy-200 space-y-2">
+                      <div className="flex items-center gap-2 text-navy-300 font-semibold">
+                        <Info size={12} />
+                        Cortex column mapping
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <div className="text-navy-400 mb-1">serviceTier → vehicle_class</div>
+                          <ul className="space-y-0.5">
+                            {Object.entries(tierCount)
+                              .sort((a, b) => b[1] - a[1])
+                              .map(([k, n]) => (
+                                <li key={k} className="flex justify-between gap-2 font-mono">
+                                  <span className="truncate">{k}</span>
+                                  <span className="text-navy-400 shrink-0">×{n}</span>
+                                </li>
+                              ))}
+                          </ul>
+                        </div>
+                        <div>
+                          <div className="text-navy-400 mb-1">ownershipType → ownership</div>
+                          <ul className="space-y-0.5">
+                            {Object.entries(ownCount)
+                              .sort((a, b) => b[1] - a[1])
+                              .map(([k, n]) => (
+                                <li key={k} className="flex justify-between gap-2 font-mono">
+                                  <span className="truncate">{k}</span>
+                                  <span className="text-navy-400 shrink-0">×{n}</span>
+                                </li>
+                              ))}
+                          </ul>
+                        </div>
+                      </div>
+                      {(unknownTier > 0 || unknownOwn > 0) && (
+                        <div className="flex items-start gap-1.5 text-accent-orange pt-1 border-t border-navy-800">
+                          <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                          <span>
+                            {unknownTier > 0 && <>{unknownTier} row(s) had an unrecognized <span className="font-mono">serviceTier</span> — defaulted to <span className="font-mono">regular_cargo_van</span>. </>}
+                            {unknownOwn > 0 && <>{unknownOwn} row(s) had an unrecognized <span className="font-mono">ownershipType</span> — defaulted to <span className="font-mono">amazon_owned</span>.</>}
+                            {' '}Edit the affected vehicles after upload if needed.
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Deactivation handling — opt-in via checkbox */}
+                {delta.deactivatedVans.length > 0 && (
+                  <div className="rounded-lg bg-accent-red/10 border border-accent-red/40 p-3 text-xs text-navy-200">
+                    <div className="flex items-start gap-2 mb-2">
+                      <AlertTriangle size={14} className="text-accent-red mt-0.5 shrink-0" />
+                      <div>
+                        <strong className="text-accent-red">{delta.deactivatedVans.length}</strong>{' '}
+                        vehicle{delta.deactivatedVans.length > 1 ? 's are' : ' is'} present in your
+                        fleet but missing from the uploaded sheet.
+                      </div>
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer ml-6 select-none">
+                      <input
+                        type="checkbox"
+                        checked={deactivateMissing}
+                        onChange={(e) => setDeactivateMissing(e.target.checked)}
+                        className="w-4 h-4 accent-accent-red"
+                      />
+                      <span className="text-[11px] text-navy-200">
+                        Deactivate them. <span className="text-navy-400">Historical defects
+                        + work orders preserved; they just stop appearing in the inspector picker.</span>
+                      </span>
+                    </label>
+                  </div>
+                )}
+
+                {/* Apply error */}
+                {applyError && (
+                  <div className="flex items-start gap-2 p-3 rounded-lg bg-accent-red/10 border border-accent-red/40 text-xs text-accent-red">
+                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-semibold mb-0.5">Couldn't apply</div>
+                      <div className="text-accent-red/90">{applyError}</div>
                     </div>
                   </div>
                 )}
@@ -681,10 +904,16 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
                     color="accent-green"
                   >
                     {delta.newVans.map((v) => (
-                      <div key={v.fleetId} className="flex items-center justify-between py-2 px-3 rounded-lg bg-accent-green/5 border border-accent-green/20">
+                      <div key={v.vin} className="flex items-center justify-between py-2 px-3 rounded-lg bg-accent-green/5 border border-accent-green/20">
                         <div className="min-w-0 flex-1">
                           <div className="text-sm font-semibold text-white truncate">{v.fleetId} <span className="text-navy-400 font-normal">— {v.year} {v.make} {v.model}</span></div>
                           <div className="text-[11px] text-navy-400 font-mono truncate">{v.vin} · {v.plate}</div>
+                          <div className="text-[10px] text-navy-300 mt-0.5">
+                            <span className="text-accent-blue/80 font-semibold">{VEHICLE_TYPE_LABEL[v.vehicleClass] || v.vehicleClass}</span>
+                            <span className="text-navy-500"> · </span>
+                            <span>{OWNERSHIP_LABEL[v.ownership] || v.ownership}</span>
+                            {v.fmc && <><span className="text-navy-500"> · FMC </span><span>{v.fmc}</span></>}
+                          </div>
                         </div>
                         <Badge variant="green" size="md">New</Badge>
                       </div>
@@ -947,12 +1176,7 @@ function VehicleCardMobile({ v, onClick, onCopy, copiedId, isVendor, showDsp, on
   );
 }
 
-// Role view mode — DSP owners manage their own fleet; vendors browse (read-only) for invoicing
-function getViewMode(role) {
-  if (role === 'dsp_owner') return 'owner';
-  if (role === 'vendor_admin' || role === 'technician') return 'vendor';
-  return 'admin'; // site_admin
-}
+// (Role view mode helper lives in src/lib/permissions.js — imported above.)
 
 // ============================================================
 // Main Component
@@ -1107,35 +1331,20 @@ export default function MyVehicles({ user }) {
     }
   };
 
-  const handleApplyBulk = (delta) => {
-    // Remove deactivated
-    let next = fleet.filter((v) => !delta.deactivatedVans.find((d) => d.fleetId === v.fleetId));
-    // Apply updates
-    next = next.map((v) => {
-      const upd = delta.updatedVans.find((u) => u.fleetId === v.fleetId);
-      if (!upd) return v;
-      return { ...v, vin: upd.vin, plate: upd.plate, color: upd.color, fmc: upd.fmc };
-    });
-    // Add new
-    delta.newVans.forEach((n) => {
-      next = [{
-        ...n,
-        id: n.fleetId,
-        dspId: user?.orgId || 'DSP-4201',
-        dsp: user?.org || 'Unknown',
-        defectCount: 0,
-        lastInspected: 'Never',
-        inspector: '—',
-        grounded: false,
-        mileage: 0,
-        isFmcManaged: n.fmc !== 'Rented/Owned',
-      }, ...next];
-    });
-    setFleet(next);
+  // The bulk-upsert endpoint already persisted everything; we just need to
+  // refresh the fleet list from the backend so derived counts + photo / defect
+  // counts pick up the new rows. The modal's onApply fires after the API
+  // call succeeds, so it's safe to assume the change is committed.
+  const handleApplyBulk = async () => {
+    await reloadFleet();
   };
 
   const totalCount = fleet.length;
-  const rentalCount = fleet.filter((v) => v.vehicleClass === 'Rental').length;
+  const rentalCount = fleet.filter(
+    (v) => v.ownership === 'rental'
+        || LEGACY_OWNERSHIP_TO_GRANULAR[v.ownership] === 'rental'
+        || LEGACY_VEHICLE_CLASS_TO_OWNERSHIP[v.vehicleClass] === 'rental',
+  ).length;
   const cleanCount = fleet.filter((v) => v.defectCount === 0).length;
   const defectiveCount = fleet.filter((v) => v.defectCount > 0).length;
 

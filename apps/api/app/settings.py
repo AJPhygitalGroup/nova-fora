@@ -51,11 +51,19 @@ class Settings(BaseSettings):
     s3_presign_ttl_seconds: int = 900  # 15 min upload window
 
     # ── SMTP ──────────────────────────────────────────
+    # When smtp_host is empty, the email service falls back to logging the
+    # message to stdout so dev/local envs work without credentials. Configure
+    # all four fields in prod (Gmail app password, SendGrid, AWS SES, etc.).
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""
     smtp_password: str = ""
     smtp_from: str = "Nova Fora <noreply@example.com>"
+    smtp_use_tls: bool = True
+
+    # ── Invitations ───────────────────────────────────
+    # Days until an invitation token expires. Re-send to bump the timer.
+    invitation_ttl_days: int = 7
 
     # ── Observability ─────────────────────────────────
     sentry_dsn: str = ""

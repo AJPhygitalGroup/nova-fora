@@ -16,10 +16,13 @@ const VEHICLE_TYPES = [
   { value: 'box_truck_dot',       label: 'Box Truck (AMXL)' },
   { value: 'electric_vehicle',    label: 'Electric Vehicle' },
 ];
+// Mirror Amazon Cortex `ownershipType`. The wizard uses these to filter
+// branded-only DVIC items (DOT decal, Prime decal) for non-Amazon vans.
 const OWNERSHIPS = [
-  { value: 'branded', label: 'Branded' },
-  { value: 'owner',   label: 'Owner'   },
-  { value: 'rented',  label: 'Rented'  },
+  { value: 'amazon_owned',  label: 'Amazon-Owned'  },
+  { value: 'amazon_leased', label: 'Amazon-Leased' },
+  { value: 'dsp_owned',     label: 'DSP-Owned'     },
+  { value: 'rental',        label: 'Rental'        },
 ];
 const VEHICLE_TYPE_LABEL = Object.fromEntries(
   VEHICLE_TYPES.map(({ value, label }) => [value, label]),
@@ -36,14 +39,25 @@ const LEGACY_VEHICLE_CLASS_TO_TYPE = {
   'Owned':         'regular_cargo_van',
 };
 const LEGACY_VEHICLE_CLASS_TO_OWNERSHIP = {
-  'Branded Cargo': 'branded',
-  'Step Van':      'branded',
-  'Box Truck':     'branded',
-  'Rental':        'rented',
-  'Owned':         'owner',
+  'Branded Cargo': 'amazon_owned',
+  'Step Van':      'amazon_owned',
+  'Box Truck':     'amazon_owned',
+  'Rental':        'rental',
+  'Owned':         'dsp_owned',
+};
+// Pre-V2.2 ownership values (branded/owner/rented) → granular Cortex values
+const LEGACY_OWNERSHIP_TO_GRANULAR = {
+  'branded': 'amazon_owned',
+  'owner':   'dsp_owned',
+  'rented':  'rental',
 };
 
-const FMC_OPTIONS = ['Wheels', 'Element', 'Rented/Owned', 'Holman', 'Enterprise Fleet', 'Other'];
+// Common FMC values shown as autocomplete suggestions. The field is
+// free-text — Amazon's vehicleProvider column may carry anything.
+const FMC_OPTIONS = [
+  'Element', 'LP', 'Wheels', 'Holman', 'ARI',
+  'Budget', 'Penske', 'Enterprise', 'Merchants',
+];
 const MAKES = ['Ford', 'Mercedes', 'Ram', 'Chevrolet', 'Isuzu'];
 
 // Generate a plausible inspection history for the demo based on the vehicle id
@@ -90,9 +104,9 @@ function vehicleToForm(v) {
       ? v.vehicleClass
       : (LEGACY_VEHICLE_CLASS_TO_TYPE[v.vehicleClass] || 'regular_cargo_van');
   const ownership =
-    v.ownership
+    LEGACY_OWNERSHIP_TO_GRANULAR[v.ownership] || v.ownership
     || LEGACY_VEHICLE_CLASS_TO_OWNERSHIP[v.vehicleClass]
-    || 'branded';
+    || 'amazon_owned';
   return { ...v, vehicleClass, ownership };
 }
 
@@ -294,7 +308,7 @@ export default function VehicleDetailPage({ vehicle, fleet, user, readOnly, onBa
                   <div>
                     <label className="text-[10px] font-semibold text-navy-300 mb-1 block uppercase tracking-wide">
                       Ownership
-                      <span className="ml-1 normal-case font-normal text-navy-500">— Branded carries DOT + Prime decals</span>
+                      <span className="ml-1 normal-case font-normal text-navy-500">— from Cortex `ownershipType`</span>
                     </label>
                     <select value={form.ownership} onChange={(e) => update('ownership', e.target.value)}
                       className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue cursor-pointer">
@@ -302,11 +316,22 @@ export default function VehicleDetailPage({ vehicle, fleet, user, readOnly, onBa
                     </select>
                   </div>
                   <div>
-                    <label className="text-[10px] font-semibold text-navy-300 mb-1 block uppercase tracking-wide">FMC</label>
-                    <select value={form.fmc} onChange={(e) => update('fmc', e.target.value)}
-                      className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue cursor-pointer">
-                      {FMC_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
-                    </select>
+                    <label className="text-[10px] font-semibold text-navy-300 mb-1 block uppercase tracking-wide">
+                      FMC
+                      <span className="ml-1 normal-case font-normal text-navy-500">— from Cortex `vehicleProvider`</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={form.fmc || ''}
+                      onChange={(e) => update('fmc', e.target.value)}
+                      list="fmc-options-detail"
+                      placeholder="e.g. Element, LP, Budget…"
+                      maxLength={50}
+                      className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue"
+                    />
+                    <datalist id="fmc-options-detail">
+                      {FMC_OPTIONS.map((f) => <option key={f} value={f} />)}
+                    </datalist>
                   </div>
                 </fieldset>
 

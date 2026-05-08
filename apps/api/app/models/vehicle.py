@@ -29,15 +29,18 @@ from app.models.defect_catalog import VehicleClass
 
 
 class Ownership(str, Enum):
-    """How the DSP holds title to the van. Does NOT change vehicle_class
-    (a van is mechanically the same regardless of who owns it) but DOES
-    suppress DVIC items that only apply to Amazon-branded vans (DOT decal
-    USDOT2881058, Prime decal). Stored as VARCHAR per CLAUDE.md rule #2.
+    """How the DSP holds title to the van. Mirrors Amazon Cortex's
+    `ownershipType` column verbatim so the value the DSP sees matches the
+    one in their fleet portal. The wizard treats Amazon-* values as
+    "branded" (carries DOT + Prime decals) and DSP-* values as not branded.
+
+    Stored as VARCHAR per CLAUDE.md rule #2.
     """
 
-    BRANDED = "branded"   # Amazon-branded (carries DOT + Prime decals)
-    OWNER = "owner"       # DSP owns the van outright
-    RENTED = "rented"     # DSP rents the van (Wheels, Enterprise, etc.)
+    AMAZON_OWNED  = "amazon_owned"   # Amazon owns; carries DOT + Prime decals
+    AMAZON_LEASED = "amazon_leased"  # Amazon leases from FMC; carries DOT + Prime decals
+    DSP_OWNED     = "dsp_owned"      # DSP owns the van outright (no decals)
+    RENTAL        = "rental"         # DSP rents from third party (no decals)
 
 
 class Vehicle(SQLModel, table=True):
@@ -80,10 +83,12 @@ class Vehicle(SQLModel, table=True):
         ),
     )
 
-    # Ownership — Branded vs Owner vs Rented. Filters out branding-specific
-    # DVIC items when not Branded. Defaults to BRANDED (most common for DSPs).
+    # Ownership — granular Amazon ownership type (mirrors Cortex
+    # `ownershipType`). The wizard hides branding-specific DVIC items
+    # (DOT decal, Prime decal) for DSP-* values. Defaults to AMAZON_OWNED
+    # which is the most common case for an Amazon DSP.
     ownership: Ownership = Field(
-        default=Ownership.BRANDED,
+        default=Ownership.AMAZON_OWNED,
         sa_column=Column(
             "ownership",
             sa.Enum(
@@ -94,9 +99,16 @@ class Vehicle(SQLModel, table=True):
             ),
             nullable=False,
             index=True,
-            server_default="branded",
+            server_default="amazon_owned",
         ),
     )
+
+    # Fleet Management Company — free-form because the universe is open
+    # (Element / LP / Wheels / Budget / Penske / Holman / Enterprise / …).
+    # Sourced from Amazon Cortex's `vehicleProvider` column on bulk upload;
+    # editable manually through the vehicle form. Nullable for vans the DSP
+    # owns outright with no FMC relationship.
+    fmc: str | None = Field(default=None, max_length=50, nullable=True)
 
     # Current state
     mileage: int = Field(default=0, nullable=False)

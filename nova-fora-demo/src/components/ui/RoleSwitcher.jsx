@@ -1,20 +1,35 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown, Check, LogOut, UserCheck, Building2, Briefcase, Wrench as WrenchIcon, RefreshCw } from 'lucide-react';
+import { ChevronDown, Check, LogOut, UserCheck, Building2, Briefcase, Wrench as WrenchIcon, RefreshCw, ClipboardCheck, Eye, Headphones } from 'lucide-react';
 import { demoAccounts } from '../../data/mockData';
 
+// Icons for the 9 V2.2 roles. Defaults sensibly per role family so users
+// with a sub-role don't get the owner's icon by mistake.
 const roleIcon = {
-  dsp_owner: Building2,
-  vendor_admin: Briefcase,
-  technician: WrenchIcon,
-  site_admin: UserCheck,
+  dsp_owner:      Building2,
+  dsp_manager:    Building2,
+  dsp_inspector:  ClipboardCheck,
+  dsp_viewer:     Eye,
+  vendor_admin:   Briefcase,
+  service_writer: Headphones,
+  technician:     WrenchIcon,
+  vendor_viewer:  Eye,
+  site_admin:     UserCheck,
 };
 
 const roleTint = {
-  dsp_owner:    { bg: 'bg-accent-green/15',  text: 'text-accent-green',  border: 'border-accent-green/40' },
-  vendor_admin: { bg: 'bg-accent-blue/15',   text: 'text-accent-blue',   border: 'border-accent-blue/40' },
-  technician:   { bg: 'bg-accent-purple/15', text: 'text-accent-purple', border: 'border-accent-purple/40' },
-  site_admin:   { bg: 'bg-accent-gold/15',   text: 'text-accent-gold',   border: 'border-accent-gold/40' },
+  // DSP family — green
+  dsp_owner:      { bg: 'bg-accent-green/15',  text: 'text-accent-green',  border: 'border-accent-green/40' },
+  dsp_manager:    { bg: 'bg-accent-green/15',  text: 'text-accent-green',  border: 'border-accent-green/40' },
+  dsp_inspector:  { bg: 'bg-accent-green/10',  text: 'text-accent-green',  border: 'border-accent-green/30' },
+  dsp_viewer:     { bg: 'bg-navy-700/40',      text: 'text-navy-200',      border: 'border-navy-600' },
+  // Vendor family — blue / purple
+  vendor_admin:   { bg: 'bg-accent-blue/15',   text: 'text-accent-blue',   border: 'border-accent-blue/40' },
+  service_writer: { bg: 'bg-accent-blue/10',   text: 'text-accent-blue',   border: 'border-accent-blue/30' },
+  technician:     { bg: 'bg-accent-purple/15', text: 'text-accent-purple', border: 'border-accent-purple/40' },
+  vendor_viewer:  { bg: 'bg-navy-700/40',      text: 'text-navy-200',      border: 'border-navy-600' },
+  // Platform
+  site_admin:     { bg: 'bg-accent-gold/15',   text: 'text-accent-gold',   border: 'border-accent-gold/40' },
 };
 
 export default function RoleSwitcher({ user, onSwitchRole, onLogout }) {

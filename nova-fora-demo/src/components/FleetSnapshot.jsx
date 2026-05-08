@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { fleetSnapshotVans, fleetSnapshotDefectDetails, availableVendors, SECTION_TO_SERVICES } from '../data/mockData';
 import { workOrders as woApi, directory as dirApi } from '../api/client';
+import { isDspRole } from '../lib/permissions';
 import Badge from './ui/Badge';
 
 // Defect-count → color configuration for heatmap tiles.
@@ -1147,8 +1148,9 @@ export default function FleetSnapshot({ user, embedded = false }) {
     return fleetSnapshotVans.map((v) => ({ ...v, ...(vanUpdates[v.id] || {}) }));
   }, [vanUpdates]);
 
-  // DSP users only see their own flota; vendors see all
-  const isDsp = user?.role === 'dsp_owner';
+  // DSP users only see their own flota; vendors see all (works for the
+  // 4 DSP sub-roles: owner / manager / inspector / viewer)
+  const isDsp = isDspRole(user);
   const userDspId = user?.orgId;
 
   const vans = useMemo(() => {

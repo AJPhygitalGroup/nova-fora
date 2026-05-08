@@ -13,6 +13,7 @@ from app.routes import (
     health,
     inspection_rules,
     inspections,
+    invitations,
     uploads,
     vehicles,
     work_orders,
@@ -95,6 +96,7 @@ app.add_middleware(
 # ── Routes ────────────────────────────────────────────
 app.include_router(health.router)
 app.include_router(auth.router)
+app.include_router(invitations.router)
 app.include_router(vehicles.router)
 app.include_router(inspections.router)
 app.include_router(defects.router)

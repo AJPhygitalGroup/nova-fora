@@ -30,6 +30,7 @@ class VehicleResponse(BaseModel):
     grounded_at: datetime | None = None
     vehicle_class: str = "regular_cargo_van"  # drives catalog applicability
     ownership: str = "branded"                # branded | owner | rented
+    fmc: str | None = None                    # Fleet Management Company (Element / LP / Budget / …)
 
     # Derived from inspections / defects
     defect_count: int = 0
@@ -65,6 +66,7 @@ class VehicleResponse(BaseModel):
                 v.ownership.value if hasattr(v.ownership, "value")
                 else str(v.ownership)
             ),
+            fmc=v.fmc,
             is_active=v.is_active,
         )
 
@@ -81,7 +83,8 @@ class VehicleCreate(BaseModel):
     model: str = Field(min_length=1, max_length=100)
     mileage: int = Field(default=0, ge=0)
     vehicle_class: VehicleClass = VehicleClass.REGULAR_CARGO_VAN
-    ownership: Ownership = Ownership.BRANDED
+    ownership: Ownership = Ownership.AMAZON_OWNED
+    fmc: str | None = Field(default=None, max_length=50)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -100,6 +103,7 @@ class VehicleUpdate(BaseModel):
     is_active: bool | None = None
     vehicle_class: VehicleClass | None = None
     ownership: Ownership | None = None
+    fmc: str | None = Field(default=None, max_length=50)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -111,3 +115,57 @@ class VehicleListResponse(BaseModel):
     total: int
     page: int
     per_page: int
+
+
+# ─────────────────────────────────────────────────────
+# Bulk upsert (Amazon Logistics Fleet Data spreadsheet)
+# ─────────────────────────────────────────────────────
+class BulkVehicleRow(BaseModel):
+    """A single row from the parsed spreadsheet, already mapped to NF fields.
+
+    The frontend handles XLSX parsing + Amazon column mapping (serviceTier,
+    ownershipType, vehicleProvider) and POSTs an array of these rows.
+    """
+
+    fleet_id: str = Field(min_length=1, max_length=50)
+    vin: str = Field(min_length=17, max_length=17, pattern=r"^[A-HJ-NPR-Z0-9]{17}$")
+    plate: str = Field(min_length=1, max_length=20)
+    year: int = Field(ge=1980, le=2100)
+    make: str = Field(min_length=1, max_length=50)
+    model: str = Field(min_length=1, max_length=100)
+    mileage: int = Field(default=0, ge=0)
+    vehicle_class: VehicleClass = VehicleClass.REGULAR_CARGO_VAN
+    ownership: Ownership = Ownership.AMAZON_OWNED
+    fmc: str | None = Field(default=None, max_length=50)
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class BulkUpsertRequest(BaseModel):
+    """POST /vehicles/bulk-upsert body."""
+
+    dsp_id: int | None = None
+    rows: list[BulkVehicleRow] = Field(min_length=1, max_length=2000)
+    # When true, vehicles in the DSP not present in `rows` are deactivated
+    # (soft delete via is_active=False). Default false because deactivation
+    # is destructive and the frontend should require an explicit confirmation.
+    deactivate_missing: bool = False
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class BulkUpsertResult(BaseModel):
+    """Per-row outcome of the bulk upsert."""
+
+    fleet_id: str
+    vin: str
+    action: str          # "created" | "updated" | "skipped" | "deactivated" | "error"
+    vehicle_id: str | None = None
+    error: str | None = None
+
+
+class BulkUpsertResponse(BaseModel):
+    """POST /vehicles/bulk-upsert response."""
+
+    results: list[BulkUpsertResult]
+    summary: dict[str, int]    # counts per action

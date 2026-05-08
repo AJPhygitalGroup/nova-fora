@@ -20,6 +20,9 @@ from app.models.organization import OrgType, Organization
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
 from app.schemas.vehicle import (
+    BulkUpsertRequest,
+    BulkUpsertResponse,
+    BulkUpsertResult,
     VehicleCreate,
     VehicleListResponse,
     VehicleResponse,
@@ -192,6 +195,7 @@ async def create_vehicle(
         mileage=body.mileage,
         vehicle_class=body.vehicle_class,
         ownership=body.ownership,
+        fmc=body.fmc,
     )
     session.add(vehicle)
     try:
@@ -244,3 +248,163 @@ async def update_vehicle(
 
     org = await _get_org(session, v.dsp_id)
     return VehicleResponse.from_vehicle(v, org)
+
+
+# ─────────────────────────────────────────────────────
+# POST /vehicles/bulk-upsert — Amazon Logistics Fleet Data sync
+# ─────────────────────────────────────────────────────
+@router.post(
+    "/bulk-upsert",
+    response_model=BulkUpsertResponse,
+    summary="Sync a parsed Amazon Logistics Fleet Data spreadsheet",
+)
+async def bulk_upsert_vehicles(
+    body: BulkUpsertRequest,
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> BulkUpsertResponse:
+    """Upsert a batch of vehicle rows by VIN (the only globally unique key).
+
+    The frontend handles XLSX parsing + Amazon column mapping. This endpoint
+    receives an array of rows already mapped to NF fields. Each row is
+    upserted independently so a failure on one VIN doesn't abort the batch.
+
+    deactivate_missing=True will soft-delete (is_active=False) any vehicle in
+    the resolved DSP whose VIN is NOT in the uploaded set. Off by default —
+    the frontend should require explicit confirmation before sending it true.
+    """
+    # Resolve dsp_id (same logic as POST /vehicles)
+    if body.dsp_id is None:
+        if current.role != UserRole.DSP_OWNER:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "dsp_id is required for non-DSP-owner callers",
+            )
+        dsp_id = current.organization_id
+    else:
+        dsp_id = body.dsp_id
+
+    if not _can_manage_org(current, dsp_id):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "cannot bulk-upsert vehicles for that DSP",
+        )
+
+    org = await _get_org(session, dsp_id)
+    if org.org_type != OrgType.DSP:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"organization {org.name!r} is not a DSP (is {org.org_type.value})",
+        )
+
+    # Pre-load existing vehicles for this DSP, keyed by VIN, to decide
+    # create-vs-update without N+1 queries.
+    existing = (
+        await session.execute(select(Vehicle).where(Vehicle.dsp_id == dsp_id))
+    ).scalars().all()
+    by_vin: dict[str, Vehicle] = {v.vin: v for v in existing}
+    incoming_vins: set[str] = set()
+
+    results: list[BulkUpsertResult] = []
+    summary = {
+        "created": 0, "updated": 0, "skipped": 0,
+        "deactivated": 0, "error": 0,
+    }
+
+    for row in body.rows:
+        vin_upper = row.vin.upper()
+        incoming_vins.add(vin_upper)
+
+        # VIN collisions across DSPs — let the IntegrityError speak. Inside
+        # this DSP we already have it indexed.
+        v = by_vin.get(vin_upper)
+        try:
+            if v is None:
+                v = Vehicle(
+                    dsp_id=dsp_id,
+                    fleet_id=row.fleet_id,
+                    vin=vin_upper,
+                    plate=row.plate,
+                    year=row.year,
+                    make=row.make,
+                    model=row.model,
+                    mileage=row.mileage,
+                    vehicle_class=row.vehicle_class,
+                    ownership=row.ownership,
+                    fmc=row.fmc,
+                )
+                session.add(v)
+                await session.flush()
+                results.append(BulkUpsertResult(
+                    fleet_id=row.fleet_id, vin=vin_upper,
+                    action="created", vehicle_id=v.id_str,
+                ))
+                summary["created"] += 1
+            else:
+                # Track whether anything actually changed; if not, count as skipped.
+                changed = False
+                for field, value in (
+                    ("fleet_id", row.fleet_id),
+                    ("plate", row.plate),
+                    ("year", row.year),
+                    ("make", row.make),
+                    ("model", row.model),
+                    ("mileage", row.mileage),
+                    ("vehicle_class", row.vehicle_class),
+                    ("ownership", row.ownership),
+                    ("fmc", row.fmc),
+                ):
+                    if getattr(v, field) != value:
+                        setattr(v, field, value)
+                        changed = True
+                # Reactivate previously-deactivated rows so re-uploading
+                # restores them
+                if not v.is_active:
+                    v.is_active = True
+                    changed = True
+                if changed:
+                    v.updated_at = utc_now()
+                    session.add(v)
+                    results.append(BulkUpsertResult(
+                        fleet_id=row.fleet_id, vin=vin_upper,
+                        action="updated", vehicle_id=v.id_str,
+                    ))
+                    summary["updated"] += 1
+                else:
+                    results.append(BulkUpsertResult(
+                        fleet_id=row.fleet_id, vin=vin_upper,
+                        action="skipped", vehicle_id=v.id_str,
+                    ))
+                    summary["skipped"] += 1
+        except IntegrityError as e:
+            await session.rollback()
+            results.append(BulkUpsertResult(
+                fleet_id=row.fleet_id, vin=vin_upper,
+                action="error", error=f"integrity error: {e.orig}",
+            ))
+            summary["error"] += 1
+            # IntegrityError aborts the surrounding transaction; we have to
+            # restart cleanly. Reload existing so subsequent rows behave.
+            existing = (
+                await session.execute(
+                    select(Vehicle).where(Vehicle.dsp_id == dsp_id)
+                )
+            ).scalars().all()
+            by_vin = {v.vin: v for v in existing}
+
+    # Deactivation pass — only if explicitly requested AND we have a clean session
+    if body.deactivate_missing:
+        for v in list(by_vin.values()):
+            if v.vin in incoming_vins or not v.is_active:
+                continue
+            v.is_active = False
+            v.updated_at = utc_now()
+            session.add(v)
+            results.append(BulkUpsertResult(
+                fleet_id=v.fleet_id, vin=v.vin,
+                action="deactivated", vehicle_id=v.id_str,
+            ))
+            summary["deactivated"] += 1
+
+    await session.commit()
+    return BulkUpsertResponse(results=results, summary=summary)

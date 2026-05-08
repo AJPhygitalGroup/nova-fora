@@ -202,6 +202,75 @@ export const auth = {
   },
 };
 
+
+// ─────────────────────────────────────────────────────
+// Invitations — token-based onboarding for new owners + vendors.
+// Two surfaces:
+//   - Public (no auth): preview + accept by token. Used by /signup/accept page.
+//   - Authenticated:    list/create/resend/revoke. Used by AdminPanel.
+// ─────────────────────────────────────────────────────
+export const invitations = {
+  /** POST /auth/invitations — site_admin / dsp_owner / vendor_admin. */
+  create(body) {
+    return apiFetch('/auth/invitations', {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /** GET /auth/invitations — scoped to the caller's org by the API. */
+  list({ status } = {}) {
+    const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+    return apiFetch(`/auth/invitations${qs}`);
+  },
+
+  /** Strip the "INV-" prefix so the integer route param matches. */
+  _intId(id) {
+    if (typeof id === 'number') return id;
+    const m = String(id).match(/(\d+)/);
+    return m ? parseInt(m[1], 10) : id;
+  },
+
+  /** POST /auth/invitations/{id}/resend — bumps expiry + re-sends email. */
+  resend(id) {
+    return apiFetch(`/auth/invitations/${this._intId(id)}/resend`, {
+      method: 'POST',
+    });
+  },
+
+  /** DELETE /auth/invitations/{id} — revoke a pending invitation. */
+  revoke(id) {
+    return apiFetch(`/auth/invitations/${this._intId(id)}`, {
+      method: 'DELETE',
+    });
+  },
+
+  /** GET /auth/invitations/{token}/preview — PUBLIC, no auth. */
+  preview(token) {
+    return _raw(`/auth/invitations/${encodeURIComponent(token)}/preview`, {
+      skipAuth: true,
+    });
+  },
+
+  /** POST /auth/invitations/{token}/accept — PUBLIC, returns JWT pair. */
+  async accept(token, body) {
+    const data = await _raw(
+      `/auth/invitations/${encodeURIComponent(token)}/accept`,
+      {
+        method: 'POST',
+        body: JSON.stringify(camelToSnake(body)),
+        skipAuth: true,
+      },
+    );
+    // Store tokens so the auto-login on the new account is immediate.
+    setTokens({
+      access_token: data.accessToken,
+      refresh_token: data.refreshToken,
+    });
+    return data;
+  },
+};
+
 // ─────────────────────────────────────────────────────
 // Vehicles module
 // ─────────────────────────────────────────────────────
@@ -245,6 +314,18 @@ export const vehicles = {
   update(id, body) {
     return apiFetch(`/vehicles/${encodeURIComponent(id)}`, {
       method: 'PATCH',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /**
+   * POST /vehicles/bulk-upsert — sync a parsed Amazon Fleet Data sheet.
+   * body: { dspId?, rows: [{fleetId, vin, plate, year, make, model, vehicleClass, ownership, mileage}], deactivateMissing?: bool }
+   * Returns: { results: [{fleetId, vin, action, vehicleId?, error?}], summary: {created, updated, skipped, deactivated, error} }
+   */
+  bulkUpsert(body) {
+    return apiFetch('/vehicles/bulk-upsert', {
+      method: 'POST',
       body: JSON.stringify(camelToSnake(body)),
     });
   },
@@ -586,6 +667,48 @@ export const dvicTemplate = {
     _dvicTemplateCache.delete(cacheKey);
   },
 };
+
+// ─────────────────────────────────────────────────────
+// Inspection rules (V2.2 source-rule layer: verbatim PDF text + targets).
+// Used by the admin Defect Rules catalog view + custom DSP rule creation.
+// ─────────────────────────────────────────────────────
+export const inspectionRules = {
+  /** GET /inspection-rules?vehicle_class=…&section=…&source=…&q=…&active_only=… */
+  list(params = {}) {
+    const q = new URLSearchParams();
+    const paramMap = { vehicleClass: 'vehicle_class', activeOnly: 'active_only' };
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined || v === null || v === '') continue;
+      q.set(paramMap[k] || k, String(v));
+    }
+    return apiFetch(`/inspection-rules${q.toString() ? '?' + q.toString() : ''}`);
+  },
+
+  /** GET /inspection-rules/{id}. */
+  get(id) {
+    return apiFetch(`/inspection-rules/${encodeURIComponent(id)}`);
+  },
+
+  /**
+   * POST /inspection-rules — create a DSP custom rule.
+   * body: {
+   *   defectText, source?, section?, parts?, classification?, group?, line?,
+   *   rsi?, vsa?, notionId?, vehicleClass: [...], targets: [{part, defectType}],
+   *   addToWizard?, wizardPartCategory?, wizardPhotoRequired?, wizardRequiresBranding?
+   * }
+   * Note: targets is opaque — keep its inner keys as-is. We send camelCase
+   * here, but the inner `part`/`defectType` of each target object also gets
+   * snake_cased by camelToSnake; the backend expects `defect_type` so
+   * that's exactly what we want.
+   */
+  create(body) {
+    return apiFetch('/inspection-rules', {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+};
+
 
 // ─────────────────────────────────────────────────────
 // Directory (orgs + users) — small lookups for pickers

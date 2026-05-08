@@ -512,7 +512,7 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
         inspectionId={inspectionId}
         vehicleId={vehicle?.id}
         vehicleClass={vehicle?.vehicleClass || 'regular_cargo_van'}
-        ownership={vehicle?.ownership || 'branded'}
+        ownership={vehicle?.ownership || 'amazon_owned'}
         defects={defects}
         onCommitted={handleDefectCommitted}
         onRemoveDefect={handleRemoveDefect}

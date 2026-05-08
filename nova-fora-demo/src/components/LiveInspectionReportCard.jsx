@@ -23,6 +23,7 @@ import {
   defects as defectsApi,
   APIError,
 } from '../api/client';
+import { canApproveDefects } from '../lib/permissions';
 
 export default function LiveInspectionReportCard({ inspection, user, onClose, onCreateWO }) {
   const [detail, setDetail] = useState(null);
@@ -38,8 +39,9 @@ export default function LiveInspectionReportCard({ inspection, user, onClose, on
   // Photo carousel index for the inspection-level photos
   const [photoIdx, setPhotoIdx] = useState(0);
 
-  const canTakeActions =
-    user?.role === 'dsp_owner' || user?.role === 'site_admin';
+  // Approve / dismiss requires DSP-side admin authority. DSP managers fill
+  // in for owners; inspectors + viewers can only read.
+  const canTakeActions = canApproveDefects(user);
 
   useEffect(() => {
     let cancel = false;

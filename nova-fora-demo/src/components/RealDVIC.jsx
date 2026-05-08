@@ -8,6 +8,7 @@ import ProgressBar from './ui/ProgressBar';
 import Badge from './ui/Badge';
 import { FlexFleetModal, VehicleReportCard, CreateWorkOrderModal } from './FleetSnapshot';
 import { fleetSnapshotVans } from '../data/mockData';
+import { isDspRole, canInspect, canApproveDefects } from '../lib/permissions';
 import CreateInspectionWizard from './CreateInspectionWizard';
 import LiveInspectionReportCard from './LiveInspectionReportCard';
 import { inspections as inspectionsApi, vehicles as vehiclesApi, defects as defectsApi } from '../api/client';
@@ -2680,8 +2681,10 @@ export default function RealDVIC({ user }) {
     if (wizardJustClosed) refreshTodayMetrics();
   }, [wizardJustClosed, refreshTodayMetrics]);
 
-  // Completed WOs filtered by DSP (DSP owner sees only theirs; admin sees all)
-  const repairedWOs = user?.role === 'dsp_owner'
+  // Completed WOs filtered by DSP. DSP-side roles (owner / manager /
+  // inspector / viewer) see only their own org's WOs; vendor / site_admin
+  // see all (their queue spans many DSPs).
+  const repairedWOs = isDspRole(user)
     ? workOrdersData.filter((wo) => wo.status === 'completed' && wo.dspId === user?.orgId)
     : workOrdersData.filter((wo) => wo.status === 'completed');
   const repairedDefectsCount = repairedWOs.length;
@@ -2728,8 +2731,27 @@ export default function RealDVIC({ user }) {
   const scheduledTonight = allDefects.filter((d) => d.status === 'Rush Order' || d.status === 'Scheduled').length;
   const notInspected = 7;
   const newToApprove = 2;
-  // Defects awaiting DSP approval — drives the AlertTriangle visibility on that card
-  const pendingApprovalCount = 10;
+
+  // Defects awaiting DSP approval — fetched from /defects (DSP-scoped server-
+  // side). V2.2 doesn't have a workflow `status` column yet (per spec §2 it
+  // lives in a future `defect_status` table), so for now "pending approval"
+  // means EVERY defect in the DSP's fleet. Once the status table lands we'll
+  // add a `status=pending` filter.
+  const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    defectsApi
+      .list({ perPage: 1 })
+      .then((res) => {
+        if (cancelled) return;
+        setPendingApprovalCount(res.total ?? 0);
+      })
+      .catch((err) => console.warn('defects count failed', err));
+    return () => { cancelled = true; };
+    // refetch when a new defect lands via SSE (totalDefectsToday changes)
+    // or after the inspection wizard closes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [totalDefectsToday, wizardJustClosed]);
   // Repairs still waiting for DSP feedback (thumbs up/down) on the vendor's work
   const repairsPendingFeedback = repairedDefectsCount;
   // Next inspection date auto-computed from the org's inspection frequency
@@ -2748,13 +2770,18 @@ export default function RealDVIC({ user }) {
   // QC DVIC is no longer a tab — it's reached by clicking the 'Vans Inspected'
   // metric card, which lists the vans; clicking a row opens its Vehicle Report
   // Card where the DSP approves/rejects defects and creates work orders.
-  const isDspHome = user?.role === 'dsp_owner' || user?.role === 'site_admin';
+  // DSP-side dashboard (Overview + Today's Defects). All DSP roles see this
+  // — owners + managers approve, inspectors + viewers read.
+  const isDspHome = isDspRole(user) || user?.role === 'site_admin';
   const sections = [
     { id: 'overview', label: 'Overview', icon: Shield },
     { id: 'defects', label: "Today's Defects", icon: AlertTriangle },
   ];
 
-  const canStartInspection = user?.role === 'vendor_admin' || user?.role === 'technician' || user?.role === 'site_admin';
+  // Who can launch the QC DVIC walkaround. Inspectors are the canonical
+  // case; technicians at vendors do post-repair inspections; managers
+  // and admins fill in when needed.
+  const canStartInspection = canInspect(user);
 
   // QC inspection banner: in production it appears automatically on
   // inspection day. For the demo we expose a barely-visible toggle in the
@@ -2764,7 +2791,7 @@ export default function RealDVIC({ user }) {
   return (
     <div>
       {/* Subtle banner-visibility toggle — DSP users only */}
-      {(user?.role === 'dsp_owner' || user?.role === 'site_admin') && (
+      {(isDspRole(user) || user?.role === 'site_admin') && (
         <div className="flex justify-end -mt-2 mb-1">
           <button
             onClick={() => setShowQcBanner((s) => !s)}

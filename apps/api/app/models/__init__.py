@@ -31,6 +31,7 @@ from app.models.inspection import (
     InspectionStatus,
     OdometerSource,
 )
+from app.models.invitation import Invitation, InvitationStatus
 from app.models.organization import OrgType, Organization
 from app.models.photo import Photo, PhotoCategory
 from app.models.user import User, UserRole, UserStatus
@@ -58,6 +59,8 @@ __all__ = [
     "DvicSection",
     "DvicTemplateItem",
     "Inspection",
+    "Invitation",
+    "InvitationStatus",
     "InspectionResult",
     "InspectionRule",
     "InspectionRuleLine",

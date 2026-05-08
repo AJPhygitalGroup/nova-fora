@@ -805,8 +805,14 @@ export default function WorkOrders({ user }) {
   const [showLogJob, setShowLogJob] = useState(false);
   const [actionInFlight, setActionInFlight] = useState(false);
 
+  // Technician = the canonical "do the work" role.
+  // Vendor side = anyone who manages the vendor's WO queue (admin or
+  // service writer) plus site_admin acting on their behalf.
   const isTechnician = user?.role === 'technician';
-  const isVendor = user?.role === 'vendor_admin' || user?.role === 'site_admin';
+  const isVendor =
+    user?.role === 'vendor_admin'
+    || user?.role === 'service_writer'
+    || user?.role === 'site_admin';
 
   // Fetch initial list — backend already role-scopes
   const reload = useCallback(async () => {

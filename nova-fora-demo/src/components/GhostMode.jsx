@@ -1,21 +1,32 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Eye, Search, AlertTriangle, Check, Clock, User, Building2, Briefcase, Wrench as WrenchIcon, UserCheck } from 'lucide-react';
+import { Eye, Search, AlertTriangle, Check, Clock, User, Building2, Briefcase, Wrench as WrenchIcon, UserCheck, ClipboardCheck, Headphones } from 'lucide-react';
 import { demoAccounts } from '../data/mockData';
 import Badge from './ui/Badge';
 
+// 9-role icon map (mirrors RoleSwitcher.jsx).
 const roleIcon = {
-  dsp_owner: Building2,
-  vendor_admin: Briefcase,
-  technician: WrenchIcon,
-  site_admin: UserCheck,
+  dsp_owner:      Building2,
+  dsp_manager:    Building2,
+  dsp_inspector:  ClipboardCheck,
+  dsp_viewer:     Eye,
+  vendor_admin:   Briefcase,
+  service_writer: Headphones,
+  technician:     WrenchIcon,
+  vendor_viewer:  Eye,
+  site_admin:     UserCheck,
 };
 
 const roleTint = {
-  dsp_owner:    { bg: 'bg-accent-green/15',  text: 'text-accent-green',  border: 'border-accent-green/40' },
-  vendor_admin: { bg: 'bg-accent-blue/15',   text: 'text-accent-blue',   border: 'border-accent-blue/40' },
-  technician:   { bg: 'bg-accent-purple/15', text: 'text-accent-purple', border: 'border-accent-purple/40' },
-  site_admin:   { bg: 'bg-accent-gold/15',   text: 'text-accent-gold',   border: 'border-accent-gold/40' },
+  dsp_owner:      { bg: 'bg-accent-green/15',  text: 'text-accent-green',  border: 'border-accent-green/40' },
+  dsp_manager:    { bg: 'bg-accent-green/15',  text: 'text-accent-green',  border: 'border-accent-green/40' },
+  dsp_inspector:  { bg: 'bg-accent-green/10',  text: 'text-accent-green',  border: 'border-accent-green/30' },
+  dsp_viewer:     { bg: 'bg-navy-700/40',      text: 'text-navy-200',      border: 'border-navy-600' },
+  vendor_admin:   { bg: 'bg-accent-blue/15',   text: 'text-accent-blue',   border: 'border-accent-blue/40' },
+  service_writer: { bg: 'bg-accent-blue/10',   text: 'text-accent-blue',   border: 'border-accent-blue/30' },
+  technician:     { bg: 'bg-accent-purple/15', text: 'text-accent-purple', border: 'border-accent-purple/40' },
+  vendor_viewer:  { bg: 'bg-navy-700/40',      text: 'text-navy-200',      border: 'border-navy-600' },
+  site_admin:     { bg: 'bg-accent-gold/15',   text: 'text-accent-gold',   border: 'border-accent-gold/40' },
 };
 
 // In a real system this would fetch users from the API. For the demo we use the demo accounts list.
