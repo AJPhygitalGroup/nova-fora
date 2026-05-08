@@ -14,6 +14,7 @@
  */
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import {
   ArrowLeft, ArrowRight, X, Truck, Gauge, ClipboardList, Check, AlertCircle,
   Loader2, Plus, Trash2, Camera, ChevronDown, ChevronUp, AlertTriangle, Building2,
@@ -54,6 +55,7 @@ function todayUtcDate() {
 
 // ─────────────────────────────────────────────────────
 export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
+  const { t } = useTranslation('wizard');
   // Phase-based state machine. Within `inspecting` phase, `step` 1-6 walks
   // through DSP/keys/vehicle/odometer/sections/review for ONE vehicle.
   // (Key recorder is step 2 — done ONCE per session and reused.)
@@ -527,8 +529,8 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
 
   return (
     <FullScreenShell
-      title="QC DVIC Inspection"
-      subtitle={`Step ${step} of 6`}
+      title={t('createInspection.shellTitle')}
+      subtitle={t('createInspection.shellSubtitleFmt', { step })}
       onClose={onClose}
     >
       {/* Body */}
@@ -613,15 +615,15 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
             disabled={step === 1}
             className="flex items-center gap-1.5 px-3 py-2 rounded-md border border-navy-700 text-navy-300 hover:text-white hover:border-navy-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-sm"
           >
-            <ArrowLeft size={14} /> Back
+            <ArrowLeft size={14} /> {t('dvic.footer.back')}
           </button>
 
           <div className="text-[10px] text-navy-500 uppercase tracking-wide hidden sm:block">
-            {step === 1 && 'Pick the DSP'}
-            {step === 2 && 'Record keys'}
-            {step === 3 && 'Pick a vehicle'}
-            {step === 4 && 'Start or skip'}
-            {step === 5 && 'Odometer'}
+            {step === 1 && t('createInspection.footerCaption.step1', 'Pick the DSP')}
+            {step === 2 && t('createInspection.footerCaption.step2', 'Record keys')}
+            {step === 3 && t('createInspection.footerCaption.step3', 'Pick a vehicle')}
+            {step === 4 && t('createInspection.footerCaption.step4', 'Start or skip')}
+            {step === 5 && t('createInspection.footerCaption.step5', 'Odometer')}
             {/* Step 6 short-circuits above — DvicWizard owns its own footer. */}
           </div>
 
@@ -637,15 +639,18 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
               }
               title={step === 5 && !canGoNextStep5
                 ? (!odometerValid
-                  ? 'Enter the current mileage'
+                  ? t('createInspection.odometer.enterFirst', 'Enter the current mileage')
                   : !inspectionId
-                    ? 'Tap "Start inspection" to create the draft'
-                    : 'Attach the odometer photo to continue')
+                    ? t('createInspection.odometer.startFirst', 'Tap "Start inspection" to create the draft')
+                    : t('createInspection.odometer.attachPhoto', 'Attach the odometer photo to continue'))
                 : ''}
               className="flex items-center gap-1.5 px-4 py-2 rounded-md bg-accent-blue text-white font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-sm"
             >
               {creatingDraft ? <Loader2 size={14} className="animate-spin" /> : null}
-              {step === 5 && !inspectionId ? 'Start' : 'Next'} <ArrowRight size={14} />
+              {step === 5 && !inspectionId
+                ? t('createInspection.startInspection', 'Start')
+                : t('dvic.footer.next')}
+              <ArrowRight size={14} />
             </button>
           )}
           {step === 4 && (
@@ -662,6 +667,7 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
 // Shell
 // ─────────────────────────────────────────────────────
 function FullScreenShell({ title, subtitle, onClose, children }) {
+  const { t } = useTranslation('wizard');
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -683,7 +689,7 @@ function FullScreenShell({ title, subtitle, onClose, children }) {
           <button
             onClick={onClose}
             className="text-navy-400 hover:text-white p-2 -mr-2 rounded-md hover:bg-navy-800 shrink-0"
-            title="Close"
+            title={t('createInspection.closeTitle')}
           >
             <X size={20} />
           </button>
@@ -698,6 +704,7 @@ function FullScreenShell({ title, subtitle, onClose, children }) {
 // Step 1: DSP picker (mandatory first)
 // ─────────────────────────────────────────────────────
 function Step1DspPicker({ dsps, loading, value, onChange }) {
+  const { t } = useTranslation('wizard');
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -711,10 +718,10 @@ function Step1DspPicker({ dsps, loading, value, onChange }) {
       <div className="py-12 text-center">
         <Building2 size={32} className="text-navy-500 mx-auto mb-3" />
         <p className="text-sm text-navy-400">
-          You don't have access to any DSPs with vehicles assigned.
+          {t('createInspection.step1.empty')}
         </p>
         <p className="text-[11px] text-navy-500 mt-1">
-          Contact your admin to be assigned to a DSP fleet.
+          {t('createInspection.step1.emptyHint')}
         </p>
       </div>
     );
@@ -725,11 +732,11 @@ function Step1DspPicker({ dsps, loading, value, onChange }) {
       <div className="flex items-center gap-2 mb-2">
         <Building2 size={16} className="text-accent-blue" />
         <h3 className="text-sm font-semibold text-white">
-          Which DSP are you servicing today?
+          {t('createInspection.step1.heading')}
         </h3>
       </div>
       <p className="text-xs text-navy-400 -mt-1 mb-2">
-        Pick the fleet whose van you're about to inspect.
+        {t('createInspection.step1.hint')}
       </p>
 
       <div className="grid sm:grid-cols-2 gap-2">
@@ -761,7 +768,7 @@ function Step1DspPicker({ dsps, loading, value, onChange }) {
                 <div className="min-w-0">
                   <div className="text-sm font-semibold text-white truncate">{d.name}</div>
                   <div className="text-[11px] text-navy-400">
-                    {d.count} van{d.count === 1 ? '' : 's'} in fleet
+                    {t('createInspection.step1.vansFmt', { count: d.count })}
                   </div>
                 </div>
                 {selected && <Check size={16} className="text-accent-blue ml-auto shrink-0" />}
@@ -882,6 +889,7 @@ const INCOMPLETE_REASON_LABELS = INCOMPLETE_REASONS.reduce((acc, r) => {
 }, {});
 
 function Step3VehiclePicker({ dsp, vehicles, inspectedTodayMap, value, onChange }) {
+  const { t } = useTranslation('wizard');
   const [search, setSearch] = useState('');
 
   const filtered = vehicles.filter((v) => {
@@ -940,7 +948,7 @@ function Step3VehiclePicker({ dsp, vehicles, inspectedTodayMap, value, onChange 
         type="search"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        placeholder="Fleet ID, VIN, plate…"
+        placeholder={t('createInspection.step3.searchPlaceholder')}
         className="w-full rounded-lg px-3 py-2.5 bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue text-sm"
       />
 
@@ -1143,6 +1151,7 @@ function Step4Odometer({
   odometerPhotoCount,
   onOdometerPhotoChanged,
 }) {
+  const { t } = useTranslation('wizard');
   const mileageNum = odometer ? parseInt(odometer, 10) : NaN;
   const mileageValid = Number.isFinite(mileageNum) && mileageNum > 0;
   const photoLanded = odometerPhotoCount >= 1;
@@ -1150,7 +1159,7 @@ function Step4Odometer({
     <div className="space-y-5">
       <div className="flex items-center gap-2">
         <Gauge size={16} className="text-accent-blue" />
-        <h3 className="text-sm font-semibold text-white">Odometer reading</h3>
+        <h3 className="text-sm font-semibold text-white">{t('createInspection.step5.heading')}</h3>
       </div>
 
       <div className="rounded-lg bg-navy-900/60 border border-navy-700 p-3 text-sm">
@@ -1169,7 +1178,7 @@ function Step4Odometer({
           inputMode="numeric"
           value={odometer}
           onChange={(e) => onOdometerChange(e.target.value)}
-          placeholder="e.g. 86209"
+          placeholder={t('createInspection.step5.placeholder')}
           className={`w-full rounded-lg px-3 py-3 bg-navy-800 border text-white text-lg font-mono text-right outline-none focus:border-accent-blue ${
             mileageValid ? 'border-navy-700' : 'border-accent-orange/50'
           }`}
@@ -1323,6 +1332,7 @@ function V2DefectCard({ defect, onRemove }) {
 // Step 6: review + submit (v2 — flat defects list)
 // ─────────────────────────────────────────────────────
 function Step6Review({ dsp, keysReceived, vehicle, odometer, defects, totalDefects, inspectionId, submitting, submitError, onSubmit }) {
+  const { t } = useTranslation('wizard');
   // Group defects by their (legacy mirror) section for review readability.
   const sectionGroups = (() => {
     const map = {};
@@ -1336,7 +1346,7 @@ function Step6Review({ dsp, keysReceived, vehicle, odometer, defects, totalDefec
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-navy-700 bg-navy-900/60 p-3">
-        <div className="text-[10px] uppercase tracking-wide text-navy-400 mb-1">DSP</div>
+        <div className="text-[10px] uppercase tracking-wide text-navy-400 mb-1">{t('createInspection.review.dspLabel')}</div>
         <div className="text-sm font-bold text-white">{dsp?.name}</div>
       </div>
 
@@ -1349,22 +1359,22 @@ function Step6Review({ dsp, keysReceived, vehicle, odometer, defects, totalDefec
       </div>
 
       <div className="rounded-lg border border-navy-700 bg-navy-900/60 p-3">
-        <div className="text-[10px] uppercase tracking-wide text-navy-400 mb-1">Vehicle</div>
+        <div className="text-[10px] uppercase tracking-wide text-navy-400 mb-1">{t('createInspection.review.vehicleLabel')}</div>
         <div className="text-sm font-bold text-white font-mono">{vehicle?.fleetId}</div>
         <div className="text-xs text-navy-300">{vehicle?.year} {vehicle?.make} {vehicle?.model}</div>
       </div>
 
       <div className="rounded-lg border border-navy-700 bg-navy-900/60 p-3">
-        <div className="text-[10px] uppercase tracking-wide text-navy-400 mb-1">Odometer</div>
+        <div className="text-[10px] uppercase tracking-wide text-navy-400 mb-1">{t('createInspection.review.odometerLabel')}</div>
         <div className="text-sm font-mono text-white">
-          {odometer ? `${parseInt(odometer, 10).toLocaleString()} mi` : '— not provided —'}
+          {odometer ? `${parseInt(odometer, 10).toLocaleString()} mi` : t('createInspection.review.notProvided', '— not provided —')}
         </div>
       </div>
 
       <div className="rounded-lg border border-navy-700 bg-navy-900/60 p-3">
         <div className="flex items-center justify-between mb-2">
-          <div className="text-[10px] uppercase tracking-wide text-navy-400">Defects</div>
-          <div className="text-xs font-bold text-white">{totalDefects} total</div>
+          <div className="text-[10px] uppercase tracking-wide text-navy-400">{t('createInspection.review.defectsLabel')}</div>
+          <div className="text-xs font-bold text-white">{t('createInspection.review.totalCount', { count: totalDefects, defaultValue: '{{count}} total' })}</div>
         </div>
         {totalDefects === 0 ? (
           <div className="text-xs text-accent-green flex items-center gap-1">
@@ -1396,9 +1406,8 @@ function Step6Review({ dsp, keysReceived, vehicle, odometer, defects, totalDefec
       </div>
 
       <div className="rounded-lg border border-accent-blue/40 bg-accent-blue/5 p-3 text-xs text-navy-200">
-        <div className="font-semibold text-accent-blue mb-1">Ready to submit</div>
-        Once submitted, this inspection becomes immutable. Defects can still
-        be acknowledged or routed to vendors by the DSP owner.
+        <div className="font-semibold text-accent-blue mb-1">{t('createInspection.step6.ready')}</div>
+        {t('createInspection.review.immutableHint', "Once submitted, this inspection becomes immutable. Defects can still be acknowledged or routed to vendors by the DSP owner.")}
       </div>
 
       {submitError && (

@@ -35,8 +35,8 @@ import esDash    from './locales/es/dashboard.json';
 
 
 export const SUPPORTED_LANGUAGES = [
-  { code: 'es', label: 'Español',  flag: '🇲🇽', nativeLabel: 'Español' },
-  { code: 'en', label: 'English',  flag: '🇺🇸', nativeLabel: 'English' },
+  { code: 'es', shortCode: 'ES', label: 'Español', flag: '🇲🇽', nativeLabel: 'Español' },
+  { code: 'en', shortCode: 'US', label: 'English', flag: '🇺🇸', nativeLabel: 'English' },
 ];
 
 export const NAMESPACES = ['common', 'auth', 'layout', 'wizard', 'fleet', 'admin', 'dashboard'];

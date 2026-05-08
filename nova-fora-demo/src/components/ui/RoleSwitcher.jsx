@@ -131,14 +131,15 @@ export default function RoleSwitcher({ user, onSwitchRole, onLogout }) {
                       <button
                         key={lang.code}
                         onClick={() => handleLanguageChange(lang.code)}
-                        className={`flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md border text-xs font-medium transition-all cursor-pointer ${
+                        title={lang.nativeLabel}
+                        className={`flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md border text-xs font-semibold transition-all cursor-pointer ${
                           active
                             ? 'bg-accent-blue/15 border-accent-blue/40 text-accent-blue'
                             : 'bg-navy-800 border-navy-700 text-navy-300 hover:text-white'
                         }`}
                       >
                         <span>{lang.flag}</span>
-                        <span>{lang.nativeLabel}</span>
+                        <span className="tracking-wide">{lang.shortCode}</span>
                         {active && <Check size={11} />}
                       </button>
                     );

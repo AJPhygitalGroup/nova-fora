@@ -14,6 +14,7 @@
  */
 import { useEffect, useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import {
   ArrowLeft, X, Camera, Check, AlertCircle, Loader2, ChevronLeft, ChevronRight,
   Wrench, ThumbsUp, ThumbsDown, KeyRound, Gauge, ClipboardList,
@@ -26,6 +27,7 @@ import {
 import { canApproveDefects } from '../lib/permissions';
 
 export default function LiveInspectionReportCard({ inspection, user, onClose, onCreateWO }) {
+  const { t } = useTranslation('wizard');
   const [detail, setDetail] = useState(null);
   const [inspectionPhotos, setInspectionPhotos] = useState([]);
   // photosByDefect: { defectId: [PhotoResponse] }
@@ -134,7 +136,7 @@ export default function LiveInspectionReportCard({ inspection, user, onClose, on
   // ─── Render ────────────────────────────────────────
   if (loading) {
     return (
-      <Shell onClose={onClose} title="Loading inspection…">
+      <Shell onClose={onClose} title={t('liveReport.loading', 'Loading inspection…')}>
         <div className="flex items-center justify-center py-16">
           <Loader2 size={32} className="text-accent-blue animate-spin" />
         </div>
@@ -144,7 +146,7 @@ export default function LiveInspectionReportCard({ inspection, user, onClose, on
 
   if (error) {
     return (
-      <Shell onClose={onClose} title="Error">
+      <Shell onClose={onClose} title={t('common:status.error', 'Error')}>
         <div className="flex flex-col items-center gap-3 py-16">
           <AlertCircle size={32} className="text-accent-red" />
           <p className="text-sm text-navy-300 max-w-md text-center">{error}</p>
@@ -162,9 +164,9 @@ export default function LiveInspectionReportCard({ inspection, user, onClose, on
       <div className="max-w-3xl mx-auto px-4 py-5 space-y-4">
         {/* Top stats */}
         <div className="grid grid-cols-3 gap-2">
-          <StatPill icon={Gauge} label="Odometer" value={detail.odometerMiles ? `${detail.odometerMiles.toLocaleString()} mi` : '—'} />
-          <StatPill icon={KeyRound} label="Keys" value={detail.keysReceived ?? '—'} />
-          <StatPill icon={ClipboardList} label="Result" value={detail.result} resultValue={detail.result} />
+          <StatPill icon={Gauge} label={t('liveReport.odometer', 'Odometer')} value={detail.odometerMiles ? `${detail.odometerMiles.toLocaleString()} mi` : '—'} />
+          <StatPill icon={KeyRound} label={t('liveReport.keys', 'Keys')} value={detail.keysReceived ?? '—'} />
+          <StatPill icon={ClipboardList} label={t('liveReport.result', 'Result')} value={detail.result} resultValue={detail.result} />
         </div>
 
         {/* Inspection-level photos (odometer, overview) */}
@@ -206,7 +208,7 @@ export default function LiveInspectionReportCard({ inspection, user, onClose, on
         ) : (
           <div className="rounded-xl border border-navy-700/40 bg-navy-900/30 p-5 text-center">
             <Camera size={20} className="text-navy-500 mx-auto mb-2" />
-            <p className="text-xs text-navy-400">No inspection-level photos (odometer / overview)</p>
+            <p className="text-xs text-navy-400">{t('liveReport.noInspectionPhotos', 'No inspection-level photos (odometer / overview)')}</p>
           </div>
         )}
 
@@ -214,8 +216,8 @@ export default function LiveInspectionReportCard({ inspection, user, onClose, on
         {defects.length === 0 ? (
           <div className="rounded-xl border border-accent-green/30 bg-accent-green/5 p-5 text-center">
             <Check size={24} className="text-accent-green mx-auto mb-2" />
-            <p className="text-sm text-white font-semibold">All sections passed</p>
-            <p className="text-xs text-navy-400 mt-0.5">No defects reported in this inspection.</p>
+            <p className="text-sm text-white font-semibold">{t('liveReport.allPassed', 'All sections passed')}</p>
+            <p className="text-xs text-navy-400 mt-0.5">{t('liveReport.noDefects', 'No defects reported in this inspection.')}</p>
           </div>
         ) : (
           <div className="space-y-3">
@@ -252,7 +254,7 @@ export default function LiveInspectionReportCard({ inspection, user, onClose, on
 
         {detail.notes && (
           <div className="rounded-lg border border-navy-700 bg-navy-900/40 p-3">
-            <div className="text-[10px] uppercase tracking-wide text-navy-400 mb-1">Inspector notes</div>
+            <div className="text-[10px] uppercase tracking-wide text-navy-400 mb-1">{t('liveReport.inspectorNotes', 'Inspector notes')}</div>
             <p className="text-sm text-navy-200 whitespace-pre-wrap">{detail.notes}</p>
           </div>
         )}

@@ -22,6 +22,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useTranslation, Trans } from 'react-i18next';
 import {
   ArrowLeft, ArrowRight, X, Check, AlertCircle, Loader2,
   ChevronRight, ClipboardList, Trash2, Send, Camera,
@@ -62,6 +63,7 @@ export default function DvicWizard({
   onBack,
   onCancel,
 }) {
+  const { t } = useTranslation('wizard');
   const handleCloseAction = onClose || onCancel;
 
   // Step 1..6
@@ -267,7 +269,7 @@ export default function DvicWizard({
   // ─── Render guards ──────────────────────────────────
   if (tplLoading) {
     return (
-      <Shell title="Loading checklist…" onCancel={handleCloseAction}>
+      <Shell title={t('dvic.shellLoading')} onCancel={handleCloseAction}>
         <div className="flex items-center justify-center py-16">
           <Loader2 size={28} className="text-accent-blue animate-spin" />
         </div>
@@ -277,7 +279,7 @@ export default function DvicWizard({
 
   if (tplError) {
     return (
-      <Shell title="Couldn't load checklist" onCancel={handleCloseAction}>
+      <Shell title={t('dvic.shellLoadError')} onCancel={handleCloseAction}>
         <div className="px-4 py-12 text-center text-sm text-navy-300">
           <AlertCircle size={28} className="text-accent-red mx-auto mb-3" />
           <p>{tplError}</p>
@@ -289,16 +291,16 @@ export default function DvicWizard({
   // Empty template (e.g. EV / Box Truck pending PDFs) — friendly empty state.
   if (!tpl?.sections?.length) {
     return (
-      <Shell title={`No checklist for ${tpl?.vehicleClassLabel || vehicleClass}`} onCancel={handleCloseAction}>
+      <Shell title={t('dvic.shellNoTemplateTitle', { label: tpl?.vehicleClassLabel || vehicleClass })} onCancel={handleCloseAction}>
         <div className="px-4 py-12 max-w-md mx-auto text-center">
           <ClipboardList size={32} className="text-navy-400 mx-auto mb-3" />
           <h3 className="text-base font-semibold text-white mb-2">
-            DVIC checklist not configured yet
+            {t('dvic.shellNoTemplateHeading')}
           </h3>
           <p className="text-sm text-navy-300 mb-4">
-            The Amazon DVIC PDF for <span className="text-white font-mono">{tpl?.vehicleClassLabel || vehicleClass}</span> hasn't
-            been transcribed into the catalog yet. Contact your admin or
-            inspect another vehicle in the meantime.
+            {t('dvic.shellNoTemplateBodyPart1')}{' '}
+            <span className="text-white font-mono">{tpl?.vehicleClassLabel || vehicleClass}</span>
+            {t('dvic.shellNoTemplateBodyPart2')}
           </p>
           <CommittedDefectsList defects={defects} onRemove={onRemoveDefect} />
         </div>
@@ -314,7 +316,7 @@ export default function DvicWizard({
 
   const topCloseHandler = (step === 6 && committedDefect)
     ? async () => {
-        if (window.confirm("Discard this defect and close? You haven't uploaded a photo yet.")) {
+        if (window.confirm(t('dvic.discardWithoutPhotoAndClose'))) {
           await handleRollbackDefect(1);
           handleCloseAction?.();
         }
@@ -324,10 +326,10 @@ export default function DvicWizard({
   return (
     <Shell
       title={step === 1
-        ? `Add defects — ${tpl.vehicleClassLabel}`
+        ? t('dvic.shellTitleStep1', { label: tpl.vehicleClassLabel })
         : step === 6
-          ? `Photo required — ${tpl.vehicleClassLabel}`
-          : `Add defect — ${tpl.vehicleClassLabel}`}
+          ? t('dvic.shellTitlePhoto', { label: tpl.vehicleClassLabel })
+          : t('dvic.shellTitleAddDefect', { label: tpl.vehicleClassLabel })}
       step={step}
       totalSteps={6}
       onCancel={topCloseHandler}
@@ -419,7 +421,7 @@ export default function DvicWizard({
                 onClick={onBack}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-md border border-navy-700 text-navy-300 hover:text-white hover:border-navy-600 cursor-pointer text-sm"
               >
-                <ArrowLeft size={14} /> Back
+                <ArrowLeft size={14} /> {t('dvic.footer.back')}
               </button>
             ) : (
               <span className="w-[80px]" aria-hidden />
@@ -427,20 +429,20 @@ export default function DvicWizard({
           ) : step === 6 ? (
             <button
               onClick={() => {
-                if (window.confirm("Discard this defect? You haven't uploaded a photo yet.")) {
+                if (window.confirm(t('dvic.discardWithoutPhoto'))) {
                   handleRollbackDefect(5);
                 }
               }}
               className="flex items-center gap-1.5 px-3 py-2 rounded-md border border-accent-red/40 bg-accent-red/10 text-accent-red hover:bg-accent-red/20 cursor-pointer text-sm font-semibold"
             >
-              <X size={14} /> Discard
+              <X size={14} /> {t('dvic.footer.discard')}
             </button>
           ) : (
             <button
               onClick={goBack}
               className="flex items-center gap-1.5 px-3 py-2 rounded-md border border-navy-700 text-navy-300 hover:text-white hover:border-navy-600 cursor-pointer text-sm"
             >
-              <ArrowLeft size={14} /> Back
+              <ArrowLeft size={14} /> {t('dvic.footer.back')}
             </button>
           )}
 
@@ -452,8 +454,10 @@ export default function DvicWizard({
             >
               {submitting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
               {submitting
-                ? 'Submitting…'
-                : `Complete Inspection${defects.length > 0 ? ` (${defects.length})` : ''}`}
+                ? t('dvic.footer.submitting')
+                : (defects.length > 0
+                    ? t('dvic.footer.completeInspectionWithCount', { count: defects.length })
+                    : t('dvic.footer.completeInspection'))}
             </button>
           )}
           {step > 1 && step < 5 && (
@@ -462,7 +466,7 @@ export default function DvicWizard({
               disabled={!canGoNext(step)}
               className="flex items-center gap-1.5 px-4 py-2 rounded-md bg-accent-blue text-white font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-sm"
             >
-              Next <ArrowRight size={14} />
+              {t('dvic.footer.next')} <ArrowRight size={14} />
             </button>
           )}
           {step === 5 && (
@@ -472,20 +476,22 @@ export default function DvicWizard({
               className="flex items-center gap-1.5 px-4 py-2 rounded-md bg-accent-blue text-white font-semibold hover:opacity-90 disabled:opacity-40 cursor-pointer text-sm"
             >
               {defectSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Camera size={14} />}
-              {defectSubmitting ? 'Saving…' : 'Continue → photo'}
+              {defectSubmitting ? t('dvic.footer.saving') : t('dvic.footer.continueToPhoto')}
             </button>
           )}
           {step === 6 && (
             <button
               onClick={handleFinalizeDefectWithPhoto}
               disabled={photoCount < 1}
-              title={photoCount < 1 ? 'Upload at least one photo to continue' : ''}
+              title={photoCount < 1 ? t('dvic.footer.uploadAtLeastOneTip') : ''}
               className="flex items-center gap-1.5 px-4 py-2 rounded-md bg-accent-green text-white font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-sm"
             >
               <Check size={14} />
               {photoCount < 1
-                ? 'Upload a photo to save'
-                : `Save defect${photoCount > 1 ? ` (${photoCount} photos)` : ''}`}
+                ? t('dvic.footer.uploadAPhotoToSave')
+                : (photoCount > 1
+                    ? t('dvic.footer.saveDefectWithCount', { count: photoCount })
+                    : t('dvic.footer.saveDefect'))}
             </button>
           )}
         </div>
@@ -499,6 +505,7 @@ export default function DvicWizard({
 // Step 6 — Photo gate (mandatory)
 // ═════════════════════════════════════════════════════
 function PhotoGateStep({ defect, photoCount, onPhotoChanged }) {
+  const { t } = useTranslation('wizard');
   const positionLabel = defect.positionLabel || '';
   return (
     <div className="space-y-4">
@@ -546,13 +553,13 @@ function PhotoGateStep({ defect, photoCount, onPhotoChanged }) {
         <div className="text-xs">
           <div className="font-semibold text-white mb-0.5">
             {photoCount >= 1
-              ? `Photo${photoCount === 1 ? '' : 's'} attached — ready to save`
-              : 'Photo required'}
+              ? t('dvic.photoGate.ready', { count: photoCount })
+              : t('dvic.photoGate.required')}
           </div>
           <p className="text-navy-300">
             {photoCount >= 1
-              ? 'Tap "Save defect" below to commit. You can add more photos before saving.'
-              : 'Take or upload at least one photo of the defect. Without a photo this defect can\'t be saved.'}
+              ? t('dvic.photoGate.readyHint')
+              : t('dvic.photoGate.requiredHint')}
           </p>
         </div>
       </div>
@@ -565,8 +572,7 @@ function PhotoGateStep({ defect, photoCount, onPhotoChanged }) {
       />
 
       <p className="text-[11px] text-navy-500 italic">
-        Tip: take a wide shot first so the location of the defect is obvious,
-        then a close-up. Compression happens locally — uploads stay fast on 4G.
+        {t('dvic.photoGate.tip')}
       </p>
     </div>
   );
@@ -577,13 +583,14 @@ function PhotoGateStep({ defect, photoCount, onPhotoChanged }) {
 // Committed defects list (step 1 inline)
 // ═════════════════════════════════════════════════════
 function CommittedDefectsList({ defects, onRemove }) {
+  const { t } = useTranslation('wizard');
   if (!defects || defects.length === 0) {
     return (
       <div className="mt-6 px-3 py-4 rounded-lg border border-dashed border-navy-700 bg-navy-900/30 text-center">
         <p className="text-[11px] text-navy-400">
-          No defects added yet. Tap a section above to start, or hit{' '}
-          <span className="text-accent-green font-semibold">Complete Inspection</span>{' '}
-          if everything checks out.
+          {t('dvic.committedList.emptyPart1')}{' '}
+          <span className="text-accent-green font-semibold">{t('dvic.footer.completeInspection')}</span>{' '}
+          {t('dvic.committedList.emptyPart2')}
         </p>
       </div>
     );
@@ -593,7 +600,7 @@ function CommittedDefectsList({ defects, onRemove }) {
       <div className="flex items-center gap-2 mb-2">
         <ClipboardList size={14} className="text-accent-blue" />
         <h4 className="text-xs font-semibold text-white">
-          Defects added <span className="text-navy-400 font-normal">({defects.length})</span>
+          {t('dvic.committedList.headingFmt', { count: defects.length })}
         </h4>
       </div>
       <ul className="space-y-1.5">
@@ -628,7 +635,7 @@ function CommittedDefectsList({ defects, onRemove }) {
               <button
                 onClick={() => onRemove(d)}
                 className="text-navy-400 hover:text-accent-red p-1 -mr-1 rounded shrink-0"
-                title="Remove defect"
+                title={t('dvic.committedList.removeTitle')}
               >
                 <Trash2 size={12} />
               </button>
@@ -714,11 +721,12 @@ function Pane({ children }) {
 // Step 1 — Section picker (6 tiles, hide empty sections)
 // ═════════════════════════════════════════════════════
 function SectionPicker({ sections, value, onChange }) {
+  const { t } = useTranslation('wizard');
   return (
     <div>
-      <h3 className="text-sm font-semibold text-white mb-1">Where on the vehicle?</h3>
+      <h3 className="text-sm font-semibold text-white mb-1">{t('dvic.section.heading')}</h3>
       <p className="text-xs text-navy-400 mb-4">
-        Pick the section the inspector is currently looking at.
+        {t('dvic.section.hint')}
       </p>
       <div className="grid grid-cols-2 gap-2">
         {sections.map((s) => {
@@ -737,7 +745,7 @@ function SectionPicker({ sections, value, onChange }) {
                 <span className="text-2xl shrink-0">{s.icon}</span>
                 <div className="min-w-0">
                   <div className="text-sm font-semibold text-white truncate">{s.label}</div>
-                  <div className="text-[10px] text-navy-400">{s.itemCount} checks</div>
+                  <div className="text-[10px] text-navy-400">{t('dvic.section.checksCount', { count: s.itemCount })}</div>
                 </div>
               </div>
               <div className="text-[11px] text-navy-300 line-clamp-2">{s.description}</div>
@@ -754,6 +762,7 @@ function SectionPicker({ sections, value, onChange }) {
 // Step 2 — Item picker (rows grouped by part_category)
 // ═════════════════════════════════════════════════════
 function ItemPicker({ section, value, onChange }) {
+  const { t } = useTranslation('wizard');
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
@@ -798,10 +807,10 @@ function ItemPicker({ section, value, onChange }) {
                         )}
                         {!it.position && (it.validPositions?.length || 0) > 1 && (
                           <span className="text-[10px] text-navy-500">
-                            · {it.validPositions.length} positions
+                            · {t('dvic.item.positionsCount', { count: it.validPositions.length })}
                           </span>
                         )}
-                        {it.requiresDetails && <span className="text-[10px] text-navy-500">· details required</span>}
+                        {it.requiresDetails && <span className="text-[10px] text-navy-500">· {t('dvic.item.detailsRequired')}</span>}
                       </div>
                     </div>
                     {selected && <ChevronRight size={14} className="text-accent-blue shrink-0 mt-1" />}
@@ -821,11 +830,12 @@ function ItemPicker({ section, value, onChange }) {
 // Step 3 — Position picker
 // ═════════════════════════════════════════════════════
 function PositionPicker({ positions, value, onChange }) {
+  const { t } = useTranslation('wizard');
   return (
     <div>
-      <h3 className="text-sm font-semibold text-white mb-1">Which position?</h3>
+      <h3 className="text-sm font-semibold text-white mb-1">{t('dvic.position.heading')}</h3>
       <p className="text-xs text-navy-400 mb-4">
-        Pick where on the vehicle the defect is.
+        {t('dvic.position.hint')}
       </p>
       <div className="grid grid-cols-2 gap-2">
         {positions.map((id) => {
@@ -855,6 +865,7 @@ function PositionPicker({ positions, value, onChange }) {
 // Step 4 — Details form (JSON Schema-driven)
 // ═════════════════════════════════════════════════════
 function DetailsForm({ item, details, vehicleClass, positionId, onChange }) {
+  const { t } = useTranslation('wizard');
   const schema = item.detailsSchema || {};
   const props = schema.properties || {};
   const baseRequired = new Set(schema.required || []);
@@ -867,9 +878,9 @@ function DetailsForm({ item, details, vehicleClass, positionId, onChange }) {
 
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-semibold text-white mb-1">Extra details</h3>
+      <h3 className="text-sm font-semibold text-white mb-1">{t('dvic.details.heading')}</h3>
       <p className="text-xs text-navy-400 mb-3">
-        Required to fully describe this defect.
+        {t('dvic.details.hint')}
       </p>
       {visibleEntries.map(([key, def]) => {
         const isRequired = baseRequired.has(key)
@@ -890,6 +901,7 @@ function DetailsForm({ item, details, vehicleClass, positionId, onChange }) {
 }
 
 function FieldInput({ name, def, required, value, onChange }) {
+  const { t } = useTranslation('wizard');
   const label = def.title || name.replace(/_/g, ' ');
 
   // Number input
@@ -910,7 +922,7 @@ function FieldInput({ name, def, required, value, onChange }) {
         />
         {(def.minimum !== undefined || def.maximum !== undefined) && (
           <p className="text-[10px] text-navy-500 mt-0.5">
-            Range: {def.minimum ?? '—'} to {def.maximum ?? '—'}
+            {t('dvic.details.rangeFmt', { min: def.minimum ?? '—', max: def.maximum ?? '—' })}
           </p>
         )}
       </div>
@@ -934,7 +946,7 @@ function FieldInput({ name, def, required, value, onChange }) {
                   : 'border-navy-700 bg-navy-900 text-navy-300 hover:text-white'
               }`}
             >
-              {v ? 'Yes' : 'No'}
+              {v ? t('dvic.details.yes') : t('dvic.details.no')}
             </button>
           ))}
         </div>
@@ -953,7 +965,7 @@ function FieldInput({ name, def, required, value, onChange }) {
         <label className="text-xs font-semibold text-navy-300 mb-1 block capitalize">
           {label}{required && <span className="text-accent-red">*</span>}
         </label>
-        <p className="text-[10px] text-navy-500 mb-1.5">Pick one or more.</p>
+        <p className="text-[10px] text-navy-500 mb-1.5">{t('dvic.details.pickOneOrMore')}</p>
         <div className="flex flex-wrap gap-1.5">
           {def.items.enum.map((opt) => {
             const selected = arr.includes(opt);
@@ -1005,12 +1017,12 @@ function FieldInput({ name, def, required, value, onChange }) {
   const datePresets = [
     {
       match: /^\^\(0\[1-9\]\|1\[0-2\]\)\\\/\(0\[1-9\]\|\[12\]\\d\|3\[01\]\)\\\/\\d\{4\}\$$/,
-      placeholder: 'MM/DD/YYYY', helper: 'US date format — month/day/year, e.g. 04/19/2026',
+      placeholder: 'MM/DD/YYYY', helper: t('dvic.details.datePresetUS'),
       maxLength: 10, autoFormat: 'date',
     },
     {
       match: /^\^\(0\[1-9\]\|1\[0-2\]\)\\\/\\d\{4\}\$$/,
-      placeholder: 'MM/YYYY', helper: 'Month/year on the sticker, e.g. 04/2026',
+      placeholder: 'MM/YYYY', helper: t('dvic.details.datePresetMonth'),
       maxLength: 7, autoFormat: 'month',
     },
   ];
@@ -1048,7 +1060,7 @@ function FieldInput({ name, def, required, value, onChange }) {
         <p className="text-[10px] text-navy-500 mt-0.5">{preset.helper}</p>
       ) : def.pattern ? (
         <p className="text-[10px] text-navy-500 mt-0.5">
-          Pattern: <span className="font-mono">{def.pattern}</span>
+          {t('dvic.details.patternHint', { pattern: def.pattern })}
         </p>
       ) : null}
     </div>
@@ -1109,6 +1121,7 @@ function initialDetailsFromSchema(item) {
 // Step 5 — Review + commit
 // ═════════════════════════════════════════════════════
 function ReviewStep({ item, position, details, notes, onNotesChange, submitError }) {
+  const { t } = useTranslation('wizard');
   const positionLabel = position?.label
     || item.positionLabel
     || (item.position ? item.position.replace(/_/g, ' ') : null);
@@ -1140,7 +1153,7 @@ function ReviewStep({ item, position, details, notes, onNotesChange, submitError
               )}
               {item.needsReview && (
                 <span className="text-[10px] text-accent-orange/80 italic">
-                  · Severity pending review
+                  · {t('dvic.review.severityPending')}
                 </span>
               )}
             </div>
@@ -1148,7 +1161,7 @@ function ReviewStep({ item, position, details, notes, onNotesChange, submitError
             {Object.keys(details).length > 0 && (
               <div className="mt-2 pt-2 border-t border-navy-800">
                 <div className="text-[10px] uppercase tracking-wide text-navy-500 mb-1">
-                  Details
+                  {t('dvic.review.detailsHeading')}
                 </div>
                 <div className="space-y-0.5 text-[11px]">
                   {Object.entries(details).map(([k, v]) => (
@@ -1168,17 +1181,17 @@ function ReviewStep({ item, position, details, notes, onNotesChange, submitError
 
       <div>
         <label className="text-[10px] uppercase tracking-wide text-navy-400 block mb-1.5">
-          Notes (optional)
+          {t('dvic.review.notesLabel')}
         </label>
         <textarea
           value={notes}
           onChange={(e) => onNotesChange(e.target.value)}
-          placeholder="Anything the structured fields don't cover…"
+          placeholder={t('dvic.review.notesPlaceholder')}
           rows={2}
           className="w-full rounded-md px-3 py-2 bg-navy-900 border border-navy-700 text-white text-sm outline-none focus:border-accent-blue resize-none"
         />
         <p className="text-[10px] text-navy-500 mt-1">
-          Target usage: under 5% of defects.
+          {t('dvic.review.notesUsageHint')}
         </p>
       </div>
 

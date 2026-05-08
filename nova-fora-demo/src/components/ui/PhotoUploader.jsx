@@ -12,6 +12,7 @@
  * Target: <2 s end-to-end on 4G for a typical 4 MB phone photo.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import imageCompression from 'browser-image-compression';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Camera, X, AlertCircle, RotateCcw, Check } from 'lucide-react';
@@ -59,6 +60,7 @@ export default function PhotoUploader({
   readOnly = false,
   maxPhotos = null,
 }) {
+  const { t } = useTranslation('wizard');
   // Each item: { id?, url?, preview?, status, error?, _retryFile?, tempId? }
   // - id/url come from the server after commit
   // - preview is a local blob URL for optimistic display
@@ -304,7 +306,7 @@ export default function PhotoUploader({
                   transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
                   className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full"
                 />
-                <span className="text-[10px] text-white font-semibold">Compressing</span>
+                <span className="text-[10px] text-white font-semibold">{t('photoUploader.compressing', 'Compressing')}</span>
               </Overlay>
             )}
             {p.status === 'uploading' && (
@@ -314,7 +316,7 @@ export default function PhotoUploader({
                   transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
                   className="w-5 h-5 border-2 border-accent-blue/40 border-t-accent-blue rounded-full"
                 />
-                <span className="text-[10px] text-white font-semibold">Uploading</span>
+                <span className="text-[10px] text-white font-semibold">{t('photoUploader.uploading', 'Uploading')}</span>
               </Overlay>
             )}
             {p.status === 'error' && (
@@ -335,7 +337,7 @@ export default function PhotoUploader({
               <button
                 onClick={() => handleDelete(p)}
                 className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 text-white hover:bg-black/80 flex items-center justify-center cursor-pointer"
-                title="Delete photo"
+                title={t('photoUploader.deleteTitle')}
               >
                 <X size={12} />
               </button>
@@ -350,7 +352,7 @@ export default function PhotoUploader({
                     ? 'w-7 h-7 ring-2 ring-accent-green/50'
                     : 'w-5 h-5'
                 }`}
-                title="Synced"
+                title={t('photoUploader.synced', 'Synced')}
               >
                 <Check size={p.justCompletedAt ? 16 : 11} strokeWidth={3} />
               </motion.div>
@@ -363,10 +365,10 @@ export default function PhotoUploader({
           <button
             onClick={() => inputRef.current?.click()}
             className="aspect-square rounded-lg border-2 border-dashed border-navy-600 hover:border-accent-blue hover:bg-accent-blue/5 flex flex-col items-center justify-center gap-1 text-navy-400 hover:text-accent-blue cursor-pointer transition-colors"
-            title="Take photo or choose from gallery"
+            title={t('photoUploader.takeOrChoose', 'Take photo or choose from gallery')}
           >
             <Camera size={20} />
-            <span className="text-[10px] font-semibold">Add photo</span>
+            <span className="text-[10px] font-semibold">{t('photoUploader.addPhoto', 'Add photo')}</span>
           </button>
         )}
       </div>

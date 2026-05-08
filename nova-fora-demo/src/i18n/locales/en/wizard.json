@@ -1,1 +1,184 @@
-{}
+{
+  "dvic": {
+    "shellLoading": "Loading checklist…",
+    "shellLoadError": "Couldn't load checklist",
+    "shellNoTemplateTitle": "No checklist for {{label}}",
+    "shellNoTemplateHeading": "DVIC checklist not configured yet",
+    "shellNoTemplateBodyPart1": "The Amazon DVIC PDF for",
+    "shellNoTemplateBodyPart2": "hasn't been transcribed into the catalog yet. Contact your admin or inspect another vehicle in the meantime.",
+    "shellTitleStep1": "Add defects — {{label}}",
+    "shellTitlePhoto": "Photo required — {{label}}",
+    "shellTitleAddDefect": "Add defect — {{label}}",
+    "discardWithoutPhotoAndClose": "Discard this defect and close? You haven't uploaded a photo yet.",
+    "discardWithoutPhoto": "Discard this defect? You haven't uploaded a photo yet.",
+    "footer": {
+      "back": "Back",
+      "next": "Next",
+      "discard": "Discard",
+      "completeInspection": "Complete Inspection",
+      "completeInspectionWithCount": "Complete Inspection ({{count}})",
+      "submitting": "Submitting…",
+      "continueToPhoto": "Continue → photo",
+      "saving": "Saving…",
+      "uploadAPhotoToSave": "Upload a photo to save",
+      "saveDefect": "Save defect",
+      "saveDefectWithCount": "Save defect ({{count}} photos)",
+      "uploadAtLeastOneTip": "Upload at least one photo to continue"
+    },
+    "section": {
+      "heading": "Where on the vehicle?",
+      "hint": "Pick the section the inspector is currently looking at.",
+      "checksCount": "{{count}} checks"
+    },
+    "item": {
+      "positionsCount": "{{count}} positions",
+      "detailsRequired": "details required"
+    },
+    "position": {
+      "heading": "Which position?",
+      "hint": "Pick where on the vehicle the defect is."
+    },
+    "details": {
+      "heading": "Extra details",
+      "hint": "Required to fully describe this defect.",
+      "pickOneOrMore": "Pick one or more.",
+      "yes": "Yes",
+      "no": "No",
+      "rangeFmt": "Range: {{min}} to {{max}}",
+      "patternHint": "Pattern: {{pattern}}",
+      "datePresetUS": "US date format — month/day/year, e.g. 04/19/2026",
+      "datePresetMonth": "Month/year on the sticker, e.g. 04/2026"
+    },
+    "review": {
+      "detailsHeading": "Details",
+      "notesLabel": "Notes (optional)",
+      "notesPlaceholder": "Anything the structured fields don't cover…",
+      "notesUsageHint": "Target usage: under 5% of defects.",
+      "severityPending": "Severity pending review"
+    },
+    "photoGate": {
+      "ready_one": "Photo attached — ready to save",
+      "ready_other": "Photos attached — ready to save",
+      "required": "Photo required",
+      "readyHint": "Tap \"Save defect\" below to commit. You can add more photos before saving.",
+      "requiredHint": "Take or upload at least one photo of the defect. Without a photo this defect can't be saved.",
+      "tip": "Tip: take a wide shot first so the location of the defect is obvious, then a close-up. Compression happens locally — uploads stay fast on 4G."
+    },
+    "committedList": {
+      "emptyPart1": "No defects added yet. Tap a section above to start, or hit",
+      "emptyPart2": "if everything checks out.",
+      "headingFmt": "Defects added ({{count}})",
+      "removeTitle": "Remove defect"
+    }
+  },
+
+  "createInspection": {
+    "shellTitle": "QC DVIC Inspection",
+    "shellSubtitleFmt": "Step {{step}} of 6",
+    "closeTitle": "Close",
+    "startInspection": "Start",
+    "footerCaption": {
+      "step1": "Pick the DSP",
+      "step2": "Record keys",
+      "step3": "Pick a vehicle",
+      "step4": "Start or skip",
+      "step5": "Odometer"
+    },
+    "step1": {
+      "heading": "Which DSP are you servicing today?",
+      "hint": "Pick the fleet whose van you're about to inspect.",
+      "empty": "You don't have access to any DSPs with vehicles assigned.",
+      "emptyHint": "Contact your admin to be assigned to a DSP fleet.",
+      "vansFmt_one": "{{count}} van in fleet",
+      "vansFmt_other": "{{count}} vans in fleet"
+    },
+    "step2": {
+      "heading": "Did you receive the keys?",
+      "hint": "Confirm how many key sets the DSP handed you before you start inspecting.",
+      "keyCountLabel": "Key sets received",
+      "confirmCta": "Yes, I have the keys",
+      "confirmedBadge": "Keys received",
+      "changeBtn": "Change"
+    },
+    "step3": {
+      "heading": "Pick a vehicle to inspect",
+      "empty": "No vehicles available for this DSP yet.",
+      "searchPlaceholder": "Fleet ID, VIN, plate…",
+      "alreadyInspected": "Already inspected today"
+    },
+    "step4": {
+      "heading": "Ready to inspect this vehicle?",
+      "startBtn": "Start inspection",
+      "orDivider": "Or",
+      "notInspectedHeading": "Vehicle not inspected",
+      "notInspectedHint": "Pick a reason and we'll log the inspection as incomplete.",
+      "reasonLabel": "Reason",
+      "submitIncomplete": "Submit incomplete"
+    },
+    "step5": {
+      "heading": "Odometer reading",
+      "placeholder": "e.g. 86209",
+      "photoLabel": "Odometer photo (optional)",
+      "photoHint": "A wide shot of the dashboard helps disputes."
+    },
+    "step6": {
+      "heading": "Review & submit",
+      "ready": "Ready to submit"
+    },
+    "submittedTitle": "Inspection submitted",
+    "completedTitle": "Fleet inspection complete",
+    "fleetEmptyTitle": "Vans not yet inspected",
+    "fleetPendingFmt": "{{count}} pending in {{name}}",
+    "vehicle": {
+      "searchPlaceholder": "Fleet ID, VIN, plate…",
+      "orDivider": "Or",
+      "notInspectedHeading": "Vehicle not inspected",
+      "removeDefectTitle": "Remove defect"
+    },
+    "odometer": {
+      "heading": "Odometer reading",
+      "placeholder": "e.g. 86209",
+      "missingTip": "Enter the current mileage first"
+    },
+    "review": {
+      "dspLabel": "DSP",
+      "vehicleLabel": "Vehicle",
+      "odometerLabel": "Odometer",
+      "defectsLabel": "Defects",
+      "ready": "Ready to submit"
+    },
+    "session": {
+      "label": "This session",
+      "anotherDspTitle": "Inspect another DSP",
+      "anotherDspHint": "Start a new session for a different fleet"
+    },
+    "doneCard": {
+      "inspected": "Inspected",
+      "flagged": "Flagged"
+    }
+  },
+
+  "liveReport": {
+    "title": "Live inspection report",
+    "loading": "Loading inspection…",
+    "odometer": "Odometer",
+    "keys": "Keys",
+    "result": "Result",
+    "noInspectionPhotos": "No inspection-level photos (odometer / overview)",
+    "allPassed": "All sections passed",
+    "noDefects": "No defects reported in this inspection.",
+    "inspectorNotes": "Inspector notes"
+  },
+
+  "photoUploader": {
+    "noPhotos": "No photos uploaded yet.",
+    "tapToAdd": "Tap to add a photo",
+    "uploading": "Uploading",
+    "compressing": "Compressing",
+    "deleteTitle": "Delete photo",
+    "synced": "Synced",
+    "takeOrChoose": "Take photo or choose from gallery",
+    "addPhoto": "Add photo",
+    "addAnother": "Add another"
+  }
+}
