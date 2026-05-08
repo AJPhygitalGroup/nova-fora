@@ -68,10 +68,95 @@ JWT_ACCESS_TOKEN_EXPIRE_MINUTES=60
 JWT_REFRESH_TOKEN_EXPIRE_DAYS=30
 APP_URL=http://187.127.251.190          # se actualiza cuando el frontend tenga dominio
 API_URL=http://187.127.251.190
+
+# ── SMTP (invitations + future notifications) ─────────────────
+# Si quedan vacías, el email service hace log a stdout y la UI del admin
+# muestra el botón "Copy invite link" como fallback manual.
+SMTP_HOST=                              # smtp.gmail.com / smtp.sendgrid.net / etc
+SMTP_PORT=587                           # 587 STARTTLS o 465 SSL
+SMTP_USER=
+SMTP_PASSWORD=
+SMTP_FROM=Nova Fora <noreply@example.com>
+SMTP_USE_TLS=true                       # false cuando el provider usa SSL/465
 ```
 
 > Las passwords reales están en EasyPanel UI del servicio correspondiente (tab Environment).
 > Para rotar: cambias la var en el servicio afectado → redeploy.
+
+## Configurar SMTP para invitaciones
+
+El sistema de invitaciones (`/auth/invitations/*`) envía emails con el link
+de aceptación. Sin SMTP configurado el código no rompe — loguea el mensaje
++ link a stdout y la UI muestra "SMTP not configured — copy link" para que
+el admin pegue el link manualmente.
+
+### Setup rápido por provider
+
+**Gmail (más rápido para arrancar, < 100 emails/día):**
+1. Activá 2FA en la cuenta Google.
+2. https://myaccount.google.com/apppasswords → generá un App Password "Nova Fora".
+3. Vars en EasyPanel:
+   ```
+   SMTP_HOST=smtp.gmail.com
+   SMTP_PORT=587
+   SMTP_USER=tucuenta@gmail.com
+   SMTP_PASSWORD=<16-char app password, sin espacios>
+   SMTP_FROM=Nova Fora <tucuenta@gmail.com>
+   SMTP_USE_TLS=true
+   ```
+
+**SendGrid (Free 100/día, $20/mes 50K):**
+1. Sign up + Single Sender Verification (o Domain Authentication).
+2. Settings → API Keys → Create → "Mail Send" full access.
+3. Vars: `SMTP_HOST=smtp.sendgrid.net`, `SMTP_PORT=587`, `SMTP_USER=apikey`
+   (literal), `SMTP_PASSWORD=SG.xxx...`, `SMTP_USE_TLS=true`.
+
+**Resend (Free 3K/mes, $20/mes 50K — más simple que SendGrid):**
+1. Sign up + verificá un dominio.
+2. Dashboard → API Keys → Create.
+3. Vars: `SMTP_HOST=smtp.resend.com`, `SMTP_PORT=465`, `SMTP_USER=resend`,
+   `SMTP_PASSWORD=re_xxx...`, **`SMTP_USE_TLS=false`** (Resend usa SSL en 465).
+
+**AWS SES (volumen alto, $0.10 / 1000 emails):**
+1. Console → SES → verificá dominio + sacá la cuenta del sandbox (production access).
+2. SES → SMTP settings → Create SMTP credentials.
+3. Vars: `SMTP_HOST=email-smtp.<region>.amazonaws.com`, `SMTP_PORT=587`,
+   `SMTP_USER=AKIA...`, `SMTP_PASSWORD=BP...`, `SMTP_USE_TLS=true`.
+
+### Aplicar las vars
+
+EasyPanel → `nova-fora` → `api` service → tab **Environment** → **Add variable**
+para cada una → **Save** → tab **Deployments** → **Deploy** (~1-3 min).
+
+### Verificar que funciona
+
+Por SSH al VPS:
+
+```bash
+# Confirmar que las vars están seteadas
+docker service inspect nova-fora_api \
+  --format '{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}' \
+  | grep SMTP
+
+# Test directo desde el container (cambiar tu-email@gmail.com)
+docker exec -it $(docker ps -qf name=nova-fora_api) python -c "
+from app.services.email import send, EmailMessage
+ok = send(EmailMessage(
+  to='tu-email@gmail.com', subject='SMTP test', text='ok', html='<p>ok</p>',
+))
+print('OK' if ok else 'FAIL — ver logs')
+"
+
+# Logs en vivo mientras se crea una invitación desde la UI
+docker service logs -f nova-fora_api | grep -iE "email|smtp"
+```
+
+Síntomas en logs:
+- ✅ `INFO ... email sent via SMTP {to: ..., subject: ...}` — funcionando.
+- ❌ `EXCEPTION ... email send failed (fallback to log only)` con el detalle:
+  - `(535, b'5.7.8 Username and Password not accepted')` → Gmail: pediste contraseña normal en vez de App Password.
+  - `[SSL: WRONG_VERSION_NUMBER]` → estás usando STARTTLS (587) cuando el provider necesita SSL (465) o viceversa — ajustá `SMTP_PORT` + `SMTP_USE_TLS`.
+  - `[Errno -2] Name or service not known` → `SMTP_HOST` mal escrito.
 
 ## Acceso SSH (operación / debug)
 
