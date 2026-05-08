@@ -16,6 +16,7 @@
  */
 import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import {
   Building2, Truck, ChevronRight, ArrowLeft, Loader2, AlertCircle,
   Search, Star,
@@ -49,6 +50,7 @@ const ASSIGNED_DSPS_BY_EMAIL = {
 
 
 export default function MyDsps({ user }) {
+  const { t } = useTranslation('fleet');
   const [dsps, setDsps] = useState([]);
   const [vehicles, setVehicles] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -116,7 +118,7 @@ export default function MyDsps({ user }) {
     return (
       <div className="flex items-center justify-center py-24 text-navy-300">
         <Loader2 size={28} className="animate-spin mr-3" />
-        Loading DSPs…
+        {t('myDsps.loading', 'Loading DSPs…')}
       </div>
     );
   }
@@ -125,7 +127,7 @@ export default function MyDsps({ user }) {
     return (
       <div className="rounded-lg border border-accent-red/30 bg-accent-red/10 px-4 py-6 text-center text-accent-red">
         <AlertCircle size={24} className="mx-auto mb-2" />
-        <p className="text-sm font-semibold">Couldn't load DSPs</p>
+        <p className="text-sm font-semibold">{t('myDsps.loadError', "Couldn't load DSPs")}</p>
         <p className="text-xs mt-1">{error}</p>
       </div>
     );
@@ -150,17 +152,21 @@ export default function MyDsps({ user }) {
         <div>
           <h2 className="text-xl font-semibold text-white flex items-center gap-2">
             <Building2 size={22} className="text-accent-blue" />
-            My DSPs
+            {t('myDsps.heading', 'My DSPs')}
           </h2>
           <p className="text-sm text-navy-400 mt-1">
-            {user.roleLabel || user.role} — {assignedDsps.length} DSP{assignedDsps.length === 1 ? '' : 's'} assigned to you for inspections.
+            {t('myDsps.assignedFmt', {
+              count: assignedDsps.length,
+              role: user.roleLabel || user.role,
+              defaultValue: `${user.roleLabel || user.role} — ${assignedDsps.length} DSP${assignedDsps.length === 1 ? '' : 's'} assigned to you for inspections.`,
+            })}
           </p>
         </div>
         <div className="relative">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-navy-400" />
           <input
             type="text"
-            placeholder="Search DSP…"
+            placeholder={t('myDsps.searchPlaceholder', 'Search DSP…')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9 pr-3 py-2 rounded-md bg-navy-900 border border-navy-700 text-white text-sm outline-none focus:border-accent-blue w-64"
@@ -172,7 +178,9 @@ export default function MyDsps({ user }) {
         <div className="rounded-xl border border-dashed border-navy-700 bg-navy-900/40 px-6 py-12 text-center">
           <Building2 size={32} className="mx-auto text-navy-500 mb-2" />
           <p className="text-sm text-navy-300">
-            {search ? `No DSPs match "${search}".` : 'No DSPs assigned yet.'}
+            {search
+              ? t('myDsps.emptyMatchFmt', { search, defaultValue: `No DSPs match "${search}".` })
+              : t('myDsps.emptyAssigned', 'No DSPs assigned yet.')}
           </p>
         </div>
       ) : (
@@ -203,20 +211,20 @@ export default function MyDsps({ user }) {
                   <div className="flex items-center gap-1.5">
                     <Truck size={12} className="text-accent-green" />
                     <span className="text-white font-semibold">{dspVans.length}</span>
-                    <span className="text-navy-400">vans</span>
+                    <span className="text-navy-400">{t('myDsps.vansLabel', 'vans')}</span>
                   </div>
                   {groundedCount > 0 && (
                     <div className="flex items-center gap-1 text-accent-orange">
                       <span className="text-[10px]">⛔</span>
                       <span className="font-semibold">{groundedCount}</span>
-                      <span className="text-navy-400">grounded</span>
+                      <span className="text-navy-400">{t('myDsps.groundedLabel', 'grounded')}</span>
                     </div>
                   )}
                 </div>
 
                 {dsp.isActive === false && (
                   <div className="mt-2 inline-block px-2 py-0.5 rounded-full bg-navy-800 text-navy-400 text-[10px] font-semibold border border-navy-700">
-                    Inactive
+                    {t('myDsps.inactiveBadge', 'Inactive')}
                   </div>
                 )}
               </motion.button>
@@ -226,7 +234,7 @@ export default function MyDsps({ user }) {
       )}
 
       <p className="text-[11px] text-navy-500 italic mt-6">
-        Tap a DSP to see its vans, recent inspections, and pending defects.
+        {t('myDsps.tapHint', 'Tap a DSP to see its vans, recent inspections, and pending defects.')}
       </p>
     </div>
   );
@@ -237,6 +245,7 @@ export default function MyDsps({ user }) {
 // Drill-down — vehicles + quick stats for one DSP
 // ─────────────────────────────────────────────────────
 function DspDetail({ dsp, vehicles, onBack }) {
+  const { t } = useTranslation('fleet');
   const grounded = vehicles.filter((v) => v.grounded);
   const active = vehicles.filter((v) => v.isActive);
 
@@ -247,7 +256,7 @@ function DspDetail({ dsp, vehicles, onBack }) {
           onClick={onBack}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-navy-700 text-navy-300 hover:text-white hover:border-navy-600 cursor-pointer text-sm"
         >
-          <ArrowLeft size={14} /> All DSPs
+          <ArrowLeft size={14} /> {t('myDsps.allDspsBack', 'All DSPs')}
         </button>
         <div className="flex items-center gap-2 min-w-0">
           <Building2 size={20} className="text-accent-blue shrink-0" />
@@ -260,26 +269,26 @@ function DspDetail({ dsp, vehicles, onBack }) {
 
       {/* Quick stat tiles */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <StatTile label="Vans" value={vehicles.length} icon={<Truck size={14} className="text-accent-green" />} />
-        <StatTile label="Active" value={active.length} icon={<Star size={14} className="text-accent-blue" />} />
-        <StatTile label="Grounded" value={grounded.length} icon={<span className="text-[12px]">⛔</span>} accent={grounded.length > 0 ? 'orange' : null} />
-        <StatTile label="Inactive" value={vehicles.length - active.length} />
+        <StatTile label={t('myDsps.stat.vans', 'Vans')} value={vehicles.length} icon={<Truck size={14} className="text-accent-green" />} />
+        <StatTile label={t('myDsps.stat.active', 'Active')} value={active.length} icon={<Star size={14} className="text-accent-blue" />} />
+        <StatTile label={t('myDsps.stat.grounded', 'Grounded')} value={grounded.length} icon={<span className="text-[12px]">⛔</span>} accent={grounded.length > 0 ? 'orange' : null} />
+        <StatTile label={t('myDsps.stat.inactive', 'Inactive')} value={vehicles.length - active.length} />
       </div>
 
       {/* Vehicle list */}
       {vehicles.length === 0 ? (
         <div className="rounded-xl border border-dashed border-navy-700 bg-navy-900/40 px-6 py-12 text-center">
           <Truck size={28} className="mx-auto text-navy-500 mb-2" />
-          <p className="text-sm text-navy-300">No vans on this DSP yet.</p>
+          <p className="text-sm text-navy-300">{t('myDsps.noVansYet', 'No vans on this DSP yet.')}</p>
         </div>
       ) : (
         <div className="rounded-xl border border-navy-700 bg-navy-900/40 overflow-hidden">
           <div className="grid grid-cols-12 gap-2 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-navy-400 border-b border-navy-700/60 bg-navy-900/60">
-            <div className="col-span-2">Fleet ID</div>
-            <div className="col-span-5">Vehicle</div>
-            <div className="col-span-2">Plate</div>
-            <div className="col-span-2 text-right">Mileage</div>
-            <div className="col-span-1 text-right">Status</div>
+            <div className="col-span-2">{t('myDsps.table.fleetId', 'Fleet ID')}</div>
+            <div className="col-span-5">{t('myDsps.table.vehicle', 'Vehicle')}</div>
+            <div className="col-span-2">{t('myDsps.table.plate', 'Plate')}</div>
+            <div className="col-span-2 text-right">{t('myDsps.table.mileage', 'Mileage')}</div>
+            <div className="col-span-1 text-right">{t('myDsps.table.status', 'Status')}</div>
           </div>
           <ul className="divide-y divide-navy-800/60">
             {vehicles.map((v) => (
@@ -297,11 +306,11 @@ function DspDetail({ dsp, vehicles, onBack }) {
                 </div>
                 <div className="col-span-1 text-right">
                   {v.grounded ? (
-                    <span className="inline-block w-2 h-2 rounded-full bg-accent-red" title="Grounded" />
+                    <span className="inline-block w-2 h-2 rounded-full bg-accent-red" title={t('myDsps.statusTitle.grounded', 'Grounded')} />
                   ) : v.isActive ? (
-                    <span className="inline-block w-2 h-2 rounded-full bg-accent-green" title="Active" />
+                    <span className="inline-block w-2 h-2 rounded-full bg-accent-green" title={t('myDsps.statusTitle.active', 'Active')} />
                   ) : (
-                    <span className="inline-block w-2 h-2 rounded-full bg-navy-600" title="Inactive" />
+                    <span className="inline-block w-2 h-2 rounded-full bg-navy-600" title={t('myDsps.statusTitle.inactive', 'Inactive')} />
                   )}
                 </div>
               </li>

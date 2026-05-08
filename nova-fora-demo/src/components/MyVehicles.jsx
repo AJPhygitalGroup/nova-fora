@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import {
   Truck, Plus, Upload, Search, Filter, Edit3, Trash2, MoreVertical,
   X, ArrowRight, ArrowLeft, Check, CheckCircle2, AlertCircle, AlertTriangle, FileSpreadsheet,
@@ -1065,21 +1066,22 @@ function LocationBadge({ v, canEditLocation, onChange }) {
 }
 
 function VehicleTable({ vans, isVendor, canEdit, onRowClick, onCopy, copiedId, onLocationChange }) {
+  const { t } = useTranslation('fleet');
   return (
     <table className="w-full">
       <thead>
         <tr className="border-b border-navy-800 bg-navy-950/40">
-          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">Fleet ID</th>
+          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">{t('myVehicles.table.fleetId', 'Fleet ID')}</th>
           {isVendor && <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">DSP</th>}
-          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">Year / Make / Model</th>
+          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">{t('myVehicles.table.yearMakeModel', 'Year / Make / Model')}</th>
           <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">VIN</th>
-          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">Plate</th>
-          <th className="text-right text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">Mileage</th>
-          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">Class</th>
+          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">{t('myVehicles.table.plate', 'Plate')}</th>
+          <th className="text-right text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">{t('myVehicles.table.mileage', 'Mileage')}</th>
+          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">{t('myVehicles.table.class', 'Class')}</th>
           <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">FMC</th>
-          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">Status</th>
-          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">Location</th>
-          <th className="text-right text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">Actions</th>
+          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">{t('myVehicles.table.status', 'Status')}</th>
+          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">{t('myVehicles.table.location', 'Location')}</th>
+          <th className="text-right text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">{t('myVehicles.table.actions', 'Actions')}</th>
         </tr>
       </thead>
       <tbody>
@@ -1091,7 +1093,7 @@ function VehicleTable({ vans, isVendor, canEdit, onRowClick, onCopy, copiedId, o
             <td className="px-4 py-3 text-sm text-white whitespace-nowrap">{v.year} {v.make} <span className="text-navy-400">{v.model}</span></td>
             <td className="px-4 py-3 text-xs font-mono text-navy-300">{v.vin}</td>
             <td className="px-4 py-3 text-sm text-white whitespace-nowrap">{v.plate}</td>
-            <td className="px-4 py-3 text-sm text-white text-right whitespace-nowrap font-mono">{v.mileage?.toLocaleString() || '—'} mi</td>
+            <td className="px-4 py-3 text-sm text-white text-right whitespace-nowrap font-mono">{v.mileage?.toLocaleString() || '—'} {t('myVehicles.milesShort', 'mi')}</td>
             <td className="px-4 py-3 whitespace-nowrap">
               <Badge variant="gold">
                 {VEHICLE_TYPE_LABEL[v.vehicleClass] || v.vehicleClass}
@@ -1105,9 +1107,9 @@ function VehicleTable({ vans, isVendor, canEdit, onRowClick, onCopy, copiedId, o
             <td className="px-4 py-3 text-sm text-navy-300">{v.fmc}</td>
             <td className="px-4 py-3">
               {v.defectCount === 0 ? (
-                <Badge variant="green"><CheckCircle2 size={9} className="inline mr-0.5" /> Clean</Badge>
+                <Badge variant="green"><CheckCircle2 size={9} className="inline mr-0.5" /> {t('myVehicles.cleanBadge', 'Clean')}</Badge>
               ) : (
-                <Badge variant="gold">{v.defectCount} {v.defectCount === 1 ? 'defect' : 'defects'}</Badge>
+                <Badge variant="gold">{t('myVehicles.defectsBadgeFmt', { count: v.defectCount, defaultValue: `${v.defectCount} ${v.defectCount === 1 ? 'defect' : 'defects'}` })}</Badge>
               )}
             </td>
             <td className="px-4 py-3">
@@ -1117,14 +1119,14 @@ function VehicleTable({ vans, isVendor, canEdit, onRowClick, onCopy, copiedId, o
               <div className="flex items-center justify-end gap-1">
                 <button
                   onClick={(e) => { e.stopPropagation(); onCopy(v); }}
-                  title="Copy details for billing"
+                  title={t('myVehicles.copyDetailsTitle', 'Copy details for billing')}
                   className={`inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-medium transition-all ${
                     copiedId === v.fleetId
                       ? 'bg-accent-green/20 border-accent-green/50 text-accent-green'
                       : 'bg-navy-800 border-navy-700 text-navy-300 hover:text-white hover:border-navy-600'
                   }`}
                 >
-                  {copiedId === v.fleetId ? <><Check size={11} /> Copied</> : <><Copy size={11} /> Copy</>}
+                  {copiedId === v.fleetId ? <><Check size={11} /> {t('myVehicles.copiedButton', 'Copied')}</> : <><Copy size={11} /> {t('myVehicles.copyButton', 'Copy')}</>}
                 </button>
                 {canEdit && <Edit3 size={12} className="text-navy-400" />}
               </div>
@@ -1138,20 +1140,21 @@ function VehicleTable({ vans, isVendor, canEdit, onRowClick, onCopy, copiedId, o
 
 // Mobile card (compact, touch-friendly)
 function VehicleCardMobile({ v, onClick, onCopy, copiedId, isVendor, showDsp, onLocationChange }) {
+  const { t } = useTranslation('fleet');
   return (
     <div className="bg-navy-900/60 border border-navy-700/40 rounded-xl p-3 transition-colors">
       <button onClick={onClick} className="w-full text-left">
         <div className="flex items-center justify-between mb-1 gap-2">
           <span className="text-sm font-semibold text-white">{v.fleetId}</span>
           {v.defectCount === 0
-            ? <Badge variant="green"><CheckCircle2 size={9} className="inline mr-0.5" /> Clean</Badge>
-            : <Badge variant="gold">{v.defectCount} defect{v.defectCount > 1 ? 's' : ''}</Badge>}
+            ? <Badge variant="green"><CheckCircle2 size={9} className="inline mr-0.5" /> {t('myVehicles.cleanBadge', 'Clean')}</Badge>
+            : <Badge variant="gold">{t('myVehicles.defectsBadgeFmt', { count: v.defectCount, defaultValue: `${v.defectCount} defect${v.defectCount > 1 ? 's' : ''}` })}</Badge>}
         </div>
         {showDsp && <div className="text-[11px] text-accent-blue font-medium mb-1">{v.dsp}</div>}
         <div className="text-xs text-white mb-0.5">{v.year} {v.make} {v.model}</div>
         <div className="text-[11px] text-navy-400 font-mono truncate">{v.vin}</div>
         <div className="flex items-center justify-between mt-1.5 text-[11px] gap-2">
-          <span className="text-navy-300 truncate">{v.plate} <span className="text-navy-500">·</span> <span className="text-white font-mono">{v.mileage?.toLocaleString() || '—'} mi</span></span>
+          <span className="text-navy-300 truncate">{v.plate} <span className="text-navy-500">·</span> <span className="text-white font-mono">{v.mileage?.toLocaleString() || '—'} {t('myVehicles.milesShort', 'mi')}</span></span>
           <div className="flex items-center gap-1.5 shrink-0">
             <Badge variant="gold">{VEHICLE_TYPE_LABEL[v.vehicleClass] || v.vehicleClass}</Badge>
           </div>
@@ -1169,7 +1172,7 @@ function VehicleCardMobile({ v, onClick, onCopy, copiedId, isVendor, showDsp, on
               : 'bg-navy-800 border-navy-700 text-navy-300 active:bg-navy-700'
           }`}
         >
-          {copiedId === v.fleetId ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy details</>}
+          {copiedId === v.fleetId ? <><Check size={12} /> {t('myVehicles.copiedButton', 'Copied')}</> : <><Copy size={12} /> {t('myVehicles.copyDetailsTitle', 'Copy details for billing')}</>}
         </button>
       </div>
     </div>
@@ -1182,6 +1185,7 @@ function VehicleCardMobile({ v, onClick, onCopy, copiedId, isVendor, showDsp, on
 // Main Component
 // ============================================================
 export default function MyVehicles({ user }) {
+  const { t } = useTranslation('fleet');
   const mode = getViewMode(user?.role);
   const canEdit = mode === 'owner' || mode === 'admin';
   const isVendor = mode === 'vendor';
@@ -1357,7 +1361,7 @@ export default function MyVehicles({ user }) {
           transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
           className="w-8 h-8 border-2 border-accent-blue/40 border-t-accent-blue rounded-full"
         />
-        <div className="text-sm">Loading fleet from {user?.org || 'your organization'}…</div>
+        <div className="text-sm">{t('myVehicles.loadingFmt', { org: user?.org || 'your organization', defaultValue: `Loading fleet from ${user?.org || 'your organization'}…` })}</div>
       </div>
     );
   }
@@ -1367,13 +1371,13 @@ export default function MyVehicles({ user }) {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center gap-3 px-4 text-center">
         <AlertTriangle size={32} className="text-accent-red" />
-        <div className="text-white font-semibold">Could not load vehicles</div>
+        <div className="text-white font-semibold">{t('myVehicles.loadError', 'Could not load vehicles')}</div>
         <div className="text-sm text-navy-400 max-w-md">{fleetError}</div>
         <button
           onClick={reloadFleet}
           className="mt-2 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-accent-blue/20 border border-accent-blue/40 text-accent-blue hover:bg-accent-blue/30 text-sm cursor-pointer"
         >
-          <RefreshCw size={14} /> Retry
+          <RefreshCw size={14} /> {t('myVehicles.retry', 'Retry')}
         </button>
       </div>
     );
@@ -1396,10 +1400,10 @@ export default function MyVehicles({ user }) {
     );
   }
 
-  const title = isVendor ? 'DSP Vehicles' : 'My Vehicles';
+  const title = isVendor ? t('myVehicles.titleVendor', 'DSP Vehicles') : t('myVehicles.titleOwner', 'My Vehicles');
   const subtitle = isVendor
-    ? 'Fleet directory across your assigned DSPs — copy any vehicle\'s details to your billing system'
-    : 'Fleet management';
+    ? t('myVehicles.subtitleVendor', "Fleet directory across your assigned DSPs — copy any vehicle's details to your billing system")
+    : t('myVehicles.subtitleOwner', 'Fleet management');
 
   return (
     <div>
@@ -1407,21 +1411,21 @@ export default function MyVehicles({ user }) {
         <div className="min-w-0">
           <h2 className="text-2xl font-bold text-white mb-1">{title}</h2>
           <div className="flex items-center gap-2 flex-wrap text-sm">
-            <span className="text-navy-400">{subtitle} &mdash; <span className="text-white font-medium">{totalCount}</span> vans</span>
+            <span className="text-navy-400">{subtitle} &mdash; <span className="text-white font-medium">{totalCount}</span> {t('myVehicles.vansLabel', 'vans')}</span>
             {!isVendor && (
               <>
                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-accent-green/15 border border-accent-green/40 text-accent-green text-xs font-semibold">
-                  <CheckCircle2 size={11} /> {cleanCount} Clean
+                  <CheckCircle2 size={11} /> {t('myVehicles.cleanFmt', { count: cleanCount, defaultValue: `${cleanCount} Clean` })}
                 </span>
                 {defectiveCount > 0 && (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-accent-red/15 border border-accent-red/40 text-accent-red text-xs font-semibold">
-                    <AlertTriangle size={11} /> {defectiveCount} defective
+                    <AlertTriangle size={11} /> {t('myVehicles.defectiveFmt', { count: defectiveCount, defaultValue: `${defectiveCount} defective` })}
                   </span>
                 )}
               </>
             )}
-            {isVendor && <span className="text-navy-400">across <span className="text-white font-medium">{uniqueDsps.length}</span> DSPs</span>}
-            {!isVendor && rentalCount > 0 && <span className="text-navy-400">· <span className="text-accent-purple">{rentalCount} rentals</span></span>}
+            {isVendor && <span className="text-navy-400">{t('myVehicles.acrossDspsFmt', { count: uniqueDsps.length, defaultValue: `across ${uniqueDsps.length} DSPs` })}</span>}
+            {!isVendor && rentalCount > 0 && <span className="text-navy-400">· <span className="text-accent-purple">{t('myVehicles.rentalsFmt', { count: rentalCount, defaultValue: `${rentalCount} rentals` })}</span></span>}
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -1429,7 +1433,7 @@ export default function MyVehicles({ user }) {
           {isVendor && (
             <button onClick={handleExport}
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-accent-blue/15 border border-accent-blue/40 text-accent-blue text-sm font-semibold hover:bg-accent-blue/25 cursor-pointer">
-              <Download size={14} /> Export CSV
+              <Download size={14} /> {t('myVehicles.exportCsv', 'Export CSV')}
             </button>
           )}
           {/* Owner / admin actions — write access */}
@@ -1437,15 +1441,15 @@ export default function MyVehicles({ user }) {
             <>
               <button onClick={() => setShowFlexFleet(true)}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-accent-purple/15 border border-accent-purple/40 text-accent-purple text-sm font-semibold hover:bg-accent-purple/25 cursor-pointer">
-                <Truck size={14} /> Order Flex Fleet
+                <Truck size={14} /> {t('myVehicles.orderFlexFleet', 'Order Flex Fleet')}
               </button>
               <button onClick={() => setShowBulkUpload(true)}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-accent-blue/15 border border-accent-blue/40 text-accent-blue text-sm font-semibold hover:bg-accent-blue/25 cursor-pointer">
-                <Upload size={14} /> Bulk Upload
+                <Upload size={14} /> {t('myVehicles.bulkUpload', 'Bulk Upload')}
               </button>
               <button onClick={() => setShowAdd(true)}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-accent-green text-white text-sm font-semibold hover:bg-accent-green/80 cursor-pointer shadow-lg shadow-accent-green/20">
-                <Plus size={14} /> Add Vehicle
+                <Plus size={14} /> {t('myVehicles.addVehicle', 'Add Vehicle')}
               </button>
             </>
           )}
@@ -1457,7 +1461,7 @@ export default function MyVehicles({ user }) {
         <div className="mb-4 flex items-start gap-2 p-3 rounded-lg bg-accent-blue/10 border border-accent-blue/30 text-xs text-navy-200">
           <Info size={14} className="text-accent-blue mt-0.5 shrink-0" />
           <div>
-            <strong className="text-white">Read-only view.</strong> Click any vehicle to see its full details, or use the copy button to paste Fleet ID, VIN and plate into your billing/ticketing system.
+            <strong className="text-white">{t('myVehicles.vendorReadOnlyTitle', 'Read-only view.')}</strong> {t('myVehicles.vendorReadOnlyBody', 'Click any vehicle to see its full details, or use the copy button to paste Fleet ID, VIN and plate into your billing/ticketing system.')}
           </div>
         </div>
       )}
@@ -1469,7 +1473,9 @@ export default function MyVehicles({ user }) {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder={isVendor ? 'Search DSP, Fleet ID, VIN, plate or model…' : 'Search Fleet ID, VIN, plate or model…'}
+            placeholder={isVendor
+              ? t('myVehicles.searchPlaceholderVendor', 'Search DSP, Fleet ID, VIN, plate or model…')
+              : t('myVehicles.searchPlaceholderOwner', 'Search Fleet ID, VIN, plate or model…')}
             className="w-full rounded-lg pl-9 pr-3 py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue"
           />
         </div>
@@ -1483,7 +1489,7 @@ export default function MyVehicles({ user }) {
                   : 'bg-navy-800 border-navy-700 text-navy-300 hover:text-white'
               }`}>
               <Building2 size={14} />
-              <span className="truncate max-w-[140px]">{dspFilter === 'all' ? 'All DSPs' : uniqueDsps.find((d) => d.id === dspFilter)?.name}</span>
+              <span className="truncate max-w-[140px]">{dspFilter === 'all' ? t('myVehicles.filter.allDsps', 'All DSPs') : uniqueDsps.find((d) => d.id === dspFilter)?.name}</span>
               <ChevronDown size={12} />
             </button>
             {dspFilterOpen && (
@@ -1492,7 +1498,7 @@ export default function MyVehicles({ user }) {
                 <div className="absolute top-full right-0 mt-1 w-64 bg-navy-900 border border-navy-700 rounded-lg shadow-2xl z-20 overflow-hidden max-h-72 overflow-y-auto">
                   <button onClick={() => { setDspFilter('all'); setDspFilterOpen(false); }}
                     className="w-full flex items-center justify-between px-3 py-2.5 text-left text-sm text-white hover:bg-navy-800 border-b border-navy-800">
-                    <span>All DSPs <span className="text-navy-400">({fleet.length})</span></span>
+                    <span>{t('myVehicles.filter.allDsps', 'All DSPs')} <span className="text-navy-400">({fleet.length})</span></span>
                     {dspFilter === 'all' && <Check size={12} className="text-accent-green" />}
                   </button>
                   {uniqueDsps.map((d) => {
@@ -1512,8 +1518,8 @@ export default function MyVehicles({ user }) {
         )}
         <select value={classFilter} onChange={(e) => setClassFilter(e.target.value)}
           className="rounded-lg px-3 py-2.5 text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue cursor-pointer">
-          <option value="all">All vehicle types</option>
-          {VEHICLE_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+          <option value="all">{t('myVehicles.filter.allTypes', 'All vehicle types')}</option>
+          {VEHICLE_TYPES.map((vt) => <option key={vt.value} value={vt.value}>{vt.label}</option>)}
         </select>
       </div>
 
@@ -1527,10 +1533,10 @@ export default function MyVehicles({ user }) {
                 <div className="flex items-center gap-2">
                   <Users size={14} className="text-accent-blue" />
                   <h3 className="text-sm font-semibold text-white">{group.dspName}</h3>
-                  <Badge variant="gray" size="md">{group.vans.length} vans</Badge>
+                  <Badge variant="gray" size="md">{t('myVehicles.vansCountFmt', { count: group.vans.length, defaultValue: `${group.vans.length} vans` })}</Badge>
                 </div>
                 <button onClick={() => { setDspFilter(group.dspId); }}
-                  className="text-[11px] text-accent-blue hover:underline">Filter to this DSP</button>
+                  className="text-[11px] text-accent-blue hover:underline">{t('myVehicles.filter.filterToThisDsp', 'Filter to this DSP')}</button>
               </div>
               <div className="overflow-x-auto">
                 <VehicleTable vans={group.vans} isVendor={isVendor} canEdit={canEdit}
@@ -1541,7 +1547,7 @@ export default function MyVehicles({ user }) {
           ))}
           {groupedByDsp.length === 0 && (
             <div className="bg-navy-900/60 border border-navy-700/40 rounded-xl p-10 text-center text-sm text-navy-400">
-              No vehicles match your filter.
+              {t('myVehicles.noMatch', 'No vehicles match your filter.')}
             </div>
           )}
         </div>
@@ -1553,7 +1559,7 @@ export default function MyVehicles({ user }) {
               onLocationChange={handleLocationChange} />
           </div>
           {filtered.length === 0 && (
-            <div className="px-4 py-10 text-center text-sm text-navy-400">No vehicles match your filter.</div>
+            <div className="px-4 py-10 text-center text-sm text-navy-400">{t('myVehicles.noMatch', 'No vehicles match your filter.')}</div>
           )}
         </div>
       )}
@@ -1569,7 +1575,7 @@ export default function MyVehicles({ user }) {
                   <span className="text-xs font-semibold text-white">{group.dspName}</span>
                   <Badge variant="gray">{group.vans.length}</Badge>
                 </div>
-                <button onClick={() => setDspFilter(group.dspId)} className="text-[10px] text-accent-blue">Filter</button>
+                <button onClick={() => setDspFilter(group.dspId)} className="text-[10px] text-accent-blue">{t('myVehicles.filter.filterShort', 'Filter')}</button>
               </div>
               {group.vans.map((v) => (
                 <VehicleCardMobile key={v.fleetId} v={v} onClick={() => setDetailVehicle(v)}
@@ -1587,7 +1593,7 @@ export default function MyVehicles({ user }) {
         )}
         {filtered.length === 0 && (
           <div className="bg-navy-900/60 border border-navy-700/40 rounded-xl p-10 text-center text-sm text-navy-400">
-            No vehicles match your filter.
+            {t('myVehicles.noMatch', 'No vehicles match your filter.')}
           </div>
         )}
       </div>

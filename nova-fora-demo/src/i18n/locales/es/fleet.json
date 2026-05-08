@@ -1,1 +1,211 @@
-{}
+{
+  "myDsps": {
+    "heading": "Mis DSPs",
+    "assignedFmt_one": "{{role}} — {{count}} DSP asignado para tus inspecciones.",
+    "assignedFmt_other": "{{role}} — {{count}} DSPs asignados para tus inspecciones.",
+    "searchPlaceholder": "Buscar DSP…",
+    "loading": "Cargando DSPs…",
+    "loadError": "No se pudieron cargar los DSPs",
+    "emptyMatchFmt": "Ningún DSP coincide con \"{{search}}\".",
+    "emptyAssigned": "Aún no tienes DSPs asignados.",
+    "tapHint": "Toca un DSP para ver sus vans, inspecciones recientes y defectos pendientes.",
+    "allDspsBack": "Todos los DSPs",
+    "noVansYet": "Aún no hay vans en este DSP.",
+    "vansLabel": "vans",
+    "groundedLabel": "en tierra",
+    "inactiveBadge": "Inactivo",
+    "stat": {
+      "vans": "Vans",
+      "active": "Activos",
+      "grounded": "En tierra",
+      "inactive": "Inactivos"
+    },
+    "table": {
+      "fleetId": "Fleet ID",
+      "vehicle": "Vehículo",
+      "plate": "Placa",
+      "mileage": "Kilometraje",
+      "status": "Estado"
+    },
+    "statusTitle": {
+      "grounded": "En tierra",
+      "active": "Activo",
+      "inactive": "Inactivo"
+    }
+  },
+  "myVehicles": {
+    "titleVendor": "Vehículos del DSP",
+    "titleOwner": "Mis vehículos",
+    "subtitleVendor": "Directorio de flota de los DSPs asignados — copia los datos de cualquier vehículo a tu sistema de facturación",
+    "subtitleOwner": "Gestión de flota",
+    "vansLabel": "vans",
+    "cleanFmt": "{{count}} sin defectos",
+    "defectiveFmt": "{{count}} con defectos",
+    "rentalsFmt": "{{count}} rentadas",
+    "acrossDspsFmt_one": "en {{count}} DSP",
+    "acrossDspsFmt_other": "en {{count}} DSPs",
+    "loadingFmt": "Cargando flota de {{org}}…",
+    "loadError": "No se pudieron cargar los vehículos",
+    "retry": "Reintentar",
+    "exportCsv": "Exportar CSV",
+    "orderFlexFleet": "Pedir Flex Fleet",
+    "bulkUpload": "Carga masiva",
+    "addVehicle": "Agregar vehículo",
+    "vendorReadOnlyTitle": "Vista de solo lectura.",
+    "vendorReadOnlyBody": "Toca cualquier vehículo para ver sus detalles, o usa el botón de copiar para pegar Fleet ID, VIN y placa en tu sistema de facturación.",
+    "searchPlaceholderVendor": "Buscar DSP, Fleet ID, VIN, placa o modelo…",
+    "searchPlaceholderOwner": "Buscar Fleet ID, VIN, placa o modelo…",
+    "filter": {
+      "allDsps": "Todos los DSPs",
+      "allTypes": "Todos los tipos de vehículo",
+      "filterToThisDsp": "Filtrar por este DSP",
+      "filterShort": "Filtrar"
+    },
+    "table": {
+      "fleetId": "Fleet ID",
+      "vehicle": "Vehículo",
+      "yearMakeModel": "Año / Marca / Modelo",
+      "plate": "Placa",
+      "mileage": "Kilometraje",
+      "class": "Clase",
+      "status": "Estado",
+      "location": "Ubicación",
+      "actions": "Acciones"
+    },
+    "vansCountFmt": "{{count}} vans",
+    "noMatch": "Ningún vehículo coincide con tu filtro.",
+    "copyDetailsTitle": "Copiar datos para facturación",
+    "milesShort": "mi",
+    "cleanBadge": "Sin defectos",
+    "defectsBadgeFmt_one": "{{count}} defecto",
+    "defectsBadgeFmt_other": "{{count}} defectos",
+    "copyButton": "Copiar",
+    "copiedButton": "Copiado"
+  },
+  "vehicleDetail": {
+    "breadcrumbVehicles": "Vehículos",
+    "previous": "Anterior",
+    "next": "Siguiente",
+    "groundedBadge": "En tierra",
+    "operational": "Operativo",
+    "attention": "Necesita atención",
+    "grounded": "En tierra",
+    "activeBadge": "Activo",
+    "lastRouteFmt": "Última ruta completada <0>{{when}}</0>",
+    "lastRoutePart1": "Última ruta completada",
+    "today": "hoy",
+    "yesterday": "ayer",
+    "stat": {
+      "openDefects": "Defectos abiertos",
+      "serviceItems": "Servicios",
+      "inspections": "Inspecciones",
+      "upcomingPMs": "PMs próximos"
+    },
+    "tabs": {
+      "service": "Historial de servicio",
+      "inspections": "Historial de inspecciones",
+      "pms": "PMs próximos",
+      "mileage": "Historial de kilometraje"
+    },
+    "sidebar": {
+      "ownershipStatus": "Estado de propiedad",
+      "operationalStatus": "Estado operativo",
+      "update": "Actualizar",
+      "location": "Ubicación",
+      "moveTo": "Mover a",
+      "parkingLot": "Estacionamiento",
+      "offsite": "Fuera del lote",
+      "checkedOut": "Salida registrada",
+      "quickStats": "Estadísticas rápidas"
+    },
+    "form": {
+      "fleetId": "Fleet ID",
+      "licensePlate": "Placa",
+      "vin": "VIN",
+      "year": "Año",
+      "make": "Marca",
+      "model": "Modelo",
+      "color": "Color",
+      "mileage": "Kilometraje",
+      "vehicleType": "Tipo de vehículo",
+      "ownership": "Propiedad",
+      "fmc": "FMC",
+      "fmcPlaceholder": "ej. Element, LP, Budget…",
+      "dsp": "DSP",
+      "allEditableHint": "Todos los campos son editables al mismo tiempo — sin lápiz por campo.",
+      "saveError": "No se pudo guardar",
+      "save": "Guardar",
+      "saving": "Guardando…",
+      "cancel": "Cancelar",
+      "delete": "Eliminar",
+      "edit": "Editar",
+      "confirmDeleteTitle": "¿Eliminar este vehículo?",
+      "confirmDeleteBody": "Esto remueve el vehículo de tu flota. Los datos históricos de inspección y reparación se conservan."
+    },
+    "service": {
+      "empty": "Sin historial de servicio",
+      "emptyDesc": "Las órdenes de trabajo completadas aparecerán aquí.",
+      "th": {
+        "dateMileage": "Fecha y kilometraje",
+        "issueType": "Tipo de problema",
+        "categoryDesc": "Categoría y descripción",
+        "source": "Origen",
+        "serviceRepair": "Servicio y reparación",
+        "status": "Estado"
+      },
+      "defaultIssue": "Reparación",
+      "woStatus": {
+        "pending": "Pendiente",
+        "pending_fmc": "Pendiente FMC",
+        "in_progress": "En progreso",
+        "completed": "Completada",
+        "declined": "Rechazada",
+        "canceled": "Cancelada"
+      }
+    },
+    "inspections": {
+      "empty": "Aún sin inspecciones",
+      "emptyDesc": "Las inspecciones completadas aparecerán aquí cuando los técnicos revisen el vehículo.",
+      "th": {
+        "date": "Fecha",
+        "inspector": "Inspector",
+        "mileage": "Kilometraje",
+        "result": "Resultado",
+        "defectsFound": "Defectos encontrados"
+      },
+      "result": {
+        "pass": "Aprobada",
+        "flagged": "Con defectos"
+      }
+    },
+    "pms": {
+      "empty": "Sin PMs próximos",
+      "emptyDesc": "Los trabajos de mantenimiento preventivo aparecerán aquí cuando se cumplan los triggers.",
+      "th": {
+        "type": "Tipo",
+        "trigger": "Trigger",
+        "due": "Vence",
+        "vendor": "Vendor",
+        "status": "Estado"
+      },
+      "schedulePM": "Programar PM",
+      "atMileageFmt": "A los",
+      "thereFmt": "({{pct}}% recorrido)",
+      "onDate": "El",
+      "status": {
+        "upcoming": "Próximo",
+        "scheduled": "Programado"
+      }
+    },
+    "mileage": {
+      "empty": "Sin historial de kilometraje",
+      "emptyDesc": "Las lecturas de kilometraje desde inspecciones y WOs poblarán esta línea de tiempo.",
+      "th": {
+        "date": "Fecha",
+        "mileage": "Kilometraje",
+        "delta": "Delta",
+        "source": "Origen"
+      }
+    }
+  }
+}

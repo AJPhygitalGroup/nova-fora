@@ -1,1 +1,211 @@
-{}
+{
+  "myDsps": {
+    "heading": "My DSPs",
+    "assignedFmt_one": "{{role}} — {{count}} DSP assigned to you for inspections.",
+    "assignedFmt_other": "{{role}} — {{count}} DSPs assigned to you for inspections.",
+    "searchPlaceholder": "Search DSP…",
+    "loading": "Loading DSPs…",
+    "loadError": "Couldn't load DSPs",
+    "emptyMatchFmt": "No DSPs match \"{{search}}\".",
+    "emptyAssigned": "No DSPs assigned yet.",
+    "tapHint": "Tap a DSP to see its vans, recent inspections, and pending defects.",
+    "allDspsBack": "All DSPs",
+    "noVansYet": "No vans on this DSP yet.",
+    "vansLabel": "vans",
+    "groundedLabel": "grounded",
+    "inactiveBadge": "Inactive",
+    "stat": {
+      "vans": "Vans",
+      "active": "Active",
+      "grounded": "Grounded",
+      "inactive": "Inactive"
+    },
+    "table": {
+      "fleetId": "Fleet ID",
+      "vehicle": "Vehicle",
+      "plate": "Plate",
+      "mileage": "Mileage",
+      "status": "Status"
+    },
+    "statusTitle": {
+      "grounded": "Grounded",
+      "active": "Active",
+      "inactive": "Inactive"
+    }
+  },
+  "myVehicles": {
+    "titleVendor": "DSP Vehicles",
+    "titleOwner": "My Vehicles",
+    "subtitleVendor": "Fleet directory across your assigned DSPs — copy any vehicle's details to your billing system",
+    "subtitleOwner": "Fleet management",
+    "vansLabel": "vans",
+    "cleanFmt": "{{count}} Clean",
+    "defectiveFmt": "{{count}} defective",
+    "rentalsFmt": "{{count}} rentals",
+    "acrossDspsFmt_one": "across {{count}} DSP",
+    "acrossDspsFmt_other": "across {{count}} DSPs",
+    "loadingFmt": "Loading fleet from {{org}}…",
+    "loadError": "Could not load vehicles",
+    "retry": "Retry",
+    "exportCsv": "Export CSV",
+    "orderFlexFleet": "Order Flex Fleet",
+    "bulkUpload": "Bulk Upload",
+    "addVehicle": "Add Vehicle",
+    "vendorReadOnlyTitle": "Read-only view.",
+    "vendorReadOnlyBody": "Click any vehicle to see its full details, or use the copy button to paste Fleet ID, VIN and plate into your billing/ticketing system.",
+    "searchPlaceholderVendor": "Search DSP, Fleet ID, VIN, plate or model…",
+    "searchPlaceholderOwner": "Search Fleet ID, VIN, plate or model…",
+    "filter": {
+      "allDsps": "All DSPs",
+      "allTypes": "All vehicle types",
+      "filterToThisDsp": "Filter to this DSP",
+      "filterShort": "Filter"
+    },
+    "table": {
+      "fleetId": "Fleet ID",
+      "vehicle": "Vehicle",
+      "yearMakeModel": "Year / Make / Model",
+      "plate": "Plate",
+      "mileage": "Mileage",
+      "class": "Class",
+      "status": "Status",
+      "location": "Location",
+      "actions": "Actions"
+    },
+    "vansCountFmt": "{{count}} vans",
+    "noMatch": "No vehicles match your filter.",
+    "copyDetailsTitle": "Copy details for billing",
+    "milesShort": "mi",
+    "cleanBadge": "Clean",
+    "defectsBadgeFmt_one": "{{count}} defect",
+    "defectsBadgeFmt_other": "{{count}} defects",
+    "copyButton": "Copy",
+    "copiedButton": "Copied"
+  },
+  "vehicleDetail": {
+    "breadcrumbVehicles": "Vehicles",
+    "previous": "Previous",
+    "next": "Next",
+    "groundedBadge": "Grounded",
+    "operational": "Operational",
+    "attention": "Needs attention",
+    "grounded": "Grounded",
+    "activeBadge": "Active",
+    "lastRouteFmt": "Last route completed <0>{{when}}</0>",
+    "lastRoutePart1": "Last route completed",
+    "today": "today",
+    "yesterday": "yesterday",
+    "stat": {
+      "openDefects": "Open defects",
+      "serviceItems": "Service items",
+      "inspections": "Inspections",
+      "upcomingPMs": "Upcoming PMs"
+    },
+    "tabs": {
+      "service": "Service History",
+      "inspections": "Inspection History",
+      "pms": "Upcoming PMs",
+      "mileage": "Mileage History"
+    },
+    "sidebar": {
+      "ownershipStatus": "Ownership status",
+      "operationalStatus": "Operational status",
+      "update": "Update",
+      "location": "Location",
+      "moveTo": "Move to",
+      "parkingLot": "Parking Lot",
+      "offsite": "Offsite",
+      "checkedOut": "Checked Out",
+      "quickStats": "Quick stats"
+    },
+    "form": {
+      "fleetId": "Fleet ID",
+      "licensePlate": "License Plate",
+      "vin": "VIN",
+      "year": "Year",
+      "make": "Make",
+      "model": "Model",
+      "color": "Color",
+      "mileage": "Mileage",
+      "vehicleType": "Vehicle Type",
+      "ownership": "Ownership",
+      "fmc": "FMC",
+      "fmcPlaceholder": "e.g. Element, LP, Budget…",
+      "dsp": "DSP",
+      "allEditableHint": "All fields are editable at once — no pencil per field.",
+      "saveError": "Couldn't save",
+      "save": "Save",
+      "saving": "Saving…",
+      "cancel": "Cancel",
+      "delete": "Delete",
+      "edit": "Edit",
+      "confirmDeleteTitle": "Delete this vehicle?",
+      "confirmDeleteBody": "This removes the vehicle from your fleet. Historical inspection and repair data is kept."
+    },
+    "service": {
+      "empty": "No service history",
+      "emptyDesc": "Completed work orders will appear here.",
+      "th": {
+        "dateMileage": "Date & mileage",
+        "issueType": "Issue type",
+        "categoryDesc": "Category & description",
+        "source": "Source",
+        "serviceRepair": "Service & repair",
+        "status": "Status"
+      },
+      "defaultIssue": "Repair",
+      "woStatus": {
+        "pending": "Pending",
+        "pending_fmc": "Pending FMC",
+        "in_progress": "In Progress",
+        "completed": "Completed",
+        "declined": "Declined",
+        "canceled": "Canceled"
+      }
+    },
+    "inspections": {
+      "empty": "No inspections yet",
+      "emptyDesc": "Completed inspections will appear here once techs walk the vehicle.",
+      "th": {
+        "date": "Date",
+        "inspector": "Inspector",
+        "mileage": "Mileage",
+        "result": "Result",
+        "defectsFound": "Defects found"
+      },
+      "result": {
+        "pass": "Pass",
+        "flagged": "Flagged"
+      }
+    },
+    "pms": {
+      "empty": "No upcoming PMs",
+      "emptyDesc": "Preventive maintenance jobs will appear here when triggers are hit.",
+      "th": {
+        "type": "Type",
+        "trigger": "Trigger",
+        "due": "Due",
+        "vendor": "Vendor",
+        "status": "Status"
+      },
+      "schedulePM": "Schedule PM",
+      "atMileageFmt": "At",
+      "thereFmt": "({{pct}}% there)",
+      "onDate": "On",
+      "status": {
+        "upcoming": "Upcoming",
+        "scheduled": "Scheduled"
+      }
+    },
+    "mileage": {
+      "empty": "No mileage history",
+      "emptyDesc": "Mileage readings from inspections and WOs will populate this timeline.",
+      "th": {
+        "date": "Date",
+        "mileage": "Mileage",
+        "delta": "Delta",
+        "source": "Source"
+      }
+    }
+  }
+}
