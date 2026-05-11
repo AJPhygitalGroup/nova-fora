@@ -87,6 +87,8 @@ services:
     volumes:
       # Hot reload — mount source. Dockerfile deps stay baked in.
       - ./apps/api/app:/app/app
+      - ./apps/api/alembic:/app/alembic
+      - ./apps/api/alembic.ini:/app/alembic.ini
       - ./apps/api/pyproject.toml:/app/pyproject.toml
     # Override Dockerfile CMD to enable --reload in dev
     command: >
