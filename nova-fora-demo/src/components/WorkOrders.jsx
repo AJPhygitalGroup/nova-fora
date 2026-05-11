@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import {
   ClipboardList, Search, Filter, X, Check, CheckCircle2, AlertTriangle, Clock,
   User, Wrench, Camera, FileText, Send, XCircle, PlayCircle, PauseCircle,
@@ -147,6 +148,7 @@ function mapApiListToUi(apiList) {
 // Accept / Assign Technician Modal (dispatcher action)
 // ============================================================
 function AssignTechnicianModal({ wo, onAssign, onClose }) {
+  const { t } = useTranslation('dashboard');
   const [tech, setTech] = useState(null);
   const [techOpen, setTechOpen] = useState(false);
   const [notes, setNotes] = useState('');
@@ -207,7 +209,7 @@ function AssignTechnicianModal({ wo, onAssign, onClose }) {
               <PlayCircle size={16} className="text-accent-blue" />
             </div>
             <div>
-              <h3 className="text-base font-semibold text-white">Accept & Assign</h3>
+              <h3 className="text-base font-semibold text-white">{t('workOrders.assignModal.title', 'Accept & Assign')}</h3>
               <p className="text-[11px] text-navy-400">{wo.id} · {wo.plate}</p>
             </div>
           </div>
@@ -215,23 +217,23 @@ function AssignTechnicianModal({ wo, onAssign, onClose }) {
         </div>
         <div className="px-4 sm:px-6 py-5 space-y-4 overflow-y-auto flex-1">
           <div className="rounded-lg bg-navy-800/40 border border-navy-700/40 p-3">
-            <div className="text-[10px] text-navy-400 uppercase tracking-wide mb-1">Work to complete</div>
+            <div className="text-[10px] text-navy-400 uppercase tracking-wide mb-1">{t('workOrders.assignModal.workToComplete', 'Work to complete')}</div>
             <div className="text-sm text-white mb-1">{wo.description}</div>
             <div className="text-[11px] text-navy-400">{wo.section} · {wo.part}</div>
           </div>
 
           <div>
-            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Assign to technician</label>
+            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('workOrders.assignModal.assignTo', 'Assign to technician')}</label>
             <div className="relative">
               <button onClick={() => setTechOpen(!techOpen)}
                 className="w-full flex items-center justify-between px-4 py-3 rounded-lg border border-navy-700 bg-navy-800/50 text-left hover:border-navy-600 cursor-pointer min-h-[52px]">
                 {tech ? (
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-semibold text-white truncate">{tech.name}</div>
-                    <div className="text-[11px] text-navy-400 truncate">{(tech.specialties || []).join(', ') || 'Technician'}{tech.activeWOs ? ` · ${tech.activeWOs} active WOs` : ''}</div>
+                    <div className="text-[11px] text-navy-400 truncate">{(tech.specialties || []).join(', ') || t('workOrders.assignModal.techRoleFallback', 'Technician')}{tech.activeWOs ? t('workOrders.assignModal.techActiveSuffixFmt', { count: tech.activeWOs, defaultValue: ` · ${tech.activeWOs} active WOs` }) : ''}</div>
                   </div>
                 ) : (
-                  <span className="text-sm text-navy-400">Select a technician…</span>
+                  <span className="text-sm text-navy-400">{t('workOrders.assignModal.selectTechnician', 'Select a technician…')}</span>
                 )}
                 <ChevronDown size={16} className={`text-navy-400 shrink-0 ml-2 transition-transform ${techOpen ? 'rotate-180' : ''}`} />
               </button>
@@ -242,20 +244,20 @@ function AssignTechnicianModal({ wo, onAssign, onClose }) {
                     {techsLoading ? (
                       <div className="px-4 py-6 text-center text-xs text-navy-400">
                         <Loader2 size={14} className="inline mr-1.5 animate-spin" />
-                        Loading technicians…
+                        {t('workOrders.assignModal.loadingTechs', 'Loading technicians…')}
                       </div>
                     ) : techs.length === 0 ? (
-                      <div className="px-4 py-6 text-center text-xs text-navy-400">No technicians available for this vendor.</div>
-                    ) : techs.map((t) => (
-                      <button key={t.id} onClick={() => { setTech(t); setTechOpen(false); }}
+                      <div className="px-4 py-6 text-center text-xs text-navy-400">{t('workOrders.assignModal.noTechs', 'No technicians available for this vendor.')}</div>
+                    ) : techs.map((techItem) => (
+                      <button key={techItem.id} onClick={() => { setTech(techItem); setTechOpen(false); }}
                         className={`w-full flex items-center justify-between gap-2 px-4 py-3 text-left hover:bg-navy-800 transition-colors border-b border-navy-800/60 last:border-b-0 min-h-[56px] ${
-                          tech?.id === t.id ? 'bg-navy-800' : ''
+                          tech?.id === techItem.id ? 'bg-navy-800' : ''
                         }`}>
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm font-semibold text-white truncate">{t.name}</div>
-                          <div className="text-[11px] text-navy-400 truncate">{t.specialties.join(', ')}</div>
+                          <div className="text-sm font-semibold text-white truncate">{techItem.name}</div>
+                          <div className="text-[11px] text-navy-400 truncate">{techItem.specialties.join(', ')}</div>
                         </div>
-                        <Badge variant={t.activeWOs > 4 ? 'orange' : 'gray'}>{t.activeWOs} active</Badge>
+                        <Badge variant={techItem.activeWOs > 4 ? 'orange' : 'gray'}>{t('workOrders.assignModal.techActiveBadgeFmt', { count: techItem.activeWOs, defaultValue: `${techItem.activeWOs} active` })}</Badge>
                       </button>
                     ))}
                   </div>
@@ -265,17 +267,17 @@ function AssignTechnicianModal({ wo, onAssign, onClose }) {
           </div>
 
           <div>
-            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Dispatcher notes (optional)</label>
+            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('workOrders.assignModal.dispatcherNotes', 'Dispatcher notes (optional)')}</label>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
-              placeholder="e.g. 'Parts already ordered — arriving 2pm'"
+              placeholder={t('workOrders.assignModal.dispatcherNotesPlaceholder', "e.g. 'Parts already ordered — arriving 2pm'")}
               className="w-full rounded-lg px-3 py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue resize-none" />
           </div>
         </div>
         <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-3 sm:py-4 border-t border-navy-800 bg-navy-900/80">
-          <button onClick={onClose} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">Cancel</button>
+          <button onClick={onClose} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">{t('workOrders.assignModal.cancel', 'Cancel')}</button>
           <button onClick={handleAssign} disabled={!tech || submitting}
             className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-gradient-to-r from-accent-blue to-accent-purple text-white hover:opacity-90 disabled:opacity-40 cursor-pointer">
-            {submitting ? (<><motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full" /> Assigning…</>) : (<><Check size={14} /> Accept & Assign</>)}
+            {submitting ? (<><motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full" /> {t('workOrders.assignModal.assigning', 'Assigning…')}</>) : (<><Check size={14} /> {t('workOrders.assignModal.acceptAndAssign', 'Accept & Assign')}</>)}
           </button>
         </div>
       </motion.div>
@@ -287,6 +289,7 @@ function AssignTechnicianModal({ wo, onAssign, onClose }) {
 // Decline Modal (with reason code)
 // ============================================================
 function DeclineModal({ wo, onDecline, onClose }) {
+  const { t } = useTranslation('dashboard');
   const [reason, setReason] = useState(null);
   const [reasonOpen, setReasonOpen] = useState(false);
   const [notes, setNotes] = useState('');
@@ -312,15 +315,15 @@ function DeclineModal({ wo, onDecline, onClose }) {
               <XCircle size={16} className="text-accent-red" />
             </div>
             <div>
-              <h3 className="text-base font-semibold text-white">Decline Work Order</h3>
-              <p className="text-[11px] text-navy-400">{wo.id} · Requires reason code</p>
+              <h3 className="text-base font-semibold text-white">{t('workOrders.declineModal.title', 'Decline Work Order')}</h3>
+              <p className="text-[11px] text-navy-400">{t('workOrders.declineModal.subtitleFmt', { id: wo.id, defaultValue: `${wo.id} · Requires reason code` })}</p>
             </div>
           </div>
           <button onClick={onClose} className="text-navy-400 hover:text-white p-2 -mr-2"><X size={20} /></button>
         </div>
         <div className="px-4 sm:px-6 py-5 space-y-4 overflow-y-auto flex-1">
           <div>
-            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Reason code *</label>
+            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('workOrders.declineModal.reasonLabel', 'Reason code *')}</label>
             <div className="space-y-2">
               {WO_DECLINE_REASONS.map((r) => (
                 <button key={r.code} onClick={() => setReason(r)}
@@ -335,24 +338,24 @@ function DeclineModal({ wo, onDecline, onClose }) {
                     {reason?.code === r.code && <Check size={12} />}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="text-xs font-semibold text-navy-400 uppercase tracking-wide">Code {r.code}</div>
-                    <div className="text-sm text-white">{r.label}</div>
+                    <div className="text-xs font-semibold text-navy-400 uppercase tracking-wide">{t('workOrders.declineModal.codePrefixFmt', { code: r.code, defaultValue: `Code ${r.code}` })}</div>
+                    <div className="text-sm text-white">{t(`workOrders.declineModal.reasonOption.${r.code}`, r.label)}</div>
                   </div>
                 </button>
               ))}
             </div>
           </div>
           <div>
-            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Additional notes (optional)</label>
+            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('workOrders.declineModal.notesLabel', 'Additional notes (optional)')}</label>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
               className="w-full rounded-lg px-3 py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-red resize-none" />
           </div>
         </div>
         <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-3 sm:py-4 border-t border-navy-800 bg-navy-900/80">
-          <button onClick={onClose} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">Cancel</button>
+          <button onClick={onClose} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">{t('workOrders.declineModal.cancel', 'Cancel')}</button>
           <button onClick={handleSubmit} disabled={!reason || submitting}
             className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-accent-red text-white hover:opacity-90 disabled:opacity-40 cursor-pointer">
-            {submitting ? 'Declining…' : <>Decline <XCircle size={14} /></>}
+            {submitting ? t('workOrders.declineModal.declining', 'Declining…') : <>{t('workOrders.declineModal.decline', 'Decline')} <XCircle size={14} /></>}
           </button>
         </div>
       </motion.div>
@@ -364,6 +367,7 @@ function DeclineModal({ wo, onDecline, onClose }) {
 // Complete Work Modal (technician action)
 // ============================================================
 function CompleteWorkModal({ wo, onComplete, onClose }) {
+  const { t } = useTranslation('dashboard');
   const [comments, setComments] = useState('');
   const [mileage, setMileage] = useState(wo.lastMileage || '');
   const [odometerPhoto, setOdometerPhoto] = useState(null);
@@ -391,7 +395,7 @@ function CompleteWorkModal({ wo, onComplete, onClose }) {
               <CheckCircle2 size={16} className="text-accent-green" />
             </div>
             <div>
-              <h3 className="text-base font-semibold text-white">Complete Work</h3>
+              <h3 className="text-base font-semibold text-white">{t('workOrders.completeModal.title', 'Complete Work')}</h3>
               <p className="text-[11px] text-navy-400">{wo.id} · {wo.plate}</p>
             </div>
           </div>
@@ -399,20 +403,20 @@ function CompleteWorkModal({ wo, onComplete, onClose }) {
         </div>
         <div className="px-4 sm:px-6 py-5 space-y-4 overflow-y-auto flex-1">
           <div>
-            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Work completed comments *</label>
+            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('workOrders.completeModal.commentsLabel', 'Work completed comments *')}</label>
             <textarea value={comments} onChange={(e) => setComments(e.target.value)} rows={3}
-              placeholder="e.g. Replaced both brake pads and rotors on front axle. Test-driven OK."
+              placeholder={t('workOrders.completeModal.commentsPlaceholder', 'e.g. Replaced both brake pads and rotors on front axle. Test-driven OK.')}
               className="w-full rounded-lg px-3 py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-green resize-none" />
           </div>
           <div>
-            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Last mileage *</label>
+            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('workOrders.completeModal.mileageLabel', 'Last mileage *')}</label>
             <input type="number" inputMode="numeric" value={mileage} onChange={(e) => setMileage(e.target.value)}
-              placeholder="e.g. 48290"
+              placeholder={t('workOrders.completeModal.mileagePlaceholder', 'e.g. 48290')}
               className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-green" />
-            <p className="text-[10px] text-navy-500 mt-1">Previously: {wo.lastMileage?.toLocaleString() || '—'} mi</p>
+            <p className="text-[10px] text-navy-500 mt-1">{t('workOrders.completeModal.previousMileageFmt', { mileage: wo.lastMileage?.toLocaleString() || '—', defaultValue: `Previously: ${wo.lastMileage?.toLocaleString() || '—'} mi` })}</p>
           </div>
           <div>
-            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Odometer photo</label>
+            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('workOrders.completeModal.odometerPhotoLabel', 'Odometer photo')}</label>
             <label className="flex items-center gap-3 px-4 py-3 rounded-lg border-2 border-dashed border-navy-700/60 bg-navy-800/20 active:bg-navy-800/60 hover:bg-navy-800/40 cursor-pointer transition-colors min-h-[64px]">
               <div className="w-10 h-10 rounded-lg bg-accent-blue/15 flex items-center justify-center shrink-0">
                 <Camera size={16} className="text-accent-blue" />
@@ -425,8 +429,8 @@ function CompleteWorkModal({ wo, onComplete, onClose }) {
                   </>
                 ) : (
                   <>
-                    <div className="text-white">Capture odometer photo</div>
-                    <div className="text-navy-400">Required for audit</div>
+                    <div className="text-white">{t('workOrders.completeModal.captureOdometer', 'Capture odometer photo')}</div>
+                    <div className="text-navy-400">{t('workOrders.completeModal.requiredForAudit', 'Required for audit')}</div>
                   </>
                 )}
               </div>
@@ -436,10 +440,10 @@ function CompleteWorkModal({ wo, onComplete, onClose }) {
           </div>
         </div>
         <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-3 sm:py-4 border-t border-navy-800 bg-navy-900/80">
-          <button onClick={onClose} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">Cancel</button>
+          <button onClick={onClose} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">{t('workOrders.completeModal.cancel', 'Cancel')}</button>
           <button onClick={handleSubmit} disabled={!canSubmit || submitting}
             className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-accent-green text-white hover:opacity-90 disabled:opacity-40 cursor-pointer">
-            {submitting ? 'Completing…' : <>Complete <Check size={14} /></>}
+            {submitting ? t('workOrders.completeModal.completing', 'Completing…') : <>{t('workOrders.completeModal.complete', 'Complete')} <Check size={14} /></>}
           </button>
         </div>
       </motion.div>
@@ -451,6 +455,7 @@ function CompleteWorkModal({ wo, onComplete, onClose }) {
 // Release Modal (technician returns WO to dispatcher)
 // ============================================================
 function ReleaseModal({ wo, onRelease, onClose }) {
+  const { t } = useTranslation('dashboard');
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4" onClick={onClose}>
@@ -460,14 +465,14 @@ function ReleaseModal({ wo, onRelease, onClose }) {
         <div className="w-12 h-12 rounded-full bg-accent-orange/15 border border-accent-orange/40 flex items-center justify-center mx-auto mb-3">
           <PauseCircle size={22} className="text-accent-orange" />
         </div>
-        <h4 className="text-base font-semibold text-white mb-1">Release Work Order?</h4>
+        <h4 className="text-base font-semibold text-white mb-1">{t('workOrders.releaseModal.title', 'Release Work Order?')}</h4>
         <p className="text-xs text-navy-400 mb-4">
-          {wo.id} will be returned to the dispatcher who can re-assign it or decline with a reason code.
+          {t('workOrders.releaseModal.bodyFmt', { id: wo.id, defaultValue: `${wo.id} will be returned to the dispatcher who can re-assign it or decline with a reason code.` })}
         </p>
         <div className="flex items-center gap-2">
-          <button onClick={onClose} className="flex-1 px-4 py-2.5 rounded-lg border border-navy-600 text-navy-300 text-sm hover:bg-navy-800 cursor-pointer">Cancel</button>
+          <button onClick={onClose} className="flex-1 px-4 py-2.5 rounded-lg border border-navy-600 text-navy-300 text-sm hover:bg-navy-800 cursor-pointer">{t('workOrders.releaseModal.cancel', 'Cancel')}</button>
           <button onClick={() => { onRelease(); onClose(); }}
-            className="flex-1 px-4 py-2.5 rounded-lg bg-accent-orange text-white text-sm font-semibold hover:opacity-90 cursor-pointer">Release</button>
+            className="flex-1 px-4 py-2.5 rounded-lg bg-accent-orange text-white text-sm font-semibold hover:opacity-90 cursor-pointer">{t('workOrders.releaseModal.release', 'Release')}</button>
         </div>
       </motion.div>
     </motion.div>
@@ -478,6 +483,7 @@ function ReleaseModal({ wo, onRelease, onClose }) {
 // Notes Modal (free-text notes via kebab)
 // ============================================================
 function NotesModal({ wo, onAddNote, onClose }) {
+  const { t } = useTranslation('dashboard');
   const [note, setNote] = useState('');
 
   return (
@@ -492,7 +498,7 @@ function NotesModal({ wo, onAddNote, onClose }) {
               <MessageSquare size={16} className="text-accent-blue" />
             </div>
             <div>
-              <h3 className="text-base font-semibold text-white">Work Order Notes</h3>
+              <h3 className="text-base font-semibold text-white">{t('workOrders.notesModal.title', 'Work Order Notes')}</h3>
               <p className="text-[11px] text-navy-400">{wo.id}</p>
             </div>
           </div>
@@ -501,24 +507,24 @@ function NotesModal({ wo, onAddNote, onClose }) {
         <div className="px-4 sm:px-6 py-5 space-y-3 overflow-y-auto flex-1">
           {wo.notes && wo.notes.length > 0 && (
             <div className="space-y-2">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-navy-400">Previous notes</div>
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-navy-400">{t('workOrders.notesModal.previousNotes', 'Previous notes')}</div>
               {wo.notes.map((n, i) => (
                 <div key={i} className="rounded-lg bg-navy-800/60 border border-navy-700/40 px-3 py-2 text-xs text-white">{n}</div>
               ))}
             </div>
           )}
           <div>
-            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Add note</label>
+            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('workOrders.notesModal.addNote', 'Add note')}</label>
             <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3}
-              placeholder="Enter notes…"
+              placeholder={t('workOrders.notesModal.placeholder', 'Enter notes…')}
               className="w-full rounded-lg px-3 py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue resize-none" autoFocus />
           </div>
         </div>
         <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-3 sm:py-4 border-t border-navy-800 bg-navy-900/80">
-          <button onClick={onClose} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">Close</button>
+          <button onClick={onClose} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">{t('workOrders.notesModal.close', 'Close')}</button>
           <button onClick={() => { onAddNote(note); onClose(); }} disabled={!note.trim()}
             className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-accent-blue text-white hover:opacity-90 disabled:opacity-40 cursor-pointer">
-            <Check size={14} /> Save
+            <Check size={14} /> {t('workOrders.notesModal.save', 'Save')}
           </button>
         </div>
       </motion.div>
@@ -530,6 +536,7 @@ function NotesModal({ wo, onAddNote, onClose }) {
 // Log a Job Modal (floating toolbox — technician misc jobs)
 // ============================================================
 function LogJobModal({ onClose, onSubmit }) {
+  const { t } = useTranslation('dashboard');
   const [form, setForm] = useState({ dsp: '', vehicle: '', description: '', hours: 1 });
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -558,8 +565,8 @@ function LogJobModal({ onClose, onSubmit }) {
               <PackageCheck size={16} className="text-accent-purple" />
             </div>
             <div>
-              <h3 className="text-base font-semibold text-white">Log a Job</h3>
-              <p className="text-[11px] text-navy-400">Record miscellaneous work not tied to a WO</p>
+              <h3 className="text-base font-semibold text-white">{t('workOrders.logJobModal.title', 'Log a Job')}</h3>
+              <p className="text-[11px] text-navy-400">{t('workOrders.logJobModal.subtitle', 'Record miscellaneous work not tied to a WO')}</p>
             </div>
           </div>
           <button onClick={onClose} className="text-navy-400 hover:text-white p-2 -mr-2"><X size={20} /></button>
@@ -571,37 +578,37 @@ function LogJobModal({ onClose, onSubmit }) {
                 className="w-14 h-14 mx-auto rounded-full bg-accent-green/15 border border-accent-green/40 flex items-center justify-center mb-3">
                 <CheckCircle2 size={26} className="text-accent-green" />
               </motion.div>
-              <h4 className="text-base font-semibold text-white mb-1">Job logged</h4>
+              <h4 className="text-base font-semibold text-white mb-1">{t('workOrders.logJobModal.successTitle', 'Job logged')}</h4>
               <div className="inline-flex flex-col gap-1 px-4 py-2.5 rounded-lg bg-navy-800/60 border border-navy-700/40 text-left mt-2">
-                <div className="text-[11px] text-navy-400">Job ID</div>
+                <div className="text-[11px] text-navy-400">{t('workOrders.logJobModal.jobIdLabel', 'Job ID')}</div>
                 <div className="text-sm font-mono text-accent-purple">{jobId}</div>
               </div>
             </div>
           ) : (
             <>
               <div className="rounded-lg bg-accent-purple/10 border border-accent-purple/30 p-3 text-xs text-navy-200">
-                Use this form to record jobs completed throughout the day that weren't tied to a Work Order (e.g., quick DA-requested check, spot reinforcement).
+                {t('workOrders.logJobModal.intro', "Use this form to record jobs completed throughout the day that weren't tied to a Work Order (e.g., quick DA-requested check, spot reinforcement).")}
               </div>
               <div>
-                <label className="text-xs font-semibold text-navy-300 mb-1.5 block">DSP *</label>
+                <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('workOrders.logJobModal.dspLabel', 'DSP *')}</label>
                 <input value={form.dsp} onChange={(e) => setForm({ ...form, dsp: e.target.value })}
-                  placeholder="Safety First LLC"
+                  placeholder={t('workOrders.logJobModal.dspPlaceholder', 'Safety First LLC')}
                   className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-purple" />
               </div>
               <div>
-                <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Vehicle *</label>
+                <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('workOrders.logJobModal.vehicleLabel', 'Vehicle *')}</label>
                 <input value={form.vehicle} onChange={(e) => setForm({ ...form, vehicle: e.target.value })}
-                  placeholder="VAN-1042"
+                  placeholder={t('workOrders.logJobModal.vehiclePlaceholder', 'VAN-1042')}
                   className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-purple" />
               </div>
               <div>
-                <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Description *</label>
+                <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('workOrders.logJobModal.descriptionLabel', 'Description *')}</label>
                 <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3}
-                  placeholder="e.g. Tire pressure check + air fill on all 4 tires"
+                  placeholder={t('workOrders.logJobModal.descriptionPlaceholder', 'e.g. Tire pressure check + air fill on all 4 tires')}
                   className="w-full rounded-lg px-3 py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-purple resize-none" />
               </div>
               <div>
-                <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Time spent (hours)</label>
+                <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('workOrders.logJobModal.hoursLabel', 'Time spent (hours)')}</label>
                 <input type="number" step="0.25" value={form.hours} onChange={(e) => setForm({ ...form, hours: parseFloat(e.target.value) })}
                   className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-purple" />
               </div>
@@ -612,14 +619,14 @@ function LogJobModal({ onClose, onSubmit }) {
           {success ? (
             <>
               <span />
-              <button onClick={onClose} className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-accent-green text-white hover:opacity-90 cursor-pointer">Done</button>
+              <button onClick={onClose} className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-accent-green text-white hover:opacity-90 cursor-pointer">{t('workOrders.logJobModal.done', 'Done')}</button>
             </>
           ) : (
             <>
-              <button onClick={onClose} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">Cancel</button>
+              <button onClick={onClose} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">{t('workOrders.logJobModal.cancel', 'Cancel')}</button>
               <button onClick={handleSubmit} disabled={!form.dsp || !form.vehicle || !form.description || submitting}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-accent-purple text-white hover:opacity-90 disabled:opacity-40 cursor-pointer">
-                {submitting ? 'Logging…' : <>Log Job <Check size={14} /></>}
+                {submitting ? t('workOrders.logJobModal.logging', 'Logging…') : <>{t('workOrders.logJobModal.logJob', 'Log Job')} <Check size={14} /></>}
               </button>
             </>
           )}
@@ -633,6 +640,7 @@ function LogJobModal({ onClose, onSubmit }) {
 // Work Order Card
 // ============================================================
 function WorkOrderCard({ wo, expanded, onToggle, userRole, onAction }) {
+  const { t } = useTranslation('dashboard');
   const statusConf = STATUS_CONFIG[wo.status];
   const StatusIcon = statusConf.icon;
 
@@ -653,7 +661,7 @@ function WorkOrderCard({ wo, expanded, onToggle, userRole, onAction }) {
             <div className="flex items-center gap-2 mb-1 flex-wrap">
               <span className="text-sm font-mono font-semibold text-accent-blue">{wo.id}</span>
               <Badge variant={statusConf.variant} size="md">
-                <StatusIcon size={10} className="inline mr-0.5" /> {statusConf.label}
+                <StatusIcon size={10} className="inline mr-0.5" /> {t(`workOrders.statusBadge.${wo.status}`, statusConf.label)}
               </Badge>
               {wo.flags?.map((f) => {
                 const fConf = FLAG_CONFIG[f];
@@ -661,7 +669,7 @@ function WorkOrderCard({ wo, expanded, onToggle, userRole, onAction }) {
                 const FIcon = fConf.icon;
                 return (
                   <Badge key={f} variant={fConf.variant}>
-                    <FIcon size={9} className="inline mr-0.5" /> {fConf.label}
+                    <FIcon size={9} className="inline mr-0.5" /> {t(`workOrders.flagBadge.${f}`, fConf.label)}
                   </Badge>
                 );
               })}
@@ -677,7 +685,7 @@ function WorkOrderCard({ wo, expanded, onToggle, userRole, onAction }) {
           <div className="flex items-center gap-2 flex-wrap">
             {wo.assignedTechnician && (
               <span className="flex items-center gap-1 text-navy-300">
-                <User size={10} /> {wo.assignedTechnician}{isMyWO ? ' (you)' : ''}
+                <User size={10} /> {wo.assignedTechnician}{isMyWO ? ` ${t('workOrders.youSuffix', '(you)')}` : ''}
               </span>
             )}
             {wo.scheduledAt && (
@@ -697,28 +705,28 @@ function WorkOrderCard({ wo, expanded, onToggle, userRole, onAction }) {
             <div className="px-4 py-4 space-y-4">
               {/* Description */}
               <div className="rounded-lg bg-navy-800/40 border border-navy-700/40 p-3">
-                <div className="text-[10px] text-navy-400 uppercase tracking-wide mb-1">Defect description</div>
+                <div className="text-[10px] text-navy-400 uppercase tracking-wide mb-1">{t('workOrders.card.defectDescription', 'Defect description')}</div>
                 <div className="text-sm text-white">{wo.description}</div>
               </div>
 
               {/* WO details grid */}
               <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
-                <Field label="RO Number" value={wo.roNumber} mono />
-                <Field label="Reported by" value={wo.reportedBy} />
-                <Field label="Last mileage" value={wo.lastMileage ? `${wo.lastMileage.toLocaleString()} mi` : '—'} />
-                <Field label="FMC" value={wo.fmc} />
-                <Field label="Y / Make / Model" value={`${wo.year} ${wo.make} ${wo.model}`} />
-                <Field label="VIN" value={wo.vin} mono small />
-                {wo.declinedReason && <Field label="Declined reason" value={wo.declinedReason} warn />}
-                {wo.canceledReason && <Field label="Canceled reason" value={wo.canceledReason} warn />}
-                {wo.completedAt && <Field label="Completed at" value={new Date(wo.completedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} />}
+                <Field label={t('workOrders.card.roNumber', 'RO Number')} value={wo.roNumber} mono />
+                <Field label={t('workOrders.card.reportedBy', 'Reported by')} value={wo.reportedBy} />
+                <Field label={t('workOrders.card.lastMileage', 'Last mileage')} value={wo.lastMileage ? `${wo.lastMileage.toLocaleString()} ${t('workOrders.milesShort', 'mi')}` : '—'} />
+                <Field label={t('workOrders.card.fmc', 'FMC')} value={wo.fmc} />
+                <Field label={t('workOrders.card.yearMakeModel', 'Y / Make / Model')} value={`${wo.year} ${wo.make} ${wo.model}`} />
+                <Field label={t('workOrders.card.vin', 'VIN')} value={wo.vin} mono small />
+                {wo.declinedReason && <Field label={t('workOrders.card.declinedReason', 'Declined reason')} value={wo.declinedReason} warn />}
+                {wo.canceledReason && <Field label={t('workOrders.card.canceledReason', 'Canceled reason')} value={wo.canceledReason} warn />}
+                {wo.completedAt && <Field label={t('workOrders.card.completedAt', 'Completed at')} value={new Date(wo.completedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} />}
               </div>
 
               {/* Notes */}
               {wo.notes && wo.notes.length > 0 && (
                 <div>
                   <div className="text-[10px] text-navy-400 uppercase tracking-wide mb-1.5 flex items-center gap-1.5">
-                    <MessageSquare size={10} /> Notes ({wo.notes.length})
+                    <MessageSquare size={10} /> {t('workOrders.card.notesCountFmt', { count: wo.notes.length, defaultValue: `Notes (${wo.notes.length})` })}
                   </div>
                   <div className="space-y-1">
                     {wo.notes.map((n, i) => (
@@ -732,7 +740,7 @@ function WorkOrderCard({ wo, expanded, onToggle, userRole, onAction }) {
               <div className="flex items-center justify-between gap-2 pt-2 border-t border-navy-800">
                 <button onClick={() => onAction('notes', wo)}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-navy-800 border border-navy-700 text-xs font-medium text-navy-300 hover:text-white hover:border-navy-600 cursor-pointer">
-                  <MessageSquare size={11} /> Notes
+                  <MessageSquare size={11} /> {t('workOrders.card.notes', 'Notes')}
                 </button>
 
                 <div className="flex items-center gap-1.5 flex-wrap justify-end">
@@ -741,11 +749,11 @@ function WorkOrderCard({ wo, expanded, onToggle, userRole, onAction }) {
                     <>
                       <button onClick={() => onAction('decline', wo)}
                         className="flex items-center gap-1 px-3 py-2 rounded-md bg-accent-red/15 border border-accent-red/40 text-accent-red text-xs font-semibold hover:bg-accent-red/25 cursor-pointer">
-                        <XCircle size={11} /> Decline
+                        <XCircle size={11} /> {t('workOrders.card.decline', 'Decline')}
                       </button>
                       <button onClick={() => onAction('accept', wo)}
                         className="flex items-center gap-1 px-3 py-2 rounded-md bg-accent-blue text-white text-xs font-semibold hover:opacity-90 cursor-pointer">
-                        <PlayCircle size={11} /> Accept & Assign
+                        <PlayCircle size={11} /> {t('workOrders.card.acceptAndAssign', 'Accept & Assign')}
                       </button>
                     </>
                   )}
@@ -753,7 +761,7 @@ function WorkOrderCard({ wo, expanded, onToggle, userRole, onAction }) {
                   {/* Dispatcher actions on Pending FMC */}
                   {isDispatcher && wo.status === 'pending_fmc' && (
                     <div className="text-[11px] text-accent-purple flex items-center gap-1">
-                      <Briefcase size={11} /> Awaiting {wo.fmc} approval
+                      <Briefcase size={11} /> {t('workOrders.card.awaitingFmcFmt', { fmc: wo.fmc, defaultValue: `Awaiting ${wo.fmc} approval` })}
                     </div>
                   )}
 
@@ -762,11 +770,11 @@ function WorkOrderCard({ wo, expanded, onToggle, userRole, onAction }) {
                     <>
                       <button onClick={() => onAction('release', wo)}
                         className="flex items-center gap-1 px-3 py-2 rounded-md bg-accent-orange/15 border border-accent-orange/40 text-accent-orange text-xs font-semibold hover:bg-accent-orange/25 cursor-pointer">
-                        <PauseCircle size={11} /> Release
+                        <PauseCircle size={11} /> {t('workOrders.card.release', 'Release')}
                       </button>
                       <button onClick={() => onAction('complete', wo)}
                         className="flex items-center gap-1 px-3 py-2 rounded-md bg-accent-green text-white text-xs font-semibold hover:opacity-90 cursor-pointer">
-                        <CheckCircle2 size={11} /> Complete
+                        <CheckCircle2 size={11} /> {t('workOrders.card.complete', 'Complete')}
                       </button>
                     </>
                   )}
@@ -793,6 +801,7 @@ function Field({ label, value, mono, small, warn }) {
 // Main Component
 // ============================================================
 export default function WorkOrders({ user }) {
+  const { t } = useTranslation('dashboard');
   const [workOrders, setWorkOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -1040,16 +1049,16 @@ export default function WorkOrders({ user }) {
     <div>
       <div className="flex items-start justify-between gap-3 mb-4 sm:mb-6 flex-wrap">
         <div className="min-w-0">
-          <h2 className="text-2xl font-bold text-white mb-1">Work Orders</h2>
+          <h2 className="text-2xl font-bold text-white mb-1">{t('workOrders.heading', 'Work Orders')}</h2>
           <p className="text-navy-400 text-sm">
             {isTechnician
-              ? <>My assigned WOs &mdash; <span className="text-white font-medium">{summary.total}</span> total</>
-              : <>Vendor hub &mdash; <span className="text-white font-medium">{summary.total}</span> WOs across <span className="text-white font-medium">{uniqueDsps.length}</span> DSPs</>}
+              ? t('workOrders.subtitleTechFmt', { count: summary.total, defaultValue: `My assigned WOs — ${summary.total} total` })
+              : t('workOrders.subtitleVendorFmt', { count: summary.total, dspCount: uniqueDsps.length, defaultValue: `Vendor hub — ${summary.total} WOs across ${uniqueDsps.length} DSPs` })}
           </p>
         </div>
         <button onClick={() => setShowLogJob(true)}
           className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-accent-purple/15 border border-accent-purple/40 text-accent-purple text-sm font-semibold hover:bg-accent-purple/25 cursor-pointer">
-          <PackageCheck size={14} /> Log a Job
+          <PackageCheck size={14} /> {t('workOrders.logJob', 'Log a Job')}
         </button>
       </div>
 
@@ -1062,27 +1071,26 @@ export default function WorkOrders({ user }) {
               <ClipboardList size={14} className="text-accent-blue" />
             </div>
             <div>
-              <div className="text-sm font-semibold text-white">Work Order Summary</div>
-              <div className="text-[11px] text-navy-400">{dateStr} &middot; week-to-date</div>
+              <div className="text-sm font-semibold text-white">{t('workOrders.summary.title', 'Work Order Summary')}</div>
+              <div className="text-[11px] text-navy-400">{dateStr} &middot; {t('workOrders.summary.weekToDate', 'week-to-date')}</div>
             </div>
           </div>
           <div className="text-right">
-            <div className="text-[11px] text-navy-400">Completion rate</div>
+            <div className="text-[11px] text-navy-400">{t('workOrders.summary.completionRate', 'Completion rate')}</div>
             <div className="text-lg font-bold text-accent-green">{completionRate}%</div>
           </div>
         </div>
         <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-          <StatCard label="Total" value={summary.total} color="text-white" icon={ClipboardList} />
-          <StatCard label="Pending" value={summary.pending + summary.pendingFmc} color="text-accent-gold" icon={Hourglass} />
-          <StatCard label="In Progress" value={summary.inProgress} color="text-accent-blue" icon={PlayCircle} />
-          <StatCard label="Completed" value={summary.completed} color="text-accent-green" icon={CheckCircle2} />
-          <StatCard label="Declined" value={summary.declined} color="text-accent-red" icon={XCircle} />
+          <StatCard label={t('workOrders.summary.total', 'Total')} value={summary.total} color="text-white" icon={ClipboardList} />
+          <StatCard label={t('workOrders.summary.pending', 'Pending')} value={summary.pending + summary.pendingFmc} color="text-accent-gold" icon={Hourglass} />
+          <StatCard label={t('workOrders.summary.inProgress', 'In Progress')} value={summary.inProgress} color="text-accent-blue" icon={PlayCircle} />
+          <StatCard label={t('workOrders.summary.completed', 'Completed')} value={summary.completed} color="text-accent-green" icon={CheckCircle2} />
+          <StatCard label={t('workOrders.summary.declined', 'Declined')} value={summary.declined} color="text-accent-red" icon={XCircle} />
         </div>
         {summary.rushOrders > 0 && (
           <div className="mt-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-accent-red/10 border border-accent-red/30 text-xs">
             <Flame size={12} className="text-accent-red" />
-            <span className="text-white font-medium">{summary.rushOrders}</span>
-            <span className="text-navy-300">Rush Order{summary.rushOrders > 1 ? 's' : ''} requiring immediate attention</span>
+            <span className="text-navy-300">{t('workOrders.summary.rushOrderBannerFmt', { count: summary.rushOrders, defaultValue: `${summary.rushOrders} Rush Order${summary.rushOrders > 1 ? 's' : ''} requiring immediate attention` })}</span>
           </div>
         )}
       </motion.div>
@@ -1092,7 +1100,7 @@ export default function WorkOrders({ user }) {
         <div className="relative flex-1 min-w-[200px]">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-navy-400" />
           <input value={search} onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search WO ID, fleet ID, plate, DSP or description…"
+            placeholder={t('workOrders.searchPlaceholder', 'Search WO ID, fleet ID, plate, DSP or description…')}
             className="w-full rounded-lg pl-9 pr-3 py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue" />
         </div>
 
@@ -1104,7 +1112,7 @@ export default function WorkOrders({ user }) {
                 dspFilter !== 'all' ? 'bg-accent-blue/15 border-accent-blue/40 text-accent-blue font-semibold' : 'bg-navy-800 border-navy-700 text-navy-300 hover:text-white'
               }`}>
               <Building2 size={14} />
-              <span className="truncate max-w-[140px]">{dspFilter === 'all' ? 'All DSPs' : uniqueDsps.find((d) => d.id === dspFilter)?.name}</span>
+              <span className="truncate max-w-[140px]">{dspFilter === 'all' ? t('workOrders.filter.allDsps', 'All DSPs') : uniqueDsps.find((d) => d.id === dspFilter)?.name}</span>
               <ChevronDown size={12} />
             </button>
             {dspFilterOpen && (
@@ -1113,7 +1121,7 @@ export default function WorkOrders({ user }) {
                 <div className="absolute top-full right-0 mt-1 w-64 bg-navy-900 border border-navy-700 rounded-lg shadow-2xl z-20 overflow-hidden max-h-72 overflow-y-auto">
                   <button onClick={() => { setDspFilter('all'); setDspFilterOpen(false); }}
                     className="w-full flex items-center justify-between px-3 py-2.5 text-left text-sm text-white hover:bg-navy-800 border-b border-navy-800">
-                    <span>All DSPs ({myWOs.length})</span>
+                    <span>{t('workOrders.filter.allDspsCountFmt', { count: myWOs.length, defaultValue: `All DSPs (${myWOs.length})` })}</span>
                     {dspFilter === 'all' && <Check size={12} className="text-accent-green" />}
                   </button>
                   {uniqueDsps.map((d) => {
@@ -1121,7 +1129,7 @@ export default function WorkOrders({ user }) {
                     return (
                       <button key={d.id} onClick={() => { setDspFilter(d.id); setDspFilterOpen(false); }}
                         className="w-full flex items-center justify-between px-3 py-2.5 text-left text-sm text-white hover:bg-navy-800 border-b border-navy-800/60 last:border-b-0">
-                        <span className="truncate">{d.name} ({count})</span>
+                        <span className="truncate">{t('workOrders.filter.perDspCountFmt', { name: d.name, count, defaultValue: `${d.name} (${count})` })}</span>
                         {dspFilter === d.id && <Check size={12} className="text-accent-green shrink-0" />}
                       </button>
                     );
@@ -1135,7 +1143,7 @@ export default function WorkOrders({ user }) {
 
       {/* Status filter pills */}
       <div className="flex items-center gap-1.5 mb-4 flex-wrap overflow-x-auto">
-        <span className="text-[11px] text-navy-400 font-semibold uppercase tracking-wide shrink-0 mr-1">Status:</span>
+        <span className="text-[11px] text-navy-400 font-semibold uppercase tracking-wide shrink-0 mr-1">{t('workOrders.filter.statusLabel', 'Status:')}</span>
         {Object.entries(STATUS_CONFIG).map(([key, conf]) => {
           const active = statusFilters.includes(key);
           const count = myWOs.filter((wo) => wo.status === key).length;
@@ -1149,13 +1157,13 @@ export default function WorkOrders({ user }) {
                   : 'bg-navy-800/40 border-navy-700 text-navy-400 hover:text-white hover:border-navy-600'
               }`}>
               <Icon size={10} />
-              {conf.label}
+              {t(`workOrders.statusBadge.${key}`, conf.label)}
               <span className={`ml-0.5 px-1 rounded ${active ? 'bg-black/20' : 'bg-navy-700/50 text-navy-300'}`}>{count}</span>
             </button>
           );
         })}
         {statusFilters.length > 0 && (
-          <button onClick={() => setStatusFilters([])} className="text-[11px] text-accent-red hover:underline ml-1 shrink-0">Clear filters</button>
+          <button onClick={() => setStatusFilters([])} className="text-[11px] text-accent-red hover:underline ml-1 shrink-0">{t('workOrders.filter.clearFilters', 'Clear filters')}</button>
         )}
       </div>
 
@@ -1163,15 +1171,15 @@ export default function WorkOrders({ user }) {
       {loading ? (
         <div className="bg-navy-900/60 border border-navy-700/40 rounded-xl p-10 text-center">
           <Loader2 size={28} className="animate-spin text-accent-blue mx-auto mb-3" />
-          <p className="text-sm text-navy-300">Loading work orders…</p>
+          <p className="text-sm text-navy-300">{t('workOrders.loading', 'Loading work orders…')}</p>
         </div>
       ) : error ? (
         <div className="bg-accent-red/10 border border-accent-red/30 rounded-xl p-6 text-center">
           <AlertTriangle size={24} className="text-accent-red mx-auto mb-2" />
-          <p className="text-sm text-white">Couldn't load work orders</p>
+          <p className="text-sm text-white">{t('workOrders.loadError', "Couldn't load work orders")}</p>
           <p className="text-xs text-navy-300 mt-1">{error}</p>
           <button onClick={reload} className="mt-3 px-3 py-1.5 rounded-lg bg-accent-red/15 border border-accent-red/40 text-accent-red text-xs font-semibold hover:bg-accent-red/25 cursor-pointer">
-            Retry
+            {t('workOrders.retry', 'Retry')}
           </button>
         </div>
       ) : (
@@ -1196,8 +1204,8 @@ export default function WorkOrders({ user }) {
           {filtered.length === 0 && (
             <div className="bg-navy-900/60 border border-navy-700/40 rounded-xl p-10 text-center">
               <ClipboardList size={40} className="text-navy-600 mx-auto mb-3" />
-              <h4 className="text-sm font-semibold text-white mb-1">No work orders match your filters</h4>
-              <p className="text-xs text-navy-400">{workOrders.length === 0 ? 'No WOs yet — convert defects on the Defects tab.' : 'Try clearing filters or changing your search.'}</p>
+              <h4 className="text-sm font-semibold text-white mb-1">{t('workOrders.empty.noMatch', 'No work orders match your filters')}</h4>
+              <p className="text-xs text-navy-400">{workOrders.length === 0 ? t('workOrders.empty.noWOs', 'No WOs yet — convert defects on the Defects tab.') : t('workOrders.empty.tryClearing', 'Try clearing filters or changing your search.')}</p>
             </div>
           )}
         </div>

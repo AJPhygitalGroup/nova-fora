@@ -1014,14 +1014,17 @@ function FieldInput({ name, def, required, value, onChange }) {
   }
 
   // String fallback — date format presets (MM/DD/YYYY, MM/YYYY) auto-format.
+  // NOTE: the backend stores patterns with a literal `/` (no backslash escape),
+  // e.g. `^(0[1-9]|1[0-2])/\d{4}$`. Each `\/?` below accepts both an escaped
+  // (`\/`) and unescaped (`/`) separator so the preset matches either form.
   const datePresets = [
     {
-      match: /^\^\(0\[1-9\]\|1\[0-2\]\)\\\/\(0\[1-9\]\|\[12\]\\d\|3\[01\]\)\\\/\\d\{4\}\$$/,
+      match: /^\^\(0\[1-9\]\|1\[0-2\]\)\\?\/\(0\[1-9\]\|\[12\]\\d\|3\[01\]\)\\?\/\\d\{4\}\$$/,
       placeholder: 'MM/DD/YYYY', helper: t('dvic.details.datePresetUS'),
       maxLength: 10, autoFormat: 'date',
     },
     {
-      match: /^\^\(0\[1-9\]\|1\[0-2\]\)\\\/\\d\{4\}\$$/,
+      match: /^\^\(0\[1-9\]\|1\[0-2\]\)\\?\/\\d\{4\}\$$/,
       placeholder: 'MM/YYYY', helper: t('dvic.details.datePresetMonth'),
       maxLength: 7, autoFormat: 'month',
     },

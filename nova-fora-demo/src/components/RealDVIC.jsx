@@ -854,6 +854,7 @@ const CATEGORY_OPTIONS = ['Tires', 'Lights', 'Body', 'Brakes', 'Fluids', 'Windsh
 const STATUS_OPTIONS = ['Logged', 'Scheduled', 'Repair Ordered', 'Rush Order'];
 
 function CreateDefectModal({ onClose, onCreate }) {
+  const { t } = useTranslation('dashboard');
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({
     van: '',
@@ -900,8 +901,8 @@ function CreateDefectModal({ onClose, onCreate }) {
               <Plus size={20} className="text-accent-blue" />
             </div>
             <div>
-              <h3 className="text-lg font-semibold text-white">Create New Defect</h3>
-              <p className="text-xs text-navy-400">Step {step} of 3 — {['Vehicle', 'Defect details', 'Review & submit'][step - 1]}</p>
+              <h3 className="text-lg font-semibold text-white">{t('createDefect.title', 'Create New Defect')}</h3>
+              <p className="text-xs text-navy-400">{t('createDefect.stepFmt', { step, section: t(`createDefect.stepSection.${step}`, ['Vehicle', 'Defect details', 'Review & submit'][step - 1]), defaultValue: `Step ${step} of 3 — ${['Vehicle', 'Defect details', 'Review & submit'][step - 1]}` })}</p>
             </div>
           </div>
           <button onClick={onClose} className="text-navy-400 hover:text-white cursor-pointer p-1">
@@ -928,18 +929,18 @@ function CreateDefectModal({ onClose, onCreate }) {
               <div className="w-16 h-16 mx-auto rounded-full bg-accent-green/15 flex items-center justify-center mb-3">
                 <CheckCircle2 size={32} className="text-accent-green" />
               </div>
-              <h4 className="text-lg font-semibold text-white mb-1">Defect Created!</h4>
-              <p className="text-sm text-navy-400">{form.van.toUpperCase().startsWith('VAN-') ? form.van.toUpperCase() : `VAN-${form.van}`} added to Today's Defect Reports</p>
+              <h4 className="text-lg font-semibold text-white mb-1">{t('createDefect.successTitle', 'Defect Created!')}</h4>
+              <p className="text-sm text-navy-400">{t('createDefect.successBodyFmt', { van: form.van.toUpperCase().startsWith('VAN-') ? form.van.toUpperCase() : `VAN-${form.van}`, defaultValue: `${form.van.toUpperCase().startsWith('VAN-') ? form.van.toUpperCase() : `VAN-${form.van}`} added to Today's Defect Reports` })}</p>
             </motion.div>
           ) : (
             <>
               {step === 1 && (
                 <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
                   <div>
-                    <label className="block text-xs font-semibold text-navy-300 mb-1.5">Fleet ID *</label>
+                    <label className="block text-xs font-semibold text-navy-300 mb-1.5">{t('createDefect.fleetIdLabel', 'Fleet ID *')}</label>
                     <input
                       type="text"
-                      placeholder="e.g. VAN-1042 or 1042"
+                      placeholder={t('createDefect.fleetIdPlaceholder', 'e.g. VAN-1042 or 1042')}
                       value={form.van}
                       onChange={(e) => setForm({ ...form, van: e.target.value })}
                       className="w-full rounded-lg px-3 py-2.5 text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue"
@@ -947,13 +948,13 @@ function CreateDefectModal({ onClose, onCreate }) {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-navy-300 mb-1.5">Reported by (DA) *</label>
+                    <label className="block text-xs font-semibold text-navy-300 mb-1.5">{t('createDefect.reportedByLabel', 'Reported by (DA) *')}</label>
                     <select
                       value={form.reportedBy}
                       onChange={(e) => setForm({ ...form, reportedBy: e.target.value })}
                       className="w-full rounded-lg px-3 py-2.5 text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue cursor-pointer"
                     >
-                      <option value="">Select driver…</option>
+                      <option value="">{t('createDefect.selectDriver', 'Select driver…')}</option>
                       {daList.map((d) => (
                         <option key={d.id} value={d.id}>{d.name}</option>
                       ))}
@@ -966,23 +967,23 @@ function CreateDefectModal({ onClose, onCreate }) {
                 <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-semibold text-navy-300 mb-1.5">Category *</label>
+                      <label className="block text-xs font-semibold text-navy-300 mb-1.5">{t('createDefect.categoryLabel', 'Category *')}</label>
                       <select
                         value={form.category}
                         onChange={(e) => setForm({ ...form, category: e.target.value })}
                         className="w-full rounded-lg px-3 py-2.5 text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue cursor-pointer"
                       >
-                        <option value="">Select…</option>
-                        {CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+                        <option value="">{t('createDefect.selectCategory', 'Select…')}</option>
+                        {CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{t(`createDefect.category.${c}`, c)}</option>)}
                       </select>
                     </div>
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-navy-300 mb-1.5">Description *</label>
+                    <label className="block text-xs font-semibold text-navy-300 mb-1.5">{t('createDefect.descriptionLabel', 'Description *')}</label>
                     <textarea
                       value={form.desc}
                       onChange={(e) => setForm({ ...form, desc: e.target.value })}
-                      placeholder="Describe the defect..."
+                      placeholder={t('createDefect.descriptionPlaceholder', 'Describe the defect...')}
                       rows={3}
                       className="w-full rounded-lg px-3 py-2.5 text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue resize-none"
                     />
@@ -995,7 +996,7 @@ function CreateDefectModal({ onClose, onCreate }) {
                       className="accent-accent-blue"
                     />
                     <span className="text-sm text-navy-200 flex items-center gap-1">
-                      <Camera size={14} /> Photo attached
+                      <Camera size={14} /> {t('createDefect.photoAttached', 'Photo attached')}
                     </span>
                   </label>
                 </motion.div>
@@ -1005,24 +1006,24 @@ function CreateDefectModal({ onClose, onCreate }) {
                 <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-3">
                   <div className="bg-navy-800/50 border border-navy-700 rounded-lg p-4 space-y-2">
                     <div className="flex justify-between text-sm">
-                      <span className="text-navy-400">Fleet ID:</span>
+                      <span className="text-navy-400">{t('createDefect.reviewFleetId', 'Fleet ID:')}</span>
                       <span className="text-white font-semibold">{form.van.toUpperCase().startsWith('VAN-') ? form.van.toUpperCase() : `VAN-${form.van}`}</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-navy-400">Driver:</span>
+                      <span className="text-navy-400">{t('createDefect.reviewDriver', 'Driver:')}</span>
                       <span className="text-white font-semibold">{daList.find(d => d.id === form.reportedBy)?.name || '—'}</span>
                     </div>
                     <div className="flex justify-between items-center text-sm">
-                      <span className="text-navy-400">Category:</span>
-                      <Badge variant="gray" size="md">{form.category}</Badge>
+                      <span className="text-navy-400">{t('createDefect.reviewCategory', 'Category:')}</span>
+                      <Badge variant="gray" size="md">{t(`createDefect.category.${form.category}`, form.category)}</Badge>
                     </div>
                     <div className="text-sm">
-                      <div className="text-navy-400 mb-1">Description:</div>
+                      <div className="text-navy-400 mb-1">{t('createDefect.reviewDescription', 'Description:')}</div>
                       <div className="text-white">{form.desc}</div>
                     </div>
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-navy-300 mb-1.5">Initial Status</label>
+                    <label className="block text-xs font-semibold text-navy-300 mb-1.5">{t('createDefect.initialStatusLabel', 'Initial Status')}</label>
                     <div className="grid grid-cols-2 gap-2">
                       {STATUS_OPTIONS.map((s) => (
                         <button
@@ -1034,7 +1035,7 @@ function CreateDefectModal({ onClose, onCreate }) {
                               : 'border-navy-700 text-navy-400 hover:text-white'
                           }`}
                         >
-                          {s}
+                          {t(`createDefect.status.${s}`, s)}
                         </button>
                       ))}
                     </div>
@@ -1051,7 +1052,7 @@ function CreateDefectModal({ onClose, onCreate }) {
               onClick={step === 1 ? onClose : () => setStep(step - 1)}
               className="px-4 py-2 rounded-lg border border-navy-600 text-navy-300 text-sm font-medium hover:bg-navy-800 transition-colors cursor-pointer"
             >
-              {step === 1 ? 'Cancel' : 'Back'}
+              {step === 1 ? t('createDefect.cancel', 'Cancel') : t('createDefect.back', 'Back')}
             </button>
             {step < 3 ? (
               <button
@@ -1059,14 +1060,14 @@ function CreateDefectModal({ onClose, onCreate }) {
                 disabled={(step === 1 && !canNext1) || (step === 2 && !canNext2)}
                 className="px-5 py-2 rounded-lg bg-accent-blue text-white text-sm font-semibold disabled:opacity-40 hover:bg-accent-blue/80 transition-colors cursor-pointer"
               >
-                Next
+                {t('createDefect.next', 'Next')}
               </button>
             ) : (
               <button
                 onClick={handleSubmit}
                 className="px-5 py-2 rounded-lg bg-accent-green text-white text-sm font-semibold hover:bg-accent-green/80 transition-colors cursor-pointer flex items-center gap-1.5"
               >
-                <CheckCircle2 size={16} /> Create Defect
+                <CheckCircle2 size={16} /> {t('createDefect.createDefect', 'Create Defect')}
               </button>
             )}
           </div>
@@ -1090,6 +1091,7 @@ const PREVIOUS_PENDING = [
 ];
 
 function InspectionReadinessBanner({ onClick }) {
+  const { t } = useTranslation('dashboard');
   return (
     <motion.button
       initial={{ opacity: 0, y: -10 }}
@@ -1102,21 +1104,22 @@ function InspectionReadinessBanner({ onClick }) {
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-0.5">
-          <span className="text-sm font-semibold text-white">QC DVIC Scheduled Tonight</span>
+          <span className="text-sm font-semibold text-white">{t('readinessBanner.heading', 'QC DVIC Scheduled Tonight')}</span>
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-red/15 border border-accent-red/40 text-accent-red text-[10px] font-semibold">
-            Action Required
+            {t('readinessBanner.actionRequired', 'Action Required')}
           </span>
         </div>
-        <div className="text-xs text-navy-300">Confirm QC inspection readiness &mdash; {INSPECTION_VEHICLES.length + 34} vehicles scheduled for tonight</div>
+        <div className="text-xs text-navy-300">{t('readinessBanner.subtitleFmt', { count: INSPECTION_VEHICLES.length + 34, defaultValue: `Confirm QC inspection readiness — ${INSPECTION_VEHICLES.length + 34} vehicles scheduled for tonight` })}</div>
       </div>
       <div className="hidden sm:flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs font-semibold text-white group-hover:bg-white/10 transition-all">
-        Review <ChevronRight size={12} />
+        {t('readinessBanner.review', 'Review')} <ChevronRight size={12} />
       </div>
     </motion.button>
   );
 }
 
 function InspectionVehicleRow({ item }) {
+  const { t } = useTranslation('dashboard');
   const [dspResponse, setDspResponse] = useState('');
   const [keyLocation, setKeyLocation] = useState('');
   const [otherText, setOtherText] = useState('');
@@ -1143,25 +1146,25 @@ function InspectionVehicleRow({ item }) {
       </div>
 
       <div>
-        <div className="text-[10px] uppercase tracking-wide text-navy-500 mb-1">Defect to repair</div>
+        <div className="text-[10px] uppercase tracking-wide text-navy-500 mb-1">{t('scheduledRepair.defectToRepairLabel', 'Defect to repair')}</div>
         <div className="text-sm text-white">{item.defect}</div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label className="block text-[10px] uppercase tracking-wide text-navy-500 mb-1">DSP Response</label>
+          <label className="block text-[10px] uppercase tracking-wide text-navy-500 mb-1">{t('scheduledRepair.dspResponseLabel', 'DSP Response')}</label>
           <select value={dspResponse} onChange={(e) => setDspResponse(e.target.value)}
             className={`w-full rounded-lg px-3 py-2 text-sm border outline-none cursor-pointer transition-colors ${responseColor}`}>
-            <option value="">Select response…</option>
-            {DSP_RESPONSE_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+            <option value="">{t('scheduledRepair.selectResponse', 'Select response…')}</option>
+            {DSP_RESPONSE_OPTIONS.map((o) => <option key={o} value={o}>{t(`scheduledRepair.dspResponseOption.${o}`, o)}</option>)}
           </select>
         </div>
         <div>
-          <label className="block text-[10px] uppercase tracking-wide text-navy-500 mb-1">Key Location</label>
+          <label className="block text-[10px] uppercase tracking-wide text-navy-500 mb-1">{t('scheduledRepair.keyLocationLabel', 'Key Location')}</label>
           <select value={keyLocation} onChange={(e) => setKeyLocation(e.target.value)}
             className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-navy-200 outline-none focus:border-accent-blue cursor-pointer">
-            <option value="">Select location…</option>
-            {KEY_LOCATION_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+            <option value="">{t('scheduledRepair.selectLocation', 'Select location…')}</option>
+            {KEY_LOCATION_OPTIONS.map((o) => <option key={o} value={o}>{t(`scheduledRepair.keyLocationOption.${o}`, o)}</option>)}
           </select>
         </div>
       </div>
@@ -1169,8 +1172,8 @@ function InspectionVehicleRow({ item }) {
       <AnimatePresence>
         {keyLocation === 'Other' && (
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-            <label className="block text-[10px] uppercase tracking-wide text-navy-500 mb-1">Describe key location</label>
-            <input type="text" value={otherText} onChange={(e) => setOtherText(e.target.value)} placeholder="e.g. Glove box, driver seat pocket…"
+            <label className="block text-[10px] uppercase tracking-wide text-navy-500 mb-1">{t('scheduledRepair.describeKeyLocation', 'Describe key location')}</label>
+            <input type="text" value={otherText} onChange={(e) => setOtherText(e.target.value)} placeholder={t('scheduledRepair.keyLocationPlaceholder', 'e.g. Glove box, driver seat pocket…')}
               className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue" autoFocus />
           </motion.div>
         )}
@@ -1180,6 +1183,7 @@ function InspectionVehicleRow({ item }) {
 }
 
 function InspectionReadinessModal({ onClose }) {
+  const { t } = useTranslation('dashboard');
   const [step, setStep] = useState('review'); // review | success
   const [globalKeyLocation, setGlobalKeyLocation] = useState('Van 4 cabin area');
   const [inspectorNotes, setInspectorNotes] = useState('');
@@ -1219,11 +1223,11 @@ function InspectionReadinessModal({ onClose }) {
                 <ShieldCheck size={18} className="text-accent-green" fill="#22c55e" stroke="white" strokeWidth={2.2} />
               </div>
               <div>
-                <h3 className="text-base font-semibold text-white">Your Quality Control DVIC is scheduled for tonight</h3>
+                <h3 className="text-base font-semibold text-white">{t('readinessModal.title', 'Your Quality Control DVIC is scheduled for tonight')}</h3>
                 <div className="flex items-center gap-3 mt-1 text-xs text-navy-300 flex-wrap">
                   <span className="flex items-center gap-1"><Users size={11} className="text-accent-blue" /> {dspName}</span>
-                  <span className="flex items-center gap-1"><Calendar size={11} className="text-accent-green" /> {totalVehicles} total vehicles</span>
-                  <span className="flex items-center gap-1"><KeyRound size={11} className="text-accent-gold" /> Keys in: <span className="text-white font-medium">{globalKeyLocation}</span></span>
+                  <span className="flex items-center gap-1"><Calendar size={11} className="text-accent-green" /> {t('readinessModal.totalVehiclesFmt', { count: totalVehicles, defaultValue: `${totalVehicles} total vehicles` })}</span>
+                  <span className="flex items-center gap-1"><KeyRound size={11} className="text-accent-gold" /> {t('readinessModal.keysInLabel', 'Keys in:')} <span className="text-white font-medium">{globalKeyLocation}</span></span>
                 </div>
               </div>
             </div>
@@ -1239,10 +1243,10 @@ function InspectionReadinessModal({ onClose }) {
                 className="w-16 h-16 mx-auto rounded-full bg-accent-green/15 border border-accent-green/40 flex items-center justify-center mb-4">
                 <CheckCircle2 size={32} className="text-accent-green" />
               </motion.div>
-              <h4 className="text-lg font-semibold text-white mb-1">QC Inspection Readiness Confirmed</h4>
-              <p className="text-sm text-navy-400 mb-4">Inspectors have been notified. {INSPECTION_VEHICLES.length} vehicles scheduled with defect work · {PREVIOUS_PENDING.length} awaiting approval.</p>
+              <h4 className="text-lg font-semibold text-white mb-1">{t('readinessModal.successTitle', 'QC Inspection Readiness Confirmed')}</h4>
+              <p className="text-sm text-navy-400 mb-4">{t('readinessModal.successBodyFmt', { scheduled: INSPECTION_VEHICLES.length, pending: PREVIOUS_PENDING.length, defaultValue: `Inspectors have been notified. ${INSPECTION_VEHICLES.length} vehicles scheduled with defect work · ${PREVIOUS_PENDING.length} awaiting approval.` })}</p>
               <div className="inline-flex flex-col gap-1 px-4 py-3 rounded-lg bg-navy-800/60 border border-navy-700/40 text-left">
-                <div className="text-[11px] text-navy-400">Confirmation ID</div>
+                <div className="text-[11px] text-navy-400">{t('readinessModal.confirmationId', 'Confirmation ID')}</div>
                 <div className="text-sm font-mono text-accent-blue">QC-{new Date().getFullYear()}{String(new Date().getMonth() + 1).padStart(2, '0')}{String(new Date().getDate()).padStart(2, '0')}-{Math.floor(100 + Math.random() * 900)}</div>
               </div>
             </motion.div>
@@ -1253,7 +1257,7 @@ function InspectionReadinessModal({ onClose }) {
                 <div>
                   <div className="flex items-center gap-2 mb-2">
                     <Hourglass size={12} className="text-accent-gold" />
-                    <span className="text-xs font-semibold text-accent-gold uppercase tracking-wide">Previously Awaiting Approval ({PREVIOUS_PENDING.length})</span>
+                    <span className="text-xs font-semibold text-accent-gold uppercase tracking-wide">{t('readinessModal.previousPendingHeadingFmt', { count: PREVIOUS_PENDING.length, defaultValue: `Previously Awaiting Approval (${PREVIOUS_PENDING.length})` })}</span>
                   </div>
                   <div className="space-y-1.5">
                     {PREVIOUS_PENDING.map((p) => (
@@ -1262,7 +1266,7 @@ function InspectionReadinessModal({ onClose }) {
                           <div className="text-sm font-semibold text-white">{p.fleetId}</div>
                           <div className="text-[11px] text-navy-400">{p.reason}</div>
                         </div>
-                        <Badge variant="gold" size="md">{p.days}d pending</Badge>
+                        <Badge variant="gold" size="md">{t('readinessModal.daysPendingFmt', { count: p.days, defaultValue: `${p.days}d pending` })}</Badge>
                       </div>
                     ))}
                   </div>
@@ -1272,25 +1276,25 @@ function InspectionReadinessModal({ onClose }) {
               {/* Global key location */}
               <div>
                 <label className="text-xs font-semibold text-navy-300 mb-1.5 block flex items-center gap-1.5">
-                  <KeyRound size={12} className="text-accent-gold" /> Default key location (all vehicles)
+                  <KeyRound size={12} className="text-accent-gold" /> {t('readinessModal.defaultKeyLocation', 'Default key location (all vehicles)')}
                 </label>
                 <select
                   value={globalKeyLocation}
                   onChange={(e) => setGlobalKeyLocation(e.target.value)}
                   className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue cursor-pointer"
                 >
-                  <option value="Van 4 cabin area">Van 4 cabin area</option>
-                  <option value="Cup holder">Cup holder</option>
-                  <option value="Fuel compartment">Fuel compartment</option>
-                  <option value="Key lockbox — dispatch">Key lockbox — dispatch</option>
-                  <option value="Other">Other</option>
+                  <option value="Van 4 cabin area">{t('readinessModal.keyLocationOptions.vanCabin', 'Van 4 cabin area')}</option>
+                  <option value="Cup holder">{t('readinessModal.keyLocationOptions.cupHolder', 'Cup holder')}</option>
+                  <option value="Fuel compartment">{t('readinessModal.keyLocationOptions.fuelCompartment', 'Fuel compartment')}</option>
+                  <option value="Key lockbox — dispatch">{t('readinessModal.keyLocationOptions.lockboxDispatch', 'Key lockbox — dispatch')}</option>
+                  <option value="Other">{t('readinessModal.keyLocationOptions.other', 'Other')}</option>
                 </select>
               </div>
 
               {/* Vehicles list */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-semibold text-navy-300 uppercase tracking-wide">Vehicles scheduled tonight ({INSPECTION_VEHICLES.length})</span>
+                  <span className="text-xs font-semibold text-navy-300 uppercase tracking-wide">{t('readinessModal.vehiclesScheduledFmt', { count: INSPECTION_VEHICLES.length, defaultValue: `Vehicles scheduled tonight (${INSPECTION_VEHICLES.length})` })}</span>
                 </div>
                 <div className="space-y-3">
                   {INSPECTION_VEHICLES.map((it) => (
@@ -1302,13 +1306,13 @@ function InspectionReadinessModal({ onClose }) {
               {/* Inspector notes */}
               <div>
                 <label className="text-xs font-semibold text-navy-300 mb-1.5 block flex items-center gap-1.5">
-                  <Info size={12} className="text-accent-blue" /> Important notes for Inspectors
+                  <Info size={12} className="text-accent-blue" /> {t('readinessModal.inspectorNotesLabel', 'Important notes for Inspectors')}
                 </label>
                 <textarea
                   value={inspectorNotes}
                   onChange={(e) => setInspectorNotes(e.target.value)}
                   rows={3}
-                  placeholder="e.g. Gate code 4827 · back lot entry only after 10pm · contact Maria if issues"
+                  placeholder={t('readinessModal.inspectorNotesPlaceholder', 'e.g. Gate code 4827 · back lot entry only after 10pm · contact Maria if issues')}
                   className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue resize-none"
                 />
               </div>
@@ -1324,19 +1328,19 @@ function InspectionReadinessModal({ onClose }) {
               disabled={submitting}
               className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-navy-600 text-navy-300 text-sm font-medium hover:bg-navy-800 transition-colors cursor-pointer disabled:opacity-50"
             >
-              <SkipForward size={14} /> Skip Tonight
+              <SkipForward size={14} /> {t('readinessModal.skipTonight', 'Skip Tonight')}
             </button>
             <button
               onClick={handleConfirm}
               disabled={submitting}
               className="flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold bg-accent-green text-white hover:opacity-90 disabled:opacity-50 transition-all cursor-pointer"
             >
-              {submitting ? (<><motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full" /> Confirming…</>) : (<><CheckCircle2 size={14} /> Confirm Readiness</>)}
+              {submitting ? (<><motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full" /> {t('readinessModal.confirming', 'Confirming…')}</>) : (<><CheckCircle2 size={14} /> {t('readinessModal.confirmReadiness', 'Confirm Readiness')}</>)}
             </button>
           </div>
         ) : (
           <div className="flex items-center justify-end px-6 py-4 border-t border-navy-800">
-            <button onClick={onClose} className="px-5 py-2 rounded-lg text-sm font-semibold bg-accent-green text-white hover:opacity-90 cursor-pointer">Done</button>
+            <button onClick={onClose} className="px-5 py-2 rounded-lg text-sm font-semibold bg-accent-green text-white hover:opacity-90 cursor-pointer">{t('readinessModal.done', 'Done')}</button>
           </div>
         )}
       </motion.div>
@@ -1370,6 +1374,7 @@ const INSPECTION_FLEET = [
 
 
 function InspectionSectionRow({ section, state, onStateChange }) {
+  const { t } = useTranslation('dashboard');
   const isIssue = state?.status === 'issue';
   const isOk = state?.status === 'ok';
 
@@ -1404,7 +1409,7 @@ function InspectionSectionRow({ section, state, onStateChange }) {
              isIssue ? <AlertTriangle size={14} className="text-accent-orange" /> :
              <ClipboardCheck size={14} className="text-navy-400" />}
           </div>
-          <span className="text-sm font-semibold text-white">{section.name}</span>
+          <span className="text-sm font-semibold text-white">{t(`inspectionSection.sectionName.${section.name}`, section.name)}</span>
         </div>
         <div className="flex items-center gap-1.5">
           <button
@@ -1414,7 +1419,7 @@ function InspectionSectionRow({ section, state, onStateChange }) {
                 ? 'bg-accent-green/20 border-accent-green/50 text-accent-green'
                 : 'bg-navy-800 border-navy-700 text-navy-300 hover:border-navy-600'
             }`}
-          >✓ OK</button>
+          >{t('inspectionSection.ok', '✓ OK')}</button>
           <button
             onClick={() => onStateChange({ status: 'issue', defects: state?.defects || [] })}
             className={`px-3 py-1.5 rounded-md text-xs font-semibold border transition-all cursor-pointer ${
@@ -1422,7 +1427,7 @@ function InspectionSectionRow({ section, state, onStateChange }) {
                 ? 'bg-accent-orange/20 border-accent-orange/50 text-accent-orange'
                 : 'bg-navy-800 border-navy-700 text-navy-300 hover:border-navy-600'
             }`}
-          >⚠ Issue</button>
+          >{t('inspectionSection.issue', '⚠ Issue')}</button>
         </div>
       </div>
 
@@ -1430,7 +1435,7 @@ function InspectionSectionRow({ section, state, onStateChange }) {
         {isIssue && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
             <div className="px-4 pb-4 space-y-2 border-t border-navy-700/40">
-              <div className="text-[10px] uppercase tracking-wide text-navy-500 mt-3 mb-1">Select affected parts</div>
+              <div className="text-[10px] uppercase tracking-wide text-navy-500 mt-3 mb-1">{t('inspectionSection.selectAffectedParts', 'Select affected parts')}</div>
               <div className="flex flex-wrap gap-1.5">
                 {section.parts.map((part) => {
                   const selected = (state?.defects || []).find((d) => d.part === part);
@@ -1445,7 +1450,7 @@ function InspectionSectionRow({ section, state, onStateChange }) {
                       }`}
                     >
                       {selected && <Check size={10} className="inline mr-1" />}
-                      {part}
+                      {t(`inspectionSection.part.${part}`, part)}
                     </button>
                   );
                 })}
@@ -1456,13 +1461,13 @@ function InspectionSectionRow({ section, state, onStateChange }) {
                   {state.defects.map((d) => (
                     <div key={d.part} className="bg-navy-900/60 border border-navy-700/40 rounded-lg p-3">
                       <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-semibold text-white">{d.part}</span>
+                        <span className="text-xs font-semibold text-white">{t(`inspectionSection.part.${d.part}`, d.part)}</span>
                       </div>
                       <input
                         type="text"
                         value={d.note}
                         onChange={(e) => updateDefect(d.part, 'note', e.target.value)}
-                        placeholder="Describe the defect (e.g. 'cracked lens, visible hairline')"
+                        placeholder={t('inspectionSection.defectPlaceholder', "Describe the defect (e.g. 'cracked lens, visible hairline')")}
                         className="w-full rounded-md px-2.5 py-1.5 text-xs bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue"
                       />
                     </div>
@@ -1478,6 +1483,7 @@ function InspectionSectionRow({ section, state, onStateChange }) {
 }
 
 function StartInspectionModal({ user, onClose }) {
+  const { t } = useTranslation('dashboard');
   const [step, setStep] = useState(1);
   const [dsp, setDsp] = useState(null);
   const [dspDropdownOpen, setDspDropdownOpen] = useState(false);
@@ -1537,8 +1543,8 @@ function StartInspectionModal({ user, onClose }) {
                 <ShieldCheck size={18} className="text-accent-green" fill="#22c55e" stroke="white" strokeWidth={2.2} />
               </div>
               <div className="min-w-0">
-                <h3 className="text-base font-semibold text-white truncate">Start New Inspection</h3>
-                <p className="text-[11px] text-navy-400 truncate">Inspector: <span className="text-white font-medium">{user?.name || 'Technician'}</span></p>
+                <h3 className="text-base font-semibold text-white truncate">{t('startInspectionModal.title', 'Start New Inspection')}</h3>
+                <p className="text-[11px] text-navy-400 truncate">{t('startInspectionModal.inspectorPrefix', 'Inspector:')} <span className="text-white font-medium">{user?.name || t('startInspectionModal.technicianFallback', 'Technician')}</span></p>
               </div>
             </div>
             <button onClick={onClose} className="text-navy-400 hover:text-white p-2 -mr-2 shrink-0"><X size={20} /></button>
@@ -1561,9 +1567,9 @@ function StartInspectionModal({ user, onClose }) {
               ))}
             </div>
             <div className="flex items-center justify-between text-[10px] sm:text-[11px] text-navy-400 mb-2 gap-1">
-              <span className={`truncate ${step >= 1 ? 'text-white font-semibold' : ''}`}>1. DSP &amp; Vehicle</span>
-              <span className={`truncate ${step >= 2 ? 'text-white font-semibold' : ''}`}>2. Walkthrough</span>
-              <span className={`truncate ${step >= 3 ? 'text-white font-semibold' : ''}`}>3. Submit</span>
+              <span className={`truncate ${step >= 1 ? 'text-white font-semibold' : ''}`}>{t('startInspectionModal.step1Label', '1. DSP & Vehicle')}</span>
+              <span className={`truncate ${step >= 2 ? 'text-white font-semibold' : ''}`}>{t('startInspectionModal.step2Label', '2. Walkthrough')}</span>
+              <span className={`truncate ${step >= 3 ? 'text-white font-semibold' : ''}`}>{t('startInspectionModal.step3Label', '3. Submit')}</span>
             </div>
           </div>
         )}
@@ -1577,19 +1583,21 @@ function StartInspectionModal({ user, onClose }) {
                   className="w-16 h-16 mx-auto rounded-full bg-accent-green/15 border border-accent-green/40 flex items-center justify-center mb-4">
                   <CheckCircle2 size={32} className="text-accent-green" />
                 </motion.div>
-                <h4 className="text-lg font-semibold text-white mb-1">Inspection Submitted</h4>
+                <h4 className="text-lg font-semibold text-white mb-1">{t('startInspectionModal.successTitle', 'Inspection Submitted')}</h4>
                 <p className="text-sm text-navy-400 mb-4">
-                  {totalDefects > 0 ? `${totalDefects} defect${totalDefects > 1 ? 's' : ''} reported across ${issueSections} section${issueSections > 1 ? 's' : ''}.` : 'All sections passed — van is ready to roll.'}
+                  {totalDefects > 0
+                    ? t('startInspectionModal.successDefectsFmt', { count: totalDefects, sections: issueSections, defaultValue: `${totalDefects} defect${totalDefects > 1 ? 's' : ''} reported across ${issueSections} section${issueSections > 1 ? 's' : ''}.` })
+                    : t('startInspectionModal.successAllPassed', 'All sections passed — van is ready to roll.')}
                 </p>
                 <div className="inline-flex flex-col gap-1 px-4 py-3 rounded-lg bg-navy-800/60 border border-navy-700/40 text-left">
-                  <div className="text-[11px] text-navy-400">Inspection ID</div>
+                  <div className="text-[11px] text-navy-400">{t('startInspectionModal.inspectionIdLabel', 'Inspection ID')}</div>
                   <div className="text-sm font-mono text-accent-blue">{inspectionId}</div>
-                  <div className="text-[11px] text-navy-400 mt-1">DSP: <span className="text-white">{dsp?.name}</span> · Vehicle: <span className="text-white">{vehicle?.id}</span></div>
-                  <div className="text-[11px] text-navy-400">Mileage: <span className="text-white">{Number(mileage).toLocaleString()} mi</span></div>
+                  <div className="text-[11px] text-navy-400 mt-1">{t('startInspectionModal.dspLabel', 'DSP:')} <span className="text-white">{dsp?.name}</span> · {t('startInspectionModal.vehicleSummaryLabel', 'Vehicle:')} <span className="text-white">{vehicle?.id}</span></div>
+                  <div className="text-[11px] text-navy-400">{t('startInspectionModal.mileageLabel', 'Mileage:')} <span className="text-white">{Number(mileage).toLocaleString()} {t('startInspectionModal.milesShort', 'mi')}</span></div>
                 </div>
                 {totalDefects > 0 && (
                   <div className="mt-4 text-[11px] text-navy-400">
-                    Work orders for the {totalDefects} defect{totalDefects > 1 ? 's' : ''} have been auto-created and dispatched.
+                    {t('startInspectionModal.workOrdersAutoFmt', { count: totalDefects, defaultValue: `Work orders for the ${totalDefects} defect${totalDefects > 1 ? 's' : ''} have been auto-created and dispatched.` })}
                   </div>
                 )}
               </motion.div>
@@ -1598,7 +1606,7 @@ function StartInspectionModal({ user, onClose }) {
                 {/* DSP selection */}
                 <div>
                   <label className="text-xs font-semibold text-navy-300 mb-1.5 block flex items-center gap-1.5">
-                    <Users size={12} className="text-accent-blue" /> DSP (assigned from Admin)
+                    <Users size={12} className="text-accent-blue" /> {t('startInspectionModal.dspFieldLabel', 'DSP (assigned from Admin)')}
                   </label>
                   <div className="relative">
                     <button
@@ -1608,10 +1616,10 @@ function StartInspectionModal({ user, onClose }) {
                       {dsp ? (
                         <div className="min-w-0 flex-1">
                           <div className="text-sm font-semibold text-white truncate">{dsp.name} <span className="text-navy-400 font-normal">({dsp.code})</span></div>
-                          <div className="text-[11px] text-navy-400 truncate">Station {dsp.station} · {dsp.vanCount} vans · {dsp.address}</div>
+                          <div className="text-[11px] text-navy-400 truncate">{t('startInspectionModal.dspOptionSubFmt', { station: dsp.station, vans: dsp.vanCount, address: dsp.address, defaultValue: `Station ${dsp.station} · ${dsp.vanCount} vans · ${dsp.address}` })}</div>
                         </div>
                       ) : (
-                        <span className="text-sm text-navy-400">Select the DSP to inspect…</span>
+                        <span className="text-sm text-navy-400">{t('startInspectionModal.dspPlaceholder', 'Select the DSP to inspect…')}</span>
                       )}
                       <ChevronDown size={16} className={`text-navy-400 shrink-0 ml-2 transition-transform ${dspDropdownOpen ? 'rotate-180' : ''}`} />
                     </button>
@@ -1629,7 +1637,7 @@ function StartInspectionModal({ user, onClose }) {
                             >
                               <div className="min-w-0 flex-1">
                                 <div className="text-sm font-semibold text-white truncate">{d.name} <span className="text-navy-400 font-normal">({d.code})</span></div>
-                                <div className="text-[11px] text-navy-400 truncate">Station {d.station} · {d.vanCount} vans</div>
+                                <div className="text-[11px] text-navy-400 truncate">{t('startInspectionModal.dspListSubFmt', { station: d.station, vans: d.vanCount, defaultValue: `Station ${d.station} · ${d.vanCount} vans` })}</div>
                               </div>
                               {dsp?.id === d.id && <Check size={14} className="text-accent-green shrink-0" />}
                             </button>
@@ -1643,8 +1651,8 @@ function StartInspectionModal({ user, onClose }) {
                 {/* Vehicle selection — filtered by DSP */}
                 <div>
                   <label className="text-xs font-semibold text-navy-300 mb-1.5 block flex items-center gap-1.5">
-                    <Wrench size={12} className="text-accent-green" /> Vehicle
-                    {dsp && <span className="text-[10px] font-normal text-navy-500 ml-auto">{availableVehicles.length} linked to {dsp.code}</span>}
+                    <Wrench size={12} className="text-accent-green" /> {t('startInspectionModal.vehicleFieldLabel', 'Vehicle')}
+                    {dsp && <span className="text-[10px] font-normal text-navy-500 ml-auto">{t('startInspectionModal.vehiclesLinkedFmt', { count: availableVehicles.length, code: dsp.code, defaultValue: `${availableVehicles.length} linked to ${dsp.code}` })}</span>}
                   </label>
                   <div className="relative">
                     <button
@@ -1659,10 +1667,10 @@ function StartInspectionModal({ user, onClose }) {
                       {vehicle ? (
                         <div className="min-w-0 flex-1">
                           <div className="text-sm font-semibold text-white truncate">{vehicle.id} <span className="text-navy-400 font-normal">— {vehicle.model}</span></div>
-                          <div className="text-[11px] text-navy-400 truncate">{vehicle.plate} · Last inspected {vehicle.lastInspection}</div>
+                          <div className="text-[11px] text-navy-400 truncate">{t('startInspectionModal.vehicleOptionSubFmt', { plate: vehicle.plate, date: vehicle.lastInspection, defaultValue: `${vehicle.plate} · Last inspected ${vehicle.lastInspection}` })}</div>
                         </div>
                       ) : (
-                        <span className="text-sm text-navy-400">{dsp ? 'Select a vehicle from this DSP…' : 'Pick a DSP first'}</span>
+                        <span className="text-sm text-navy-400">{dsp ? t('startInspectionModal.vehicleEmptyWithDsp', 'Select a vehicle from this DSP…') : t('startInspectionModal.vehicleEmptyNoDsp', 'Pick a DSP first')}</span>
                       )}
                       <ChevronDown size={16} className={`text-navy-400 shrink-0 ml-2 transition-transform ${vehicleDropdownOpen ? 'rotate-180' : ''}`} />
                     </button>
@@ -1680,13 +1688,13 @@ function StartInspectionModal({ user, onClose }) {
                             >
                               <div className="min-w-0 flex-1">
                                 <div className="text-sm font-semibold text-white truncate">{v.id} <span className="text-navy-400 font-normal">— {v.model}</span></div>
-                                <div className="text-[11px] text-navy-400 truncate">{v.plate} · Last: {v.lastInspection}</div>
+                                <div className="text-[11px] text-navy-400 truncate">{t('startInspectionModal.vehicleListOptionSubFmt', { plate: v.plate, date: v.lastInspection, defaultValue: `${v.plate} · Last: ${v.lastInspection}` })}</div>
                               </div>
                               {vehicle?.id === v.id && <Check size={14} className="text-accent-green shrink-0" />}
                             </button>
                           ))}
                           {availableVehicles.length === 0 && (
-                            <div className="px-4 py-6 text-center text-xs text-navy-400">No vehicles registered for this DSP.</div>
+                            <div className="px-4 py-6 text-center text-xs text-navy-400">{t('startInspectionModal.noVehicles', 'No vehicles registered for this DSP.')}</div>
                           )}
                         </div>
                       </>
@@ -1696,20 +1704,20 @@ function StartInspectionModal({ user, onClose }) {
 
                 {/* Mileage */}
                 <div>
-                  <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Current odometer reading (miles)</label>
+                  <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('startInspectionModal.mileageInputLabel', 'Current odometer reading (miles)')}</label>
                   <input
                     type="number"
                     inputMode="numeric"
                     value={mileage}
                     onChange={(e) => setMileage(e.target.value)}
-                    placeholder="e.g. 48250"
+                    placeholder={t('startInspectionModal.mileageInputPlaceholder', 'e.g. 48250')}
                     className="w-full rounded-lg px-4 py-3 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue"
                   />
                 </div>
 
                 {/* Odometer photo */}
                 <div>
-                  <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Odometer photo (optional)</label>
+                  <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('startInspectionModal.odometerPhotoLabel', 'Odometer photo (optional)')}</label>
                   <label className="flex items-center gap-3 px-4 py-3 rounded-lg border-2 border-dashed border-navy-700/60 bg-navy-800/20 active:bg-navy-800/60 hover:bg-navy-800/40 cursor-pointer transition-colors min-h-[64px]">
                     <div className="w-10 h-10 rounded-lg bg-accent-blue/15 flex items-center justify-center shrink-0">
                       <Camera size={16} className="text-accent-blue" />
@@ -1722,8 +1730,8 @@ function StartInspectionModal({ user, onClose }) {
                         </>
                       ) : (
                         <>
-                          <div className="text-white">Take a photo or upload one</div>
-                          <div className="text-navy-400">JPG/PNG — speeds up mileage audit</div>
+                          <div className="text-white">{t('startInspectionModal.takePhotoOrUpload', 'Take a photo or upload one')}</div>
+                          <div className="text-navy-400">{t('startInspectionModal.jpgPngHint', 'JPG/PNG — speeds up mileage audit')}</div>
                         </>
                       )}
                     </div>
@@ -1740,11 +1748,11 @@ function StartInspectionModal({ user, onClose }) {
             ) : step === 2 ? (
               <motion.div key="s2" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-3">
                 <div className="flex items-center justify-between mb-1">
-                  <div className="text-xs text-navy-400">Mark each section as OK or report issues.</div>
+                  <div className="text-xs text-navy-400">{t('startInspectionModal.step2Instruction', 'Mark each section as OK or report issues.')}</div>
                   <div className="text-[11px] text-navy-400">
-                    <span className="text-accent-green font-semibold">{okSections}</span> OK ·
-                    <span className="text-accent-orange font-semibold ml-1">{issueSections}</span> Issue ·
-                    <span className="text-white font-semibold ml-1">{completedSections}/{totalSections}</span>
+                    <span className="text-accent-green font-semibold">{okSections}</span> {t('startInspectionModal.statOk', 'OK')} ·
+                    <span className="text-accent-orange font-semibold ml-1">{issueSections}</span> {t('startInspectionModal.statIssues', 'Issues')} ·
+                    <span className="text-white font-semibold ml-1">{t('startInspectionModal.completedTotalFmt', { completed: completedSections, total: totalSections, defaultValue: `${completedSections}/${totalSections}` })}</span>
                   </div>
                 </div>
                 {inspectionSections.map((sec) => (
@@ -1757,47 +1765,47 @@ function StartInspectionModal({ user, onClose }) {
                 ))}
                 {!canSubmit && completedSections > 0 && (
                   <div className="flex items-center gap-2 text-xs text-accent-orange bg-accent-orange/10 border border-accent-orange/30 rounded-lg px-3 py-2 mt-2">
-                    <AlertTriangle size={12} /> {totalSections - completedSections} section{totalSections - completedSections > 1 ? 's' : ''} remaining before you can submit.
+                    <AlertTriangle size={12} /> {t('startInspectionModal.sectionsRemainingFmt', { count: totalSections - completedSections, defaultValue: `${totalSections - completedSections} section${totalSections - completedSections > 1 ? 's' : ''} remaining before you can submit.` })}
                   </div>
                 )}
               </motion.div>
             ) : (
               <motion.div key="s3" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-3">
-                <div className="text-xs text-navy-400">Review before submitting.</div>
+                <div className="text-xs text-navy-400">{t('startInspectionModal.step3Instruction', 'Review before submitting.')}</div>
                 <div className="rounded-xl border border-navy-700/60 bg-navy-800/40 p-4 space-y-2">
-                  <div className="flex justify-between text-sm gap-3"><span className="text-navy-400 shrink-0">DSP</span><span className="text-white font-semibold text-right truncate">{dsp?.name} <span className="text-navy-400 font-normal">({dsp?.code})</span></span></div>
-                  <div className="flex justify-between text-sm gap-3"><span className="text-navy-400 shrink-0">Station</span><span className="text-white text-right">{dsp?.station}</span></div>
-                  <div className="flex justify-between text-sm gap-3"><span className="text-navy-400 shrink-0">Vehicle</span><span className="text-white font-semibold text-right truncate">{vehicle?.id} · {vehicle?.model}</span></div>
-                  <div className="flex justify-between text-sm gap-3"><span className="text-navy-400 shrink-0">Odometer</span><span className="text-white text-right">{Number(mileage).toLocaleString()} mi</span></div>
-                  <div className="flex justify-between text-sm gap-3"><span className="text-navy-400 shrink-0">Inspector</span><span className="text-white text-right truncate">{user?.name || 'Technician'}</span></div>
+                  <div className="flex justify-between text-sm gap-3"><span className="text-navy-400 shrink-0">{t('startInspectionModal.reviewDsp', 'DSP')}</span><span className="text-white font-semibold text-right truncate">{dsp?.name} <span className="text-navy-400 font-normal">({dsp?.code})</span></span></div>
+                  <div className="flex justify-between text-sm gap-3"><span className="text-navy-400 shrink-0">{t('startInspectionModal.reviewStation', 'Station')}</span><span className="text-white text-right">{dsp?.station}</span></div>
+                  <div className="flex justify-between text-sm gap-3"><span className="text-navy-400 shrink-0">{t('startInspectionModal.reviewVehicle', 'Vehicle')}</span><span className="text-white font-semibold text-right truncate">{vehicle?.id} · {vehicle?.model}</span></div>
+                  <div className="flex justify-between text-sm gap-3"><span className="text-navy-400 shrink-0">{t('startInspectionModal.reviewOdometer', 'Odometer')}</span><span className="text-white text-right">{Number(mileage).toLocaleString()} {t('startInspectionModal.milesShort', 'mi')}</span></div>
+                  <div className="flex justify-between text-sm gap-3"><span className="text-navy-400 shrink-0">{t('startInspectionModal.reviewInspector', 'Inspector')}</span><span className="text-white text-right truncate">{user?.name || t('startInspectionModal.technicianFallback', 'Technician')}</span></div>
                 </div>
                 <div className="grid grid-cols-3 gap-2">
                   <div className="rounded-lg border border-accent-green/30 bg-accent-green/5 p-3 text-center">
                     <CheckCircle2 size={16} className="mx-auto text-accent-green mb-1" />
-                    <div className="text-[10px] text-navy-400">OK</div>
+                    <div className="text-[10px] text-navy-400">{t('startInspectionModal.statOk', 'OK')}</div>
                     <div className="text-sm font-bold text-white">{okSections}</div>
                   </div>
                   <div className="rounded-lg border border-accent-orange/30 bg-accent-orange/5 p-3 text-center">
                     <AlertTriangle size={16} className="mx-auto text-accent-orange mb-1" />
-                    <div className="text-[10px] text-navy-400">Issues</div>
+                    <div className="text-[10px] text-navy-400">{t('startInspectionModal.statIssues', 'Issues')}</div>
                     <div className="text-sm font-bold text-white">{issueSections}</div>
                   </div>
                   <div className="rounded-lg border border-accent-red/30 bg-accent-red/5 p-3 text-center">
                     <Wrench size={16} className="mx-auto text-accent-red mb-1" />
-                    <div className="text-[10px] text-navy-400">Defects</div>
+                    <div className="text-[10px] text-navy-400">{t('startInspectionModal.statDefects', 'Defects')}</div>
                     <div className="text-sm font-bold text-white">{totalDefects}</div>
                   </div>
                 </div>
                 {totalDefects > 0 && (
                   <div className="rounded-lg border border-navy-700/40 bg-navy-800/40 p-3">
-                    <div className="text-[11px] font-semibold text-navy-300 uppercase tracking-wide mb-2">Defects detected</div>
+                    <div className="text-[11px] font-semibold text-navy-300 uppercase tracking-wide mb-2">{t('startInspectionModal.defectsDetected', 'Defects detected')}</div>
                     <div className="space-y-1.5 max-h-32 overflow-y-auto">
                       {Object.entries(sectionStates).flatMap(([secId, state]) => {
                         const sec = inspectionSections.find((s) => s.id === secId);
                         return (state?.defects || []).map((d) => (
                           <div key={`${secId}-${d.part}`} className="flex items-center justify-between text-xs py-1">
-                            <span className="text-white">{sec?.name.split('. ')[1]} · {d.part}</span>
-                            
+                            <span className="text-white">{sec ? t(`inspectionSection.sectionName.${sec.name}`, sec.name).split('. ')[1] : ''} · {t(`inspectionSection.part.${d.part}`, d.part)}</span>
+
                           </div>
                         ));
                       })}
@@ -1815,27 +1823,27 @@ function StartInspectionModal({ user, onClose }) {
             <button
               onClick={() => (step === 1 ? onClose() : setStep(step - 1))}
               className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 transition-colors cursor-pointer"
-            >{step === 1 ? 'Cancel' : 'Back'}</button>
+            >{step === 1 ? t('startInspectionModal.cancel', 'Cancel') : t('startInspectionModal.back', 'Back')}</button>
             {step < 3 ? (
               <button
                 onClick={() => setStep(step + 1)}
                 disabled={step === 1 ? !canGoStep2 : !canSubmit}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-gradient-to-r from-accent-green to-accent-blue text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
-              >Next <ArrowRight size={14} /></button>
+              >{t('startInspectionModal.next', 'Next')} <ArrowRight size={14} /></button>
             ) : (
               <button
                 onClick={handleSubmit}
                 disabled={submitting}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-gradient-to-r from-accent-green to-accent-blue text-white hover:opacity-90 disabled:opacity-40 transition-all cursor-pointer"
               >
-                {submitting ? (<><motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full" /> Submitting…</>) : (<>Submit <Check size={14} /></>)}
+                {submitting ? (<><motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full" /> {t('startInspectionModal.submitting', 'Submitting…')}</>) : (<>{t('startInspectionModal.submit', 'Submit')} <Check size={14} /></>)}
               </button>
             )}
           </div>
         )}
         {success && (
           <div className="flex items-center justify-end px-4 sm:px-6 py-3 sm:py-4 border-t border-navy-800">
-            <button onClick={onClose} className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-accent-green text-white hover:opacity-90 cursor-pointer">Done</button>
+            <button onClick={onClose} className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-accent-green text-white hover:opacity-90 cursor-pointer">{t('startInspectionModal.done', 'Done')}</button>
           </div>
         )}
       </motion.div>
@@ -1850,6 +1858,7 @@ const REPAIR_FEEDBACK_ATTRIBUTES = ['Turnaround Time', 'Communication', 'Profess
 // Used inline on each row of the Defects Repaired history list so the DSP
 // can rate the vendor's work without leaving the page.
 function RepairFeedback({ woId, feedback, onChange }) {
+  const { t } = useTranslation('dashboard');
   const [openDir, setOpenDir] = useState(null); // 'up' | 'down' | null
   const current = feedback?.[woId];
 
@@ -1870,7 +1879,9 @@ function RepairFeedback({ woId, feedback, onChange }) {
       <div className="relative">
         <button
           onClick={(e) => { e.stopPropagation(); setOpenDir(openDir === 'up' ? null : 'up'); }}
-          title={current?.vote === 'up' ? `Positive: ${current.attribute}` : 'Give positive feedback'}
+          title={current?.vote === 'up'
+            ? t('repairFeedback.positiveTitleFmt', { attribute: t(`repairFeedback.attribute.${current.attribute}`, current.attribute), defaultValue: `Positive: ${current.attribute}` })
+            : t('repairFeedback.givePositive', 'Give positive feedback')}
           className={`flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] transition-all cursor-pointer ${
             current?.vote === 'up'
               ? 'bg-accent-green/20 border-accent-green/50 text-accent-green'
@@ -1887,18 +1898,18 @@ function RepairFeedback({ woId, feedback, onChange }) {
               <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
                 className="absolute top-full right-0 mt-1 w-48 bg-navy-900 border border-accent-green/40 rounded-lg shadow-2xl z-50 overflow-hidden">
                 <div className="px-3 py-2 border-b border-navy-800 bg-accent-green/10 text-[10px] font-semibold text-accent-green uppercase tracking-wide">
-                  Most impressive attribute
+                  {t('repairFeedback.mostImpressive', 'Most impressive attribute')}
                 </div>
                 {REPAIR_FEEDBACK_ATTRIBUTES.map((attr) => (
                   <button key={attr} onClick={() => selectAttribute('up', attr)}
                     className="w-full flex items-center justify-between px-3 py-2 text-left text-xs text-white hover:bg-accent-green/10 border-b border-navy-800/60 last:border-b-0">
-                    <span>{attr}</span>
+                    <span>{t(`repairFeedback.attribute.${attr}`, attr)}</span>
                     {current?.vote === 'up' && current?.attribute === attr && <Check size={11} className="text-accent-green" />}
                   </button>
                 ))}
                 {current?.vote === 'up' && (
                   <button onClick={clear}
-                    className="w-full px-3 py-2 text-[11px] text-navy-400 hover:text-accent-red border-t border-navy-800">Clear feedback</button>
+                    className="w-full px-3 py-2 text-[11px] text-navy-400 hover:text-accent-red border-t border-navy-800">{t('repairFeedback.clear', 'Clear feedback')}</button>
                 )}
               </motion.div>
             </>
@@ -1909,7 +1920,9 @@ function RepairFeedback({ woId, feedback, onChange }) {
       <div className="relative">
         <button
           onClick={(e) => { e.stopPropagation(); setOpenDir(openDir === 'down' ? null : 'down'); }}
-          title={current?.vote === 'down' ? `Issue: ${current.attribute}` : 'Report an issue'}
+          title={current?.vote === 'down'
+            ? t('repairFeedback.issueTitleFmt', { attribute: t(`repairFeedback.attribute.${current.attribute}`, current.attribute), defaultValue: `Issue: ${current.attribute}` })
+            : t('repairFeedback.reportIssue', 'Report an issue')}
           className={`flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] transition-all cursor-pointer ${
             current?.vote === 'down'
               ? 'bg-accent-red/20 border-accent-red/50 text-accent-red'
@@ -1926,18 +1939,18 @@ function RepairFeedback({ woId, feedback, onChange }) {
               <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
                 className="absolute top-full right-0 mt-1 w-48 bg-navy-900 border border-accent-red/40 rounded-lg shadow-2xl z-50 overflow-hidden">
                 <div className="px-3 py-2 border-b border-navy-800 bg-accent-red/10 text-[10px] font-semibold text-accent-red uppercase tracking-wide">
-                  Biggest issue
+                  {t('repairFeedback.biggestIssue', 'Biggest issue')}
                 </div>
                 {REPAIR_FEEDBACK_ATTRIBUTES.map((attr) => (
                   <button key={attr} onClick={() => selectAttribute('down', attr)}
                     className="w-full flex items-center justify-between px-3 py-2 text-left text-xs text-white hover:bg-accent-red/10 border-b border-navy-800/60 last:border-b-0">
-                    <span>{attr}</span>
+                    <span>{t(`repairFeedback.attribute.${attr}`, attr)}</span>
                     {current?.vote === 'down' && current?.attribute === attr && <Check size={11} className="text-accent-red" />}
                   </button>
                 ))}
                 {current?.vote === 'down' && (
                   <button onClick={clear}
-                    className="w-full px-3 py-2 text-[11px] text-navy-400 hover:text-accent-green border-t border-navy-800">Clear feedback</button>
+                    className="w-full px-3 py-2 text-[11px] text-navy-400 hover:text-accent-green border-t border-navy-800">{t('repairFeedback.clear', 'Clear feedback')}</button>
                 )}
               </motion.div>
             </>
@@ -1950,6 +1963,7 @@ function RepairFeedback({ woId, feedback, onChange }) {
 
 // ============ Repair History Modal — Completed defects timeline ============
 function RepairHistoryModal({ repairedWOs, user, onClose }) {
+  const { t } = useTranslation('dashboard');
   const [expanded, setExpanded] = useState(null);
   const [search, setSearch] = useState('');
   const [feedback, setFeedback] = useState({}); // { [woId]: { vote: 'up'|'down', attribute } }
@@ -1999,8 +2013,8 @@ function RepairHistoryModal({ repairedWOs, user, onClose }) {
                 <CheckCheck size={18} className="text-accent-green" />
               </div>
               <div>
-                <h3 className="text-base font-semibold text-white">Defects Repaired — History</h3>
-                <p className="text-[11px] text-navy-400">Full audit trail of completed work orders for {user?.role === 'dsp_owner' ? user.org : 'your fleet'}</p>
+                <h3 className="text-base font-semibold text-white">{t('repairHistoryModal.title', 'Defects Repaired — History')}</h3>
+                <p className="text-[11px] text-navy-400">{t('repairHistoryModal.subtitleFmt', { org: user?.role === 'dsp_owner' ? user.org : t('repairHistoryModal.yourFleetFallback', 'your fleet'), defaultValue: `Full audit trail of completed work orders for ${user?.role === 'dsp_owner' ? user.org : 'your fleet'}` })}</p>
               </div>
             </div>
             <button onClick={onClose} className="text-navy-400 hover:text-white p-2 -mr-2 shrink-0"><X size={20} /></button>
@@ -2008,20 +2022,20 @@ function RepairHistoryModal({ repairedWOs, user, onClose }) {
           {/* Stats row */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
             <div className="rounded-lg bg-navy-800/60 border border-navy-700/40 px-3 py-2">
-              <div className="text-[10px] text-navy-400 uppercase tracking-wide">Total repaired</div>
+              <div className="text-[10px] text-navy-400 uppercase tracking-wide">{t('repairHistoryModal.totalRepaired', 'Total repaired')}</div>
               <div className="text-base font-bold text-accent-green">{sorted.length}</div>
             </div>
             <div className="rounded-lg bg-navy-800/60 border border-navy-700/40 px-3 py-2">
-              <div className="text-[10px] text-navy-400 uppercase tracking-wide">Avg turnaround</div>
-              <div className="text-base font-bold text-white">{avgTurnaround}h</div>
+              <div className="text-[10px] text-navy-400 uppercase tracking-wide">{t('repairHistoryModal.avgTurnaround', 'Avg turnaround')}</div>
+              <div className="text-base font-bold text-white">{avgTurnaround}{t('repairHistoryModal.hoursShort', 'h')}</div>
             </div>
             <div className="rounded-lg bg-navy-800/60 border border-navy-700/40 px-3 py-2">
-              <div className="text-[10px] text-navy-400 uppercase tracking-wide">Technicians</div>
+              <div className="text-[10px] text-navy-400 uppercase tracking-wide">{t('repairHistoryModal.technicians', 'Technicians')}</div>
               <div className="text-base font-bold text-white">{uniqueTechs}</div>
             </div>
             <div className="rounded-lg bg-navy-800/60 border border-navy-700/40 px-3 py-2">
-              <div className="text-[10px] text-navy-400 uppercase tracking-wide">Top section</div>
-              <div className="text-xs font-bold text-white truncate">{topSection ? topSection[0].split('. ')[1] : '—'}</div>
+              <div className="text-[10px] text-navy-400 uppercase tracking-wide">{t('repairHistoryModal.topSection', 'Top section')}</div>
+              <div className="text-xs font-bold text-white truncate">{topSection ? t(`inspectionSection.sectionName.${topSection[0]}`, topSection[0]).split('. ')[1] : t('repairHistoryModal.emptyValue', '—')}</div>
             </div>
           </div>
         </div>
@@ -2031,7 +2045,7 @@ function RepairHistoryModal({ repairedWOs, user, onClose }) {
           <div className="relative">
             <Info size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-navy-400" />
             <input value={search} onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by van, defect or technician…"
+              placeholder={t('repairHistoryModal.searchPlaceholder', 'Search by van, defect or technician…')}
               className="w-full rounded-lg pl-9 pr-3 py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-green" />
           </div>
         </div>
@@ -2041,8 +2055,8 @@ function RepairHistoryModal({ repairedWOs, user, onClose }) {
           {filtered.length === 0 ? (
             <div className="text-center py-10">
               <CheckCheck size={40} className="text-navy-600 mx-auto mb-2" />
-              <p className="text-sm text-white">No repair history {search ? 'matches your search' : 'yet'}</p>
-              <p className="text-xs text-navy-400">{search ? 'Try a different keyword' : 'As vendors complete work orders, they appear here'}</p>
+              <p className="text-sm text-white">{search ? t('repairHistoryModal.noMatch', 'No repair history matches your search') : t('repairHistoryModal.noHistory', 'No repair history yet')}</p>
+              <p className="text-xs text-navy-400">{search ? t('repairHistoryModal.tryDifferentKeyword', 'Try a different keyword') : t('repairHistoryModal.asVendorsComplete', 'As vendors complete work orders, they appear here')}</p>
             </div>
           ) : (
             filtered.map((wo) => {
@@ -2063,9 +2077,9 @@ function RepairHistoryModal({ repairedWOs, user, onClose }) {
                     <div className="flex items-start justify-between gap-3 mb-1 flex-wrap">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
-                          <Badge variant="green" size="md"><CheckCheck size={10} className="inline mr-0.5" /> Completed</Badge>
+                          <Badge variant="green" size="md"><CheckCheck size={10} className="inline mr-0.5" /> {t('repairHistoryModal.completedBadge', 'Completed')}</Badge>
                           <span className="text-xs font-mono text-accent-green">{wo.id}</span>
-                          {wo.flags?.includes('rush_order') && <Badge variant="red"><Flame size={9} className="inline mr-0.5" /> Rush Order</Badge>}
+                          {wo.flags?.includes('rush_order') && <Badge variant="red"><Flame size={9} className="inline mr-0.5" /> {t('repairHistoryModal.rushOrderBadge', 'Rush Order')}</Badge>}
                         </div>
                         <div className="text-sm font-semibold text-white">{wo.description}</div>
                         <div className="text-[11px] text-navy-400 mt-0.5">{wo.section} · {wo.part}</div>
@@ -2073,7 +2087,7 @@ function RepairHistoryModal({ repairedWOs, user, onClose }) {
                       <div className="flex items-center gap-3 shrink-0">
                         <RepairFeedback woId={wo.id} feedback={feedback} onChange={setFeedback} />
                         <div className="text-right">
-                          <div className="text-[11px] text-navy-400">Completed</div>
+                          <div className="text-[11px] text-navy-400">{t('repairHistoryModal.completedLabel', 'Completed')}</div>
                           <div className="text-xs text-white">{new Date(wo.completedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
                           <div className="text-[10px] text-navy-500">{new Date(wo.completedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</div>
                         </div>
@@ -2081,13 +2095,13 @@ function RepairHistoryModal({ repairedWOs, user, onClose }) {
                     </div>
                     <div className="flex items-center justify-between gap-2 mt-2 text-[11px] flex-wrap">
                       <div className="flex items-center gap-2 flex-wrap text-navy-300">
-                        <span className="flex items-center gap-1"><Wrench size={10} className="text-accent-green" /> {wo.assignedTechnician || '—'}</span>
+                        <span className="flex items-center gap-1"><Wrench size={10} className="text-accent-green" /> {wo.assignedTechnician || t('repairHistoryModal.emptyValue', '—')}</span>
                         <span className="text-navy-600">·</span>
                         <span>{wo.vehicleId}</span>
                         {turnaroundH !== null && (
                           <>
                             <span className="text-navy-600">·</span>
-                            <span className="flex items-center gap-1"><Clock size={10} className="text-accent-blue" /> {turnaroundH}h turnaround</span>
+                            <span className="flex items-center gap-1"><Clock size={10} className="text-accent-blue" /> {t('repairHistoryModal.turnaroundFmt', { count: turnaroundH, defaultValue: `${turnaroundH}h turnaround` })}</span>
                           </>
                         )}
                       </div>
@@ -2102,46 +2116,46 @@ function RepairHistoryModal({ repairedWOs, user, onClose }) {
                         <div className="px-4 py-3 space-y-3">
                           {/* Timeline */}
                           <div>
-                            <div className="text-[10px] font-semibold text-navy-400 uppercase tracking-wide mb-2">Repair timeline</div>
+                            <div className="text-[10px] font-semibold text-navy-400 uppercase tracking-wide mb-2">{t('repairHistoryModal.repairTimeline', 'Repair timeline')}</div>
                             <div className="space-y-2">
                               <TimelineItem
                                 icon={AlertTriangle}
                                 color="accent-orange"
-                                label="Defect reported"
+                                label={t('repairHistoryModal.defectReported', 'Defect reported')}
                                 time={new Date(wo.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                                 detail={wo.reportedBy}
                               />
                               <TimelineItem
                                 icon={PlayCircle}
                                 color="accent-blue"
-                                label={`Assigned to ${wo.assignedTechnician}`}
-                                time="Dispatcher accepted"
-                                detail={dispatcherNote ? dispatcherNote.replace('Dispatcher: ', '') : 'Work order dispatched'}
+                                label={t('repairHistoryModal.assignedToFmt', { name: wo.assignedTechnician, defaultValue: `Assigned to ${wo.assignedTechnician}` })}
+                                time={t('repairHistoryModal.dispatcherAccepted', 'Dispatcher accepted')}
+                                detail={dispatcherNote ? dispatcherNote.replace('Dispatcher: ', '') : t('repairHistoryModal.workOrderDispatched', 'Work order dispatched')}
                               />
                               <TimelineItem
                                 icon={CheckCircle2}
                                 color="accent-green"
-                                label="Work completed"
+                                label={t('repairHistoryModal.workCompleted', 'Work completed')}
                                 time={new Date(wo.completedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                                detail={completedNote ? completedNote.replace('Completed: ', '') : 'Work order closed'}
+                                detail={completedNote ? completedNote.replace('Completed: ', '') : t('repairHistoryModal.workOrderClosed', 'Work order closed')}
                               />
                             </div>
                           </div>
 
                           {/* Details grid */}
                           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
-                            <DetailBox label="Van" value={wo.vehicleId} />
-                            <DetailBox label="Year/Model" value={`${wo.year} ${wo.make} ${wo.model}`} />
-                            <DetailBox label="Plate" value={wo.plate} mono />
-                            <DetailBox label="RO Number" value={wo.roNumber} mono /><DetailBox label="Mileage at completion" value={wo.lastMileage ? `${wo.lastMileage.toLocaleString()} mi` : '—'} />
-                            <DetailBox label="Photos" value={wo.photos > 0 ? `${wo.photos} attached` : 'None'} />
-                            <DetailBox label="FMC" value={wo.fmc} />
+                            <DetailBox label={t('repairHistoryModal.detailVan', 'Van')} value={wo.vehicleId} />
+                            <DetailBox label={t('repairHistoryModal.detailYearModel', 'Year/Model')} value={`${wo.year} ${wo.make} ${wo.model}`} />
+                            <DetailBox label={t('repairHistoryModal.detailPlate', 'Plate')} value={wo.plate} mono />
+                            <DetailBox label={t('repairHistoryModal.detailRoNumber', 'RO Number')} value={wo.roNumber} mono /><DetailBox label={t('repairHistoryModal.detailMileage', 'Mileage at completion')} value={wo.lastMileage ? `${wo.lastMileage.toLocaleString()} ${t('startInspectionModal.milesShort', 'mi')}` : t('repairHistoryModal.emptyValue', '—')} />
+                            <DetailBox label={t('repairHistoryModal.detailPhotos', 'Photos')} value={wo.photos > 0 ? t('repairHistoryModal.photosAttachedFmt', { count: wo.photos, defaultValue: `${wo.photos} attached` }) : t('repairHistoryModal.photosNone', 'None')} />
+                            <DetailBox label={t('repairHistoryModal.detailFmc', 'FMC')} value={wo.fmc} />
                           </div>
 
                           {/* All notes */}
                           {wo.notes && wo.notes.length > 0 && (
                             <div>
-                              <div className="text-[10px] font-semibold text-navy-400 uppercase tracking-wide mb-1.5">All notes ({wo.notes.length})</div>
+                              <div className="text-[10px] font-semibold text-navy-400 uppercase tracking-wide mb-1.5">{t('repairHistoryModal.allNotesFmt', { count: wo.notes.length, defaultValue: `All notes (${wo.notes.length})` })}</div>
                               <div className="space-y-1">
                                 {wo.notes.map((n, i) => (
                                   <div key={i} className="rounded-md bg-navy-800/60 border border-navy-700/40 px-2.5 py-1.5 text-[11px] text-navy-200">{n}</div>
@@ -2162,9 +2176,9 @@ function RepairHistoryModal({ repairedWOs, user, onClose }) {
         {/* Footer */}
         <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-3 sm:py-4 border-t border-navy-800 bg-navy-900/80">
           <div className="text-[11px] text-navy-400">
-            Showing <span className="text-white font-semibold">{filtered.length}</span> of {sorted.length} repaired defects
+            {t('repairHistoryModal.showingFmt', { filtered: filtered.length, total: sorted.length, defaultValue: `Showing ${filtered.length} of ${sorted.length} repaired defects` })}
           </div>
-          <button onClick={onClose} className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-navy-800 border border-navy-700 text-white hover:bg-navy-700 cursor-pointer">Close</button>
+          <button onClick={onClose} className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-navy-800 border border-navy-700 text-white hover:bg-navy-700 cursor-pointer">{t('repairHistoryModal.close', 'Close')}</button>
         </div>
       </motion.div>
     </motion.div>
