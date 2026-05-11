@@ -1,1 +1,201 @@
-{}
+{
+  "realDvic": {
+    "qcBannerToggleHide": "· ocultar banner ·",
+    "qcBannerToggleShow": "· · ·",
+    "qcBannerHideTitle": "Ocultar banner de inspección QC",
+    "qcBannerShowTitle": "Simular día de inspección (mostrar banner)",
+    "startInspectionBanner": {
+      "heading": "Iniciar nuevo QC DVIC",
+      "badge": "Workflow del inspector",
+      "subtitle": "Recorre la inspección de 5 secciones y crea órdenes de trabajo automáticamente para los defectos encontrados",
+      "button": "Iniciar inspección"
+    },
+    "metrics": {
+      "reportedToday": "Defectos reportados por el DSP hoy",
+      "createWOTitle": "Crear orden de trabajo (sin inspección)",
+      "rushOrderFmt_one": "{{count}} orden urgente",
+      "rushOrderFmt_other": "{{count}} órdenes urgentes",
+      "vansInspected": "Vans inspeccionadas",
+      "ofFleetFmt": "de {{count}}",
+      "nextInspectionFmt": "Próxima inspección",
+      "flaggedFmt": "{{count}} marcadas",
+      "flaggedTitleFmt_one": "{{count}} van marcada como no inspeccionable hoy",
+      "flaggedTitleFmt_other": "{{count}} vans marcadas como no inspeccionables hoy",
+      "defectsForApproval": "Defectos por aprobar",
+      "scheduledRepairs": "Reparaciones programadas",
+      "defectsRepaired": "Defectos reparados",
+      "currentWeek": "Semana actual",
+      "pendingFeedbackFmt": "{{count}} pendientes de feedback"
+    },
+    "charts": {
+      "approvedVsRepaired": "Defectos aprobados vs reparados (diario)",
+      "approvedSeries": "Defectos aprobados",
+      "repairedSeries": "Reparados",
+      "openDefects": "Defectos abiertos"
+    }
+  },
+  "todaysDefects": {
+    "defaultTitle": "Defectos de hoy",
+    "totalFmt": "{{count}} en total",
+    "scheduledFmt": "{{count}} programadas",
+    "rushOrderFmt_one": "{{count}} orden urgente",
+    "rushOrderFmt_other": "{{count}} órdenes urgentes",
+    "selectMultipleTitle": "Selecciona varios defectos para convertir en lote",
+    "exitSelectModeTitle": "Salir del modo selección",
+    "cancel": "Cancelar",
+    "select": "Seleccionar",
+    "createDefect": "Crear defecto",
+    "bulkBar": {
+      "selectedFmt": "{{count}} seleccionados",
+      "needsSingleVan": "WO en lote requiere defectos de un solo vehículo",
+      "vansSelectedFmt": "({{count}} vans seleccionadas)",
+      "fromVan": "de",
+      "clear": "Limpiar",
+      "bulkReject": "Rechazar en lote",
+      "bulkRejectTitle": "Rechazar todos los defectos seleccionados",
+      "bulkCreateWO": "Crear WO en lote",
+      "bulkCreateWOTitle": "Crear una orden de trabajo con todos los defectos seleccionados",
+      "bulkCreateWODisabledTitle": "Todos los defectos seleccionados deben pertenecer al mismo vehículo"
+    },
+    "filter": {
+      "vendorLabel": "Vendor:",
+      "statusLabel": "Estado:"
+    },
+    "vendorType": {
+      "all": "Todos",
+      "amr": "AMR",
+      "body": "Carrocería",
+      "netradyne": "Netradyne",
+      "tires": "Llantas",
+      "detailing": "Detalle"
+    },
+    "statusFilter": {
+      "all": "Todos",
+      "open": "Abiertos",
+      "Logged": "Registrado",
+      "Repair Ordered": "Reparación ordenada",
+      "Scheduled": "Programado",
+      "Rejected": "Rechazado"
+    },
+    "table": {
+      "selectAllAria": "Seleccionar todos los defectos visibles",
+      "van": "Van",
+      "defect": "Defecto",
+      "category": "Categoría",
+      "reportedBy": "Reportado por",
+      "status": "Estado",
+      "actions": "Acciones",
+      "selectAriaFmt": "Seleccionar defecto {{id}}",
+      "alreadyHandledTitle": "Este defecto ya se convirtió o rechazó",
+      "viewPhotosFmt_one": "Ver {{count}} foto",
+      "viewPhotosFmt_other": "Ver {{count}} fotos",
+      "addPhoto": "Agregar foto",
+      "statusBadge": {
+        "Rush Order": "Urgente",
+        "Scheduled": "Programado",
+        "Repair Ordered": "Reparación ordenada",
+        "Logged": "Registrado",
+        "Rejected": "Rechazado"
+      },
+      "rowState": {
+        "rejected": "Rechazado",
+        "woSent": "WO enviada"
+      },
+      "rejectTitle": "Rechazar defecto",
+      "reject": "Rechazar",
+      "createWOTitle": "Crear orden de trabajo para este defecto",
+      "createWO": "Crear WO",
+      "noMatch": "Ningún defecto coincide con los filtros actuales.",
+      "clearFilters": "Limpiar filtros"
+    }
+  },
+  "cardDetail": {
+    "title": {
+      "reported": "Defectos reportados por el DSP hoy",
+      "immediate": "Acción inmediata requerida",
+      "inspected": "Vans inspeccionadas en el QC DVIC reciente",
+      "scheduled": "Reparaciones programadas"
+    },
+    "summary": {
+      "reportedDefaultFmt_one": "{{count}} defecto reportado hoy en la flota",
+      "reportedDefaultFmt_other": "{{count}} defectos reportados hoy en la flota",
+      "reportedEmpty": "No hay defectos reportados hoy",
+      "inspectedFmt": "{{inspected}} inspeccionadas · {{incomplete}} no inspeccionables hoy"
+    },
+    "close": "Cerrar",
+    "orderFlexFleet": "Pedir Flex Fleet"
+  },
+  "inspectedRenderer": {
+    "primaryVendor": "Vendor principal hoy:",
+    "keysRecordedLabel": "llaves registradas",
+    "vehiclesLabel": "vehículos",
+    "withIssuesLabel": "con problemas",
+    "notInspectableLabel": "no inspeccionables",
+    "statusLabel": "Estado:",
+    "legend": {
+      "clean": "Sin defectos",
+      "defective": "Con defectos"
+    },
+    "filterByVendor": "Filtrar por vendor inspector",
+    "inspectorCategories": {
+      "amr": "AMR",
+      "amrDesc": "Reparaciones mecánicas Amazon",
+      "body": "Defectos de carrocería",
+      "bodyDesc": "Carrocería y pintura",
+      "tires": "Llantas",
+      "tiresDesc": "Servicio de llantas",
+      "detailing": "Detalle",
+      "detailingDesc": "Limpieza / detalle interior"
+    },
+    "clear": "Limpiar",
+    "inspectedHeadingFmt": "Inspeccionadas ({{filtered}})",
+    "inspectedHeadingFilteredFmt": "Inspeccionadas ({{filtered}} de {{total}})",
+    "notInspectable": "No inspeccionable",
+    "techPrefix": "— Técnico:",
+    "vendorPrefix": "Vendor:",
+    "noFilterMatch": "Ninguna inspección coincide con los filtros seleccionados.",
+    "clickTip": "Tip: toca cualquier van para abrir su reporte — desde ahí, aprueba defectos (crea WO automáticamente) o recházalos.",
+    "notInspectedHeadingFmt": "No inspeccionadas ({{count}})",
+    "approveNewHeadingFmt": "Aprobar nuevas ({{count}})"
+  },
+  "immediateRenderer": {
+    "summary": "Defectos esperando tu aprobación",
+    "pendingChipFmt": "{{count}} pendientes",
+    "approvedChipFmt": "{{count}} aprobados",
+    "rejectedChipFmt": "{{count}} rechazados",
+    "pendingHeadingFmt": "Pendientes ({{count}})",
+    "pendingBadge": "Pendiente",
+    "reject": "Rechazar",
+    "approveAndCreateWO": "Aprobar y crear WO",
+    "processedHeadingFmt": "Procesados en esta sesión ({{count}})",
+    "approvedRow": "Aprobado → WO",
+    "rejectedRow": "Rechazado",
+    "emptyState": "Sin defectos pendientes de aprobación"
+  },
+  "scheduledRepair": {
+    "defectToRepairLabel": "Defecto a reparar",
+    "dspResponseLabel": "Respuesta DSP",
+    "selectResponse": "Selecciona respuesta…",
+    "keyLocationLabel": "Ubicación de la llave",
+    "selectLocation": "Selecciona ubicación…",
+    "describeKeyLocation": "Describe la ubicación de la llave",
+    "keyLocationPlaceholder": "ej. Guantera, bolsillo del asiento del conductor…",
+    "dspResponseOption": {
+      "Confirmed": "Confirmado",
+      "Vehicle not available": "Vehículo no disponible",
+      "Cancel": "Cancelar"
+    },
+    "keyLocationOption": {
+      "Cup holder": "Portavasos",
+      "Fuel compartment": "Compartimento de gasolina",
+      "Other": "Otra"
+    }
+  },
+  "defectBreakdown": {
+    "defectsFmt_one": "{{count}} defecto",
+    "defectsFmt_other": "{{count}} defectos",
+    "pendingReviewFmt": "{{count}} pendientes de revisión",
+    "approvedFmt": "✓ {{count}} aprobados",
+    "rejectedFmt": "✕ {{count}} rechazados"
+  }
+}

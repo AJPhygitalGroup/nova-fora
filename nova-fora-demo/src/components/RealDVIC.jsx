@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { Shield, ShieldCheck, AlertTriangle, Award, TrendingUp, Users, Flame, Camera, Gift, Lock, Star, Plus, Hourglass, CheckCheck, X, Clock, Wrench, CheckCircle2, Calendar, KeyRound, ChevronRight, Info, SkipForward, PlayCircle, ClipboardCheck, ChevronDown, Check, ArrowRight, Bell, LayoutGrid, Truck, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { daList, dspRewards, dspList, weeklyInspections, defectCategoryBreakdown, inspectionSections, workOrdersData } from '../data/mockData';
@@ -124,6 +125,7 @@ const DSP_RESPONSE_OPTIONS = ['Confirmed', 'Vehicle not available', 'Cancel'];
 const KEY_LOCATION_OPTIONS = ['Cup holder', 'Fuel compartment', 'Other'];
 
 function ScheduledRepairItem({ item }) {
+  const { t } = useTranslation('dashboard');
   const [dspResponse, setDspResponse] = useState('');
   const [keyLocation, setKeyLocation] = useState('');
   const [otherText, setOtherText] = useState('');
@@ -151,7 +153,7 @@ function ScheduledRepairItem({ item }) {
 
       {/* Defect description */}
       <div>
-        <div className="text-[10px] uppercase tracking-wide text-navy-500 mb-1">Defect to repair</div>
+        <div className="text-[10px] uppercase tracking-wide text-navy-500 mb-1">{t('scheduledRepair.defectToRepairLabel', 'Defect to repair')}</div>
         <div className="text-sm text-white">{item.defect}</div>
       </div>
 
@@ -159,30 +161,30 @@ function ScheduledRepairItem({ item }) {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {/* DSP Response */}
         <div>
-          <label className="block text-[10px] uppercase tracking-wide text-navy-500 mb-1">DSP Response</label>
+          <label className="block text-[10px] uppercase tracking-wide text-navy-500 mb-1">{t('scheduledRepair.dspResponseLabel', 'DSP Response')}</label>
           <select
             value={dspResponse}
             onChange={(e) => setDspResponse(e.target.value)}
             className={`w-full rounded-lg px-3 py-2 text-sm border outline-none cursor-pointer transition-colors ${responseColor}`}
           >
-            <option value="">Select response…</option>
+            <option value="">{t('scheduledRepair.selectResponse', 'Select response…')}</option>
             {DSP_RESPONSE_OPTIONS.map((opt) => (
-              <option key={opt} value={opt}>{opt}</option>
+              <option key={opt} value={opt}>{t(`scheduledRepair.dspResponseOption.${opt}`, opt)}</option>
             ))}
           </select>
         </div>
 
         {/* Key Location */}
         <div>
-          <label className="block text-[10px] uppercase tracking-wide text-navy-500 mb-1">Key Location</label>
+          <label className="block text-[10px] uppercase tracking-wide text-navy-500 mb-1">{t('scheduledRepair.keyLocationLabel', 'Key Location')}</label>
           <select
             value={keyLocation}
             onChange={(e) => setKeyLocation(e.target.value)}
             className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-navy-200 outline-none focus:border-accent-blue cursor-pointer"
           >
-            <option value="">Select location…</option>
+            <option value="">{t('scheduledRepair.selectLocation', 'Select location…')}</option>
             {KEY_LOCATION_OPTIONS.map((opt) => (
-              <option key={opt} value={opt}>{opt}</option>
+              <option key={opt} value={opt}>{t(`scheduledRepair.keyLocationOption.${opt}`, opt)}</option>
             ))}
           </select>
         </div>
@@ -197,12 +199,12 @@ function ScheduledRepairItem({ item }) {
             exit={{ opacity: 0, height: 0 }}
             className="overflow-hidden"
           >
-            <label className="block text-[10px] uppercase tracking-wide text-navy-500 mb-1">Describe key location</label>
+            <label className="block text-[10px] uppercase tracking-wide text-navy-500 mb-1">{t('scheduledRepair.describeKeyLocation', 'Describe key location')}</label>
             <input
               type="text"
               value={otherText}
               onChange={(e) => setOtherText(e.target.value)}
-              placeholder="e.g. Glove box, driver seat pocket…"
+              placeholder={t('scheduledRepair.keyLocationPlaceholder', 'e.g. Glove box, driver seat pocket…')}
               className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue"
               autoFocus
             />
@@ -238,11 +240,12 @@ const ROW_RESULT_STYLES = {
 // When all 3 buckets are zero (legacy mock rows that didn't supply a breakdown),
 // falls back to the plain "{total} defects" label.
 function DefectBreakdownInline({ pending, approved, rejected, total, fallbackClass }) {
+  const { t } = useTranslation('dashboard');
   const sum = pending + approved + rejected;
   if (sum === 0) {
     return (
       <span className={`font-semibold ${fallbackClass || 'text-accent-orange'}`}>
-        {total} defect{total === 1 ? '' : 's'}
+        {t('defectBreakdown.defectsFmt', { count: total, defaultValue: `${total} defect${total === 1 ? '' : 's'}` })}
       </span>
     );
   }
@@ -251,21 +254,21 @@ function DefectBreakdownInline({ pending, approved, rejected, total, fallbackCla
   if (pending === sum) {
     return (
       <span className="font-semibold text-accent-orange">
-        {pending} pending review
+        {t('defectBreakdown.pendingReviewFmt', { count: pending, defaultValue: `${pending} pending review` })}
       </span>
     );
   }
   if (approved === sum) {
     return (
       <span className="font-semibold text-accent-green">
-        ✓ {approved} approved
+        {t('defectBreakdown.approvedFmt', { count: approved, defaultValue: `✓ ${approved} approved` })}
       </span>
     );
   }
   if (rejected === sum) {
     return (
       <span className="font-semibold text-navy-400">
-        ✕ {rejected} rejected
+        {t('defectBreakdown.rejectedFmt', { count: rejected, defaultValue: `✕ ${rejected} rejected` })}
       </span>
     );
   }
@@ -288,6 +291,7 @@ function DefectBreakdownInline({ pending, approved, rejected, total, fallbackCla
 }
 
 function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
+  const { t } = useTranslation('dashboard');
   const inspected = data.inspectedVans || [];
   const notInspected = data.notInspectedVans || [];
   const approveNew = data.approveNewVans || [];
@@ -342,7 +346,7 @@ function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
       {/* Primary vendor chip */}
       {primaryVendor && (
         <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-accent-blue/10 border border-accent-blue/30 text-xs">
-          <span className="text-navy-400">Primary Vendor today:</span>
+          <span className="text-navy-400">{t('inspectedRenderer.primaryVendor', 'Primary Vendor today:')}</span>
           <span className="text-white font-semibold">{primaryVendor}</span>
         </div>
       )}
@@ -352,17 +356,17 @@ function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
         <div className="flex items-center gap-2 mb-2">
           <KeyRound size={14} className="text-accent-blue" />
           <span className="text-sm font-semibold text-white">
-            <span className="text-accent-blue">{keysRecorded}</span> keys recorded
+            <span className="text-accent-blue">{keysRecorded}</span> {t('inspectedRenderer.keysRecordedLabel', 'keys recorded')}
           </span>
           <span className="text-[11px] text-navy-400">&middot; {timeStr}</span>
         </div>
         <div className="text-[11px] text-navy-300">
-          <span className="text-white font-semibold">{total}</span> vehicles &middot;{' '}
-          <span className="text-accent-orange font-semibold">{withIssues}</span> with issues
+          <span className="text-white font-semibold">{total}</span> {t('inspectedRenderer.vehiclesLabel', 'vehicles')} &middot;{' '}
+          <span className="text-accent-orange font-semibold">{withIssues}</span> {t('inspectedRenderer.withIssuesLabel', 'with issues')}
           {incompleteCount > 0 && (
             <>
               {' '}&middot;{' '}
-              <span className="text-accent-red font-semibold">{incompleteCount}</span> not inspectable
+              <span className="text-accent-red font-semibold">{incompleteCount}</span> {t('inspectedRenderer.notInspectableLabel', 'not inspectable')}
             </>
           )}
         </div>
@@ -370,11 +374,11 @@ function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
 
       {/* Result legend */}
       <div className="flex items-center gap-3 flex-wrap text-[11px]">
-        <span className="text-navy-500 uppercase tracking-wide font-semibold">Status:</span>
+        <span className="text-navy-500 uppercase tracking-wide font-semibold">{t('inspectedRenderer.statusLabel', 'Status:')}</span>
         {INSPECTED_LEGEND.map((s) => (
           <div key={s.id} className="flex items-center gap-1.5">
             <div className={`w-2.5 h-2.5 rounded-full ${s.dot}`} />
-            <span className={s.color}>{s.label}</span>
+            <span className={s.color}>{t(`inspectedRenderer.legend.${s.id}`, s.label)}</span>
           </div>
         ))}
       </div>
@@ -382,28 +386,28 @@ function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
       {/* Category filter checkboxes */}
       <div>
         <div className="text-[10px] text-navy-400 uppercase tracking-wide font-semibold mb-2 flex items-center gap-1.5">
-          <Info size={10} /> Filter by inspecting vendor
+          <Info size={10} /> {t('inspectedRenderer.filterByVendor', 'Filter by inspecting vendor')}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {INSPECTOR_CATEGORIES.map((c) => {
             const active = activeCategories.includes(c.id);
             const count = inspected.filter((v) => v.category === c.id).length;
             return (
-              <label key={c.id} title={c.description}
+              <label key={c.id} title={t(`inspectedRenderer.inspectorCategories.${c.id}Desc`, c.description)}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border cursor-pointer transition-all ${
                   active
                     ? 'border-accent-blue/50 bg-accent-blue/10 text-white'
                     : 'border-navy-700 bg-navy-800/40 text-navy-300 hover:border-navy-600 hover:text-white'
                 }`}>
                 <input type="checkbox" checked={active} onChange={() => toggleCategory(c.id)} className="w-3.5 h-3.5" />
-                <span className="text-xs font-semibold">{c.label}</span>
+                <span className="text-xs font-semibold">{t(`inspectedRenderer.inspectorCategories.${c.id}`, c.label)}</span>
                 <span className="text-[10px] text-navy-400">({count})</span>
               </label>
             );
           })}
           {activeCategories.length > 0 && (
             <button onClick={() => setActiveCategories([])}
-              className="text-[11px] text-accent-red hover:underline">Clear</button>
+              className="text-[11px] text-accent-red hover:underline">{t('inspectedRenderer.clear', 'Clear')}</button>
           )}
         </div>
       </div>
@@ -411,7 +415,9 @@ function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
       {/* Inspected list */}
       <div>
         <h4 className="text-xs font-semibold text-accent-green mb-2 uppercase tracking-wide">
-          Inspected ({filteredInspected.length}{activeCategories.length > 0 ? ` of ${inspected.length}` : ''})
+          {activeCategories.length > 0
+            ? t('inspectedRenderer.inspectedHeadingFilteredFmt', { filtered: filteredInspected.length, total: inspected.length, defaultValue: `Inspected (${filteredInspected.length} of ${inspected.length})` })
+            : t('inspectedRenderer.inspectedHeadingFmt', { filtered: filteredInspected.length, defaultValue: `Inspected (${filteredInspected.length})` })}
         </h4>
         <div className="space-y-1.5">
           {filteredInspected.map((v) => {
@@ -443,7 +449,7 @@ function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
                 <div className="flex-1 min-w-0 text-right">
                   <div className="text-xs truncate">
                     {isIncomplete ? (
-                      <span className="font-semibold text-accent-red">Not inspectable</span>
+                      <span className="font-semibold text-accent-red">{t('inspectedRenderer.notInspectable', 'Not inspectable')}</span>
                     ) : flagged && defectCount > 0 ? (
                       <DefectBreakdownInline
                         pending={v.defectPending ?? 0}
@@ -455,11 +461,11 @@ function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
                     ) : (
                       <span className={`font-semibold ${style.resultText}`}>{v.result}</span>
                     )}
-                    {' '}<span className="text-navy-300">&mdash; Tech:</span> <span className="text-white">{v.tech}</span>
+                    {' '}<span className="text-navy-300">{t('inspectedRenderer.techPrefix', '— Tech:')}</span> <span className="text-white">{v.tech}</span>
                   </div>
                   <div className="text-[11px] text-navy-300 truncate">
-                    Vendor: <span className="text-white font-medium">{v.vendor}</span>
-                    {cat && <> <span className="text-navy-500">·</span> <Badge variant="blue">{cat.label}</Badge></>}
+                    {t('inspectedRenderer.vendorPrefix', 'Vendor:')} <span className="text-white font-medium">{v.vendor}</span>
+                    {cat && <> <span className="text-navy-500">·</span> <Badge variant="blue">{t(`inspectedRenderer.inspectorCategories.${cat.id}`, cat.label)}</Badge></>}
                     {clickable && <span className="text-accent-blue ml-1">&rarr;</span>}
                   </div>
                 </div>
@@ -467,16 +473,16 @@ function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
             );
           })}
           {filteredInspected.length === 0 && (
-            <div className="text-center py-6 text-xs text-navy-400">No inspections match the selected filters.</div>
+            <div className="text-center py-6 text-xs text-navy-400">{t('inspectedRenderer.noFilterMatch', 'No inspections match the selected filters.')}</div>
           )}
         </div>
-        <p className="text-[10px] text-navy-500 mt-2 italic">Tip: click any van to open its report — from there, approve defects (auto-create a work order) or reject them.</p>
+        <p className="text-[10px] text-navy-500 mt-2 italic">{t('inspectedRenderer.clickTip', 'Tip: click any van to open its report — from there, approve defects (auto-create a work order) or reject them.')}</p>
       </div>
 
       {/* Not inspected list */}
       {notInspected.length > 0 && (
         <div>
-          <h4 className="text-xs font-semibold text-accent-red mb-2 uppercase tracking-wide">Not Inspected ({notInspected.length})</h4>
+          <h4 className="text-xs font-semibold text-accent-red mb-2 uppercase tracking-wide">{t('inspectedRenderer.notInspectedHeadingFmt', { count: notInspected.length, defaultValue: `Not Inspected (${notInspected.length})` })}</h4>
           <div className="space-y-1.5">
             {notInspected.map((v) => (
               <div key={v.id} className="flex items-center justify-between gap-3 bg-navy-800/50 border border-navy-700/40 rounded-lg px-3 py-2">
@@ -491,7 +497,7 @@ function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
       {/* Approve new list */}
       {approveNew.length > 0 && (
         <div>
-          <h4 className="text-xs font-semibold text-accent-blue mb-2 uppercase tracking-wide">Approve New ({approveNew.length})</h4>
+          <h4 className="text-xs font-semibold text-accent-blue mb-2 uppercase tracking-wide">{t('inspectedRenderer.approveNewHeadingFmt', { count: approveNew.length, defaultValue: `Approve New (${approveNew.length})` })}</h4>
           <div className="space-y-1.5">
             {approveNew.map((v) => (
               <div key={v.id} className="flex items-center justify-between gap-3 bg-accent-blue/5 border border-accent-blue/20 rounded-lg px-3 py-2">
@@ -508,6 +514,7 @@ function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
 
 // ============ Immediate Action Required — Approve / Reject per defect ============
 function ImmediateDetailRenderer({ items, onApprove, onReject }) {
+  const { t } = useTranslation('dashboard');
   // Local state tracks which items were approved or rejected in this session
   const [actions, setActions] = useState({}); // { [label]: 'approved' | 'rejected' }
 
@@ -529,18 +536,18 @@ function ImmediateDetailRenderer({ items, onApprove, onReject }) {
     <div className="space-y-4">
       {/* Summary band */}
       <div className="flex items-center gap-2 flex-wrap text-xs">
-        <span className="text-navy-400">Defects awaiting your approval</span>
+        <span className="text-navy-400">{t('immediateRenderer.summary', 'Defects awaiting your approval')}</span>
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-gold/15 border border-accent-gold/40 text-accent-gold font-semibold">
-          <Hourglass size={10} /> {pending.length} pending
+          <Hourglass size={10} /> {t('immediateRenderer.pendingChipFmt', { count: pending.length, defaultValue: `${pending.length} pending` })}
         </span>
         {approvedCount > 0 && (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-green/15 border border-accent-green/40 text-accent-green font-semibold">
-            <Check size={10} /> {approvedCount} approved
+            <Check size={10} /> {t('immediateRenderer.approvedChipFmt', { count: approvedCount, defaultValue: `${approvedCount} approved` })}
           </span>
         )}
         {rejectedCount > 0 && (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-red/15 border border-accent-red/40 text-accent-red font-semibold">
-            <X size={10} /> {rejectedCount} rejected
+            <X size={10} /> {t('immediateRenderer.rejectedChipFmt', { count: rejectedCount, defaultValue: `${rejectedCount} rejected` })}
           </span>
         )}
       </div>
@@ -548,7 +555,7 @@ function ImmediateDetailRenderer({ items, onApprove, onReject }) {
       {pending.length > 0 && (
         <div>
           <h4 className="text-[10px] font-semibold text-accent-gold uppercase tracking-wide mb-2">
-            Pending ({pending.length})
+            {t('immediateRenderer.pendingHeadingFmt', { count: pending.length, defaultValue: `Pending (${pending.length})` })}
           </h4>
           <div className="space-y-2">
             {pending.map((it) => (
@@ -557,26 +564,26 @@ function ImmediateDetailRenderer({ items, onApprove, onReject }) {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span className="text-sm font-semibold text-white font-mono">{it.label}</span>
-                      
+
                       {it.section && <Badge variant="gray">{it.section.split('. ')[1] || it.section}</Badge>}
                     </div>
                     <p className="text-sm text-navy-200">{it.title}</p>
                     <p className="text-[11px] text-navy-400 mt-1">{it.meta}</p>
                   </div>
-                  <Badge variant="gold" size="md">Pending</Badge>
+                  <Badge variant="gold" size="md">{t('immediateRenderer.pendingBadge', 'Pending')}</Badge>
                 </div>
                 <div className="flex items-center gap-1.5 pt-2 border-t border-navy-700/40">
                   <button
                     onClick={() => handleReject(it)}
                     className="flex-1 flex items-center justify-center gap-1 px-3 py-2 rounded-md bg-accent-red/10 border border-accent-red/40 text-accent-red text-[11px] font-semibold hover:bg-accent-red/20 cursor-pointer"
                   >
-                    <X size={11} /> Reject
+                    <X size={11} /> {t('immediateRenderer.reject', 'Reject')}
                   </button>
                   <button
                     onClick={() => handleApprove(it)}
                     className="flex-1 flex items-center justify-center gap-1 px-3 py-2 rounded-md bg-accent-green text-white text-[11px] font-semibold hover:opacity-90 cursor-pointer shadow-lg shadow-accent-green/20"
                   >
-                    <Check size={11} /> Approve &amp; Create WO
+                    <Check size={11} /> {t('immediateRenderer.approveAndCreateWO', 'Approve & Create WO')}
                   </button>
                 </div>
               </div>
@@ -588,7 +595,7 @@ function ImmediateDetailRenderer({ items, onApprove, onReject }) {
       {processed.length > 0 && (
         <div>
           <h4 className="text-[10px] font-semibold text-navy-400 uppercase tracking-wide mb-2">
-            Processed this session ({processed.length})
+            {t('immediateRenderer.processedHeadingFmt', { count: processed.length, defaultValue: `Processed this session (${processed.length})` })}
           </h4>
           <div className="space-y-1.5">
             {processed.map((it) => {
@@ -602,7 +609,7 @@ function ImmediateDetailRenderer({ items, onApprove, onReject }) {
                     <span className="text-[11px] text-navy-300 truncate">{it.title}</span>
                   </div>
                   <Badge variant={action === 'approved' ? 'green' : 'red'} size="md">
-                    {action === 'approved' ? <><Check size={9} className="inline mr-0.5" /> Approved → WO</> : <><X size={9} className="inline mr-0.5" /> Rejected</>}
+                    {action === 'approved' ? <><Check size={9} className="inline mr-0.5" /> {t('immediateRenderer.approvedRow', 'Approved → WO')}</> : <><X size={9} className="inline mr-0.5" /> {t('immediateRenderer.rejectedRow', 'Rejected')}</>}
                   </Badge>
                 </div>
               );
@@ -614,7 +621,7 @@ function ImmediateDetailRenderer({ items, onApprove, onReject }) {
       {pending.length === 0 && processed.length === 0 && (
         <div className="text-center py-10">
           <CheckCheck size={40} className="text-navy-600 mx-auto mb-3" />
-          <p className="text-sm text-white">No defects pending approval</p>
+          <p className="text-sm text-white">{t('immediateRenderer.emptyState', 'No defects pending approval')}</p>
         </div>
       )}
     </div>
@@ -663,8 +670,12 @@ function ScheduledRepairsGrouped({ items }) {
 }
 
 function CardDetailModal({ cardKey, onClose, onOpenVehicleReport, onApproveDefect, onOrderFlexFleet, liveInspected, liveDefects }) {
+  const { t } = useTranslation('dashboard');
   if (!cardKey) return null;
   let data = cardDetails[cardKey];
+  // Override the static English title with a localized one (the mock summary
+  // stays as fallback only — both 'reported' and 'inspected' override it below).
+  data = { ...data, title: t(`cardDetail.title.${cardKey}`, data.title) };
   // Override the 'reported' card with live /defects/v2 data when present.
   // Map the v2 wire shape (camelCased) into the modal's flat item shape.
   if (cardKey === 'reported' && Array.isArray(liveDefects)) {
@@ -688,8 +699,8 @@ function CardDetailModal({ cardKey, onClose, onOpenVehicleReport, onApproveDefec
     data = {
       ...data,
       summary: items.length
-        ? `${items.length} defect${items.length === 1 ? '' : 's'} reported across fleet today`
-        : 'No defects reported today',
+        ? t('cardDetail.summary.reportedDefaultFmt', { count: items.length, defaultValue: `${items.length} defect${items.length === 1 ? '' : 's'} reported across fleet today` })
+        : t('cardDetail.summary.reportedEmpty', 'No defects reported today'),
       items,
     };
   }
@@ -718,8 +729,11 @@ function CardDetailModal({ cardKey, onClose, onOpenVehicleReport, onApproveDefec
 
     data = {
       ...data,
-      summary:
-        `${reallyInspected.length} inspected · ${incomplete.length} not inspectable today`,
+      summary: t('cardDetail.summary.inspectedFmt', {
+        inspected: reallyInspected.length,
+        incomplete: incomplete.length,
+        defaultValue: `${reallyInspected.length} inspected · ${incomplete.length} not inspectable today`,
+      }),
       inspectedVans: reallyInspected.map((i) => ({
         id: i.fleetId || i.vehicleId,
         inspectionId: i.id,
@@ -824,11 +838,11 @@ function CardDetailModal({ cardKey, onClose, onOpenVehicleReport, onApproveDefec
           {cardKey === 'scheduled' && onOrderFlexFleet ? (
             <button onClick={onOrderFlexFleet}
               className="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent-purple/15 border border-accent-purple/40 text-accent-purple text-sm font-semibold hover:bg-accent-purple/25 transition-colors cursor-pointer">
-              <Truck size={14} /> Order Flex Fleet
+              <Truck size={14} /> {t('cardDetail.orderFlexFleet', 'Order Flex Fleet')}
             </button>
           ) : <span />}
           <button onClick={onClose} className="px-4 py-2 rounded-lg border border-navy-600 text-navy-300 text-sm font-medium hover:bg-navy-800 transition-colors cursor-pointer">
-            Close
+            {t('cardDetail.close', 'Close')}
           </button>
         </div>
       </motion.div>
@@ -2228,7 +2242,9 @@ function deriveActionFromStatus(d) {
   return null;
 }
 
-export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBulkCreateWO, onBulkReject, onViewPhotos, onOpenCreateDefect, scheduledCount, rushOrderCount, title = "Today's Defects" }) {
+export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBulkCreateWO, onBulkReject, onViewPhotos, onOpenCreateDefect, scheduledCount, rushOrderCount, title }) {
+  const { t } = useTranslation('dashboard');
+  const resolvedTitle = title ?? t('todaysDefects.defaultTitle', "Today's Defects");
   const [activeVendor, setActiveVendor] = useState('all');
   const [activeStatus, setActiveStatus] = useState('all');
   // rowActions: ephemeral per-click state (rare — only if the parent DIDN'T
@@ -2342,18 +2358,18 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
       <div className="px-4 py-3 border-b border-navy-800 bg-navy-950/40 flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
           <AlertTriangle size={14} className="text-accent-orange" />
-          <h3 className="text-sm font-semibold text-white">{title}</h3>
-          <Badge variant="gray">{defects.length} total</Badge>
+          <h3 className="text-sm font-semibold text-white">{resolvedTitle}</h3>
+          <Badge variant="gray">{t('todaysDefects.totalFmt', { count: defects.length, defaultValue: `${defects.length} total` })}</Badge>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {scheduledCount > 0 && (
             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-accent-blue/15 border border-accent-blue/30 text-[11px] font-semibold text-accent-blue">
-              {scheduledCount} Scheduled
+              {t('todaysDefects.scheduledFmt', { count: scheduledCount, defaultValue: `${scheduledCount} Scheduled` })}
             </span>
           )}
           {rushOrderCount > 0 && (
             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-accent-red/15 border border-accent-red/30 text-[11px] font-semibold text-accent-red">
-              {rushOrderCount} Rush Order
+              {t('todaysDefects.rushOrderFmt', { count: rushOrderCount, defaultValue: `${rushOrderCount} Rush Order` })}
             </span>
           )}
           {bulkEnabled && (
@@ -2364,15 +2380,15 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
                   ? 'bg-navy-800 border-navy-600 text-white'
                   : 'bg-navy-800/60 border-navy-700 text-navy-300 hover:text-white hover:border-navy-600'
               }`}
-              title={selectMode ? 'Exit select mode' : 'Select multiple defects to bulk-convert'}
+              title={selectMode ? t('todaysDefects.exitSelectModeTitle', 'Exit select mode') : t('todaysDefects.selectMultipleTitle', 'Select multiple defects to bulk-convert')}
             >
               {selectMode ? <X size={12} /> : <Check size={12} />}
-              {selectMode ? 'Cancel' : 'Select'}
+              {selectMode ? t('todaysDefects.cancel', 'Cancel') : t('todaysDefects.select', 'Select')}
             </button>
           )}
           <button onClick={onOpenCreateDefect}
             className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-accent-blue text-white text-xs font-semibold hover:opacity-90 cursor-pointer">
-            <Plus size={12} /> Create Defect
+            <Plus size={12} /> {t('todaysDefects.createDefect', 'Create Defect')}
           </button>
         </div>
       </div>
@@ -2382,18 +2398,18 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
         <div className="px-4 py-2.5 border-b border-navy-800 bg-accent-blue/10 flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-3 text-xs">
             <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-accent-blue/20 border border-accent-blue/40 text-accent-blue font-semibold">
-              <Check size={11} /> {selectedDefects.length} selected
+              <Check size={11} /> {t('todaysDefects.bulkBar.selectedFmt', { count: selectedDefects.length, defaultValue: `${selectedDefects.length} selected` })}
             </span>
             {!sameVan && (
               <span className="inline-flex items-center gap-1.5 text-accent-orange">
                 <AlertTriangle size={11} />
-                Bulk WO requires defects from a single vehicle
-                ({distinctVans.size} vans selected)
+                {t('todaysDefects.bulkBar.needsSingleVan', 'Bulk WO requires defects from a single vehicle')}
+                {' '}{t('todaysDefects.bulkBar.vansSelectedFmt', { count: distinctVans.size, defaultValue: `(${distinctVans.size} vans selected)` })}
               </span>
             )}
             {sameVan && distinctVans.size === 1 && (
               <span className="text-navy-300">
-                from <span className="font-mono text-white">{[...distinctVans][0]}</span>
+                {t('todaysDefects.bulkBar.fromVan', 'from')} <span className="font-mono text-white">{[...distinctVans][0]}</span>
               </span>
             )}
           </div>
@@ -2402,15 +2418,15 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
               onClick={clearSelection}
               className="px-2.5 py-1 rounded-md bg-navy-800 border border-navy-700 text-navy-300 hover:text-white text-[11px] font-semibold cursor-pointer"
             >
-              Clear
+              {t('todaysDefects.bulkBar.clear', 'Clear')}
             </button>
             {onBulkReject && (
               <button
                 onClick={handleBulkRejectClick}
                 className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-[11px] font-semibold bg-accent-red/15 border border-accent-red/40 text-accent-red hover:bg-accent-red/25 cursor-pointer"
-                title="Reject all selected defects"
+                title={t('todaysDefects.bulkBar.bulkRejectTitle', 'Reject all selected defects')}
               >
-                <X size={11} /> Bulk Reject ({selectedDefects.length})
+                <X size={11} /> {t('todaysDefects.bulkBar.bulkReject', 'Bulk Reject')} ({selectedDefects.length})
               </button>
             )}
             {onBulkCreateWO && (
@@ -2422,9 +2438,9 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
                     ? 'bg-accent-green text-white hover:opacity-90 cursor-pointer'
                     : 'bg-navy-800 border border-navy-700 text-navy-500 cursor-not-allowed'
                 }`}
-                title={sameVan ? 'Create one work order containing all selected defects' : 'All selected defects must belong to the same vehicle'}
+                title={sameVan ? t('todaysDefects.bulkBar.bulkCreateWOTitle', 'Create one work order containing all selected defects') : t('todaysDefects.bulkBar.bulkCreateWODisabledTitle', 'All selected defects must belong to the same vehicle')}
               >
-                <Check size={11} /> Bulk Create WO ({selectedDefects.length})
+                <Check size={11} /> {t('todaysDefects.bulkBar.bulkCreateWO', 'Bulk Create WO')} ({selectedDefects.length})
               </button>
             )}
           </div>
@@ -2433,7 +2449,7 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
 
       {/* Vendor filter pills */}
       <div className="px-4 py-2.5 border-b border-navy-800 bg-navy-950/20 flex items-center gap-1.5 overflow-x-auto">
-        <span className="text-[10px] text-navy-400 font-semibold uppercase tracking-wide shrink-0 mr-1">Vendor:</span>
+        <span className="text-[10px] text-navy-400 font-semibold uppercase tracking-wide shrink-0 mr-1">{t('todaysDefects.filter.vendorLabel', 'Vendor:')}</span>
         {VENDOR_TYPES.map((v) => {
           const count = v.id === 'all' ? defects.length : defects.filter((d) => v.categories?.includes(d.category)).length;
           const active = activeVendor === v.id;
@@ -2444,7 +2460,7 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
                   ? 'bg-accent-blue/20 border-accent-blue/50 text-accent-blue'
                   : 'bg-navy-800/40 border-navy-700 text-navy-400 hover:text-white hover:border-navy-600'
               }`}>
-              {v.label}
+              {t(`todaysDefects.vendorType.${v.id}`, v.label)}
               <span className={`px-1 rounded ${active ? 'bg-black/20' : 'bg-navy-700/50 text-navy-300'}`}>{count}</span>
             </button>
           );
@@ -2453,7 +2469,7 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
 
       {/* Status filter pills */}
       <div className="px-4 py-2.5 border-b border-navy-800 bg-navy-950/20 flex items-center gap-1.5 overflow-x-auto">
-        <span className="text-[10px] text-navy-400 font-semibold uppercase tracking-wide shrink-0 mr-1">Status:</span>
+        <span className="text-[10px] text-navy-400 font-semibold uppercase tracking-wide shrink-0 mr-1">{t('todaysDefects.filter.statusLabel', 'Status:')}</span>
         {STATUS_FILTERS.map((s) => {
           const count = s.id === 'all'
             ? defects.length
@@ -2468,7 +2484,7 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
                   ? 'bg-accent-purple/20 border-accent-purple/50 text-accent-purple'
                   : 'bg-navy-800/40 border-navy-700 text-navy-400 hover:text-white hover:border-navy-600'
               }`}>
-              {s.label}
+              {t(`todaysDefects.statusFilter.${s.id}`, s.label)}
               <span className={`px-1 rounded ${active ? 'bg-black/20' : 'bg-navy-700/50 text-navy-300'}`}>{count}</span>
             </button>
           );
@@ -2484,7 +2500,7 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
                 <th className="text-left pl-4 pr-2 py-2.5 font-semibold w-8">
                   <input
                     type="checkbox"
-                    aria-label="Select all visible defects"
+                    aria-label={t('todaysDefects.table.selectAllAria', 'Select all visible defects')}
                     checked={allVisibleSelected}
                     ref={(el) => { if (el) el.indeterminate = someVisibleSelected; }}
                     onChange={toggleAllVisible}
@@ -2493,12 +2509,12 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
                   />
                 </th>
               )}
-              <th className="text-left px-4 py-2.5 font-semibold">Van</th>
-              <th className="text-left px-4 py-2.5 font-semibold">Defect</th>
-              <th className="text-left px-4 py-2.5 font-semibold">Category</th>
-              <th className="text-left px-4 py-2.5 font-semibold">Reported by</th>
-              <th className="text-left px-4 py-2.5 font-semibold">Status</th>
-              <th className="text-right px-4 py-2.5 font-semibold">Actions</th>
+              <th className="text-left px-4 py-2.5 font-semibold">{t('todaysDefects.table.van', 'Van')}</th>
+              <th className="text-left px-4 py-2.5 font-semibold">{t('todaysDefects.table.defect', 'Defect')}</th>
+              <th className="text-left px-4 py-2.5 font-semibold">{t('todaysDefects.table.category', 'Category')}</th>
+              <th className="text-left px-4 py-2.5 font-semibold">{t('todaysDefects.table.reportedBy', 'Reported by')}</th>
+              <th className="text-left px-4 py-2.5 font-semibold">{t('todaysDefects.table.status', 'Status')}</th>
+              <th className="text-right px-4 py-2.5 font-semibold">{t('todaysDefects.table.actions', 'Actions')}</th>
             </tr>
           </thead>
           <tbody>
@@ -2519,12 +2535,12 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
                     <td className="pl-4 pr-2 py-2.5 w-8">
                       <input
                         type="checkbox"
-                        aria-label={`Select defect ${d.id}`}
+                        aria-label={t('todaysDefects.table.selectAriaFmt', { id: d.id, defaultValue: `Select defect ${d.id}` })}
                         checked={rowSelected}
                         onChange={() => toggleOne(d)}
                         disabled={!rowSelectable}
                         className="w-3.5 h-3.5 accent-accent-blue cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                        title={rowSelectable ? '' : 'This defect is already converted or rejected'}
+                        title={rowSelectable ? '' : t('todaysDefects.table.alreadyHandledTitle', 'This defect is already converted or rejected')}
                       />
                     </td>
                   )}
@@ -2553,7 +2569,7 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
                               ? 'bg-accent-blue/15 border border-accent-blue/40 text-accent-blue hover:bg-accent-blue/25'
                               : 'bg-navy-800 border border-navy-700 text-navy-400 hover:text-white hover:border-navy-600'
                           }`}
-                          title={d.photoCount > 0 ? `View ${d.photoCount} photo${d.photoCount === 1 ? '' : 's'}` : 'Add photo'}
+                          title={d.photoCount > 0 ? t('todaysDefects.table.viewPhotosFmt', { count: d.photoCount, defaultValue: `View ${d.photoCount} photo${d.photoCount === 1 ? '' : 's'}` }) : t('todaysDefects.table.addPhoto', 'Add photo')}
                         >
                           <Camera size={10} />
                           {d.photoCount > 0 ? d.photoCount : '+'}
@@ -2565,23 +2581,23 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
                   </td>
                   <td className="px-4 py-2.5"><Badge variant="gray">{d.category}</Badge></td>
                   <td className="px-4 py-2.5 text-[11px] text-navy-300">{da?.name || '—'}</td>
-                  <td className="px-4 py-2.5"><Badge variant={defectStatusColors[d.status] || 'gray'}>{d.status}</Badge></td>
+                  <td className="px-4 py-2.5"><Badge variant={defectStatusColors[d.status] || 'gray'}>{t(`todaysDefects.table.statusBadge.${d.status}`, d.status)}</Badge></td>
                   <td className="px-4 py-2.5">
                     {action === 'rejected' ? (
-                      <span className="inline-flex items-center gap-1 text-[11px] text-accent-red font-semibold"><X size={11} /> Rejected</span>
+                      <span className="inline-flex items-center gap-1 text-[11px] text-accent-red font-semibold"><X size={11} /> {t('todaysDefects.table.rowState.rejected', 'Rejected')}</span>
                     ) : action === 'wo_created' ? (
-                      <span className="inline-flex items-center gap-1 text-[11px] text-accent-green font-semibold"><Check size={11} /> WO sent</span>
+                      <span className="inline-flex items-center gap-1 text-[11px] text-accent-green font-semibold"><Check size={11} /> {t('todaysDefects.table.rowState.woSent', 'WO sent')}</span>
                     ) : (
                       <div className="flex items-center justify-end gap-1">
                         <button onClick={() => handleReject(d)}
-                          title="Reject defect"
+                          title={t('todaysDefects.table.rejectTitle', 'Reject defect')}
                           className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-accent-red/10 border border-accent-red/40 text-accent-red text-[11px] font-semibold hover:bg-accent-red/20 cursor-pointer">
-                          <X size={11} /> Reject
+                          <X size={11} /> {t('todaysDefects.table.reject', 'Reject')}
                         </button>
                         <button onClick={() => handleCreateWO(d)}
-                          title="Create Work Order for this defect"
+                          title={t('todaysDefects.table.createWOTitle', 'Create Work Order for this defect')}
                           className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-accent-green text-white text-[11px] font-semibold hover:opacity-90 cursor-pointer">
-                          <Check size={11} /> Create WO
+                          <Check size={11} /> {t('todaysDefects.table.createWO', 'Create WO')}
                         </button>
                       </div>
                     )}
@@ -2591,13 +2607,13 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
             })}
             {filtered.length === 0 && (
               <tr><td colSpan={bulkEnabled && selectMode ? 7 : 6} className="px-4 py-8 text-center text-sm text-navy-400">
-                No defects match the current filters.
+                {t('todaysDefects.table.noMatch', 'No defects match the current filters.')}
                 {(activeVendor !== 'all' || activeStatus !== 'all') && (
                   <button
                     onClick={() => { setActiveVendor('all'); setActiveStatus('all'); }}
                     className="ml-2 text-accent-blue hover:underline cursor-pointer"
                   >
-                    Clear filters
+                    {t('todaysDefects.table.clearFilters', 'Clear filters')}
                   </button>
                 )}
               </td></tr>
@@ -2610,6 +2626,7 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
 }
 
 export default function RealDVIC({ user }) {
+  const { t } = useTranslation('dashboard');
   const [activeSection, setActiveSection] = useState('overview');
   const [openCard, setOpenCard] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -2795,10 +2812,10 @@ export default function RealDVIC({ user }) {
         <div className="flex justify-end -mt-2 mb-1">
           <button
             onClick={() => setShowQcBanner((s) => !s)}
-            title={showQcBanner ? 'Hide QC inspection banner' : 'Simulate inspection day (show banner)'}
+            title={showQcBanner ? t('realDvic.qcBannerHideTitle', 'Hide QC inspection banner') : t('realDvic.qcBannerShowTitle', 'Simulate inspection day (show banner)')}
             className="text-[10px] text-navy-600 hover:text-navy-300 px-2 py-1 rounded transition-colors cursor-pointer"
           >
-            {showQcBanner ? '· hide banner ·' : '· · ·'}
+            {showQcBanner ? t('realDvic.qcBannerToggleHide', '· hide banner ·') : t('realDvic.qcBannerToggleShow', '· · ·')}
           </button>
         </div>
       )}
@@ -2817,18 +2834,18 @@ export default function RealDVIC({ user }) {
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-0.5">
-              <span className="text-sm font-semibold text-white">Start a new QC DVIC</span>
+              <span className="text-sm font-semibold text-white">{t('realDvic.startInspectionBanner.heading', 'Start a new QC DVIC')}</span>
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-blue/15 border border-accent-blue/40 text-accent-blue text-[10px] font-semibold">
-                Inspector workflow
+                {t('realDvic.startInspectionBanner.badge', 'Inspector workflow')}
               </span>
             </div>
-            <div className="text-xs text-navy-300">Walk through the 5-section inspection and auto-create work orders for any defects found</div>
+            <div className="text-xs text-navy-300">{t('realDvic.startInspectionBanner.subtitle', 'Walk through the 5-section inspection and auto-create work orders for any defects found')}</div>
           </div>
           <button
             onClick={() => setShowStartInspection(true)}
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent-green text-white text-sm font-semibold hover:bg-accent-green/80 transition-all cursor-pointer shadow-lg shadow-accent-green/20"
           >
-            <PlayCircle size={14} /> Start Inspection
+            <PlayCircle size={14} /> {t('realDvic.startInspectionBanner.button', 'Start Inspection')}
           </button>
         </motion.div>
       )}
@@ -2845,19 +2862,19 @@ export default function RealDVIC({ user }) {
                 <button
                   onClick={(e) => { e.stopPropagation(); setCreateWOContext({ van: null, defect: null }); }}
                   className="w-9 h-9 rounded-full bg-accent-blue/15 border border-accent-blue/40 text-accent-blue hover:bg-accent-blue/25 transition-colors cursor-pointer flex items-center justify-center"
-                  title="Create work order (no inspection required)"
+                  title={t('realDvic.metrics.createWOTitle', 'Create work order (no inspection required)')}
                 >
                   <Plus size={18} />
                 </button>
               </div>
               <div className="text-center">
                 <div className="text-2xl font-bold text-white mb-1">{totalDefectsToday}</div>
-                <div className="text-sm text-navy-400">DSP-reported defects today</div>
+                <div className="text-sm text-navy-400">{t('realDvic.metrics.reportedToday', 'DSP-reported defects today')}</div>
               </div>
               <div className="mt-auto pt-2 flex justify-center">
                 {rushOrders > 0 ? (
                   <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-red/15 border border-accent-red/30">
-                    <span className="text-[10px] font-semibold text-accent-red">{rushOrders} Rush Order</span>
+                    <span className="text-[10px] font-semibold text-accent-red">{t('realDvic.metrics.rushOrderFmt', { count: rushOrders, defaultValue: `${rushOrders} Rush Order` })}</span>
                   </div>
                 ) : <div className="h-[22px]" />}
               </div>
@@ -2872,9 +2889,9 @@ export default function RealDVIC({ user }) {
                 {todayIncompleteCount > 0 ? (
                   <span
                     className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-accent-red/15 text-accent-red border border-accent-red/30"
-                    title={`${todayIncompleteCount} van${todayIncompleteCount === 1 ? '' : 's'} flagged as not inspectable today`}
+                    title={t('realDvic.metrics.flaggedTitleFmt', { count: todayIncompleteCount, defaultValue: `${todayIncompleteCount} van${todayIncompleteCount === 1 ? '' : 's'} flagged as not inspectable today` })}
                   >
-                    <AlertTriangle size={10} /> {todayIncompleteCount} flagged
+                    <AlertTriangle size={10} /> {t('realDvic.metrics.flaggedFmt', { count: todayIncompleteCount, defaultValue: `${todayIncompleteCount} flagged` })}
                   </span>
                 ) : <span />}
                 {/* Right: coverage % (real inspections only) */}
@@ -2892,19 +2909,19 @@ export default function RealDVIC({ user }) {
               </div>
               <div className="text-center">
                 <div className="text-2xl font-bold text-white mb-1">
-                  {todayCount} <span className="text-navy-400 font-normal text-xl">of {fleetTotal}</span>
+                  {todayCount} <span className="text-navy-400 font-normal text-xl">{t('realDvic.metrics.ofFleetFmt', { count: fleetTotal, defaultValue: `of ${fleetTotal}` })}</span>
                 </div>
-                <div className="text-sm text-navy-400">Vans Inspected</div>
+                <div className="text-sm text-navy-400">{t('realDvic.metrics.vansInspected', 'Vans Inspected')}</div>
               </div>
               <div className="mt-auto pt-2 text-center text-[11px] text-navy-400">
-                Next inspection <span className="text-white font-medium">{nextInspectionDate}</span>
+                {t('realDvic.metrics.nextInspectionFmt', 'Next inspection')} <span className="text-white font-medium">{nextInspectionDate}</span>
               </div>
             </motion.div>
 
             <div onClick={() => setOpenCard('immediate')} className="cursor-pointer h-full">
               <MetricCard
                 icon={pendingApprovalCount > 0 ? AlertTriangle : undefined}
-                label="Defects for approval"
+                label={t('realDvic.metrics.defectsForApproval', 'Defects for approval')}
                 value={pendingApprovalCount}
                 color="accent-red"
                 delay={0.1}
@@ -2914,7 +2931,7 @@ export default function RealDVIC({ user }) {
             <div onClick={() => setOpenCard('scheduled')} className="cursor-pointer h-full">
               <MetricCard
                 icon={AlertTriangle}
-                label="Scheduled Repairs"
+                label={t('realDvic.metrics.scheduledRepairs', 'Scheduled Repairs')}
                 value={scheduledTonight}
                 color="accent-red"
                 delay={0.15}
@@ -2923,14 +2940,14 @@ export default function RealDVIC({ user }) {
 
             <div onClick={() => setShowRepairHistory(true)} className="cursor-pointer h-full">
               <MetricCard
-                label="Defects Repaired"
+                label={t('realDvic.metrics.defectsRepaired', 'Defects Repaired')}
                 value={repairedDefectsCount}
-                subtitle="Current Week"
+                subtitle={t('realDvic.metrics.currentWeek', 'Current Week')}
                 color="accent-green"
                 delay={0.2}
                 trend={repairedThisWeekCount > 0 ? Math.round((repairedThisWeekCount / Math.max(totalDefectsToday, 1)) * 100) : undefined}
                 trendUp
-                warning={repairsPendingFeedback > 0 ? `${repairsPendingFeedback} pending feedback` : undefined}
+                warning={repairsPendingFeedback > 0 ? t('realDvic.metrics.pendingFeedbackFmt', { count: repairsPendingFeedback, defaultValue: `${repairsPendingFeedback} pending feedback` }) : undefined}
               />
             </div>
           </div>
@@ -2940,7 +2957,7 @@ export default function RealDVIC({ user }) {
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
               className="bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl p-5"
             >
-              <h3 className="text-sm font-semibold text-white mb-4">Daily Approved vs Repaired Defects</h3>
+              <h3 className="text-sm font-semibold text-white mb-4">{t('realDvic.charts.approvedVsRepaired', 'Daily Approved vs Repaired Defects')}</h3>
               <div className="h-[200px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={weeklyInspections}>
@@ -2948,8 +2965,8 @@ export default function RealDVIC({ user }) {
                     <YAxis tick={{ fill: '#829ab1', fontSize: 11 }} axisLine={false} tickLine={false} />
                     <Tooltip contentStyle={{ background: '#102a43', border: '1px solid #334e68', borderRadius: 8, fontSize: 12 }} />
                     <Legend wrapperStyle={{ fontSize: 11, color: '#829ab1' }} />
-                    <Bar dataKey="approved" name="Approved Defects" fill="#22c55e" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="repaired" name="Repaired" fill="#627d98" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="approved" name={t('realDvic.charts.approvedSeries', 'Approved Defects')} fill="#22c55e" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="repaired" name={t('realDvic.charts.repairedSeries', 'Repaired')} fill="#627d98" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -2958,7 +2975,7 @@ export default function RealDVIC({ user }) {
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}
               className="bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl p-5"
             >
-              <h3 className="text-sm font-semibold text-white mb-4">Open Defects</h3>
+              <h3 className="text-sm font-semibold text-white mb-4">{t('realDvic.charts.openDefects', 'Open Defects')}</h3>
               <div className="h-[200px] flex items-center">
                 <ResponsiveContainer width="50%" height="100%">
                   <PieChart>

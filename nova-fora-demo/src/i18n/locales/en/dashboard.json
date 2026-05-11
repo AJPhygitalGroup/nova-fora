@@ -1,1 +1,201 @@
-{}
+{
+  "realDvic": {
+    "qcBannerToggleHide": "· hide banner ·",
+    "qcBannerToggleShow": "· · ·",
+    "qcBannerHideTitle": "Hide QC inspection banner",
+    "qcBannerShowTitle": "Simulate inspection day (show banner)",
+    "startInspectionBanner": {
+      "heading": "Start a new QC DVIC",
+      "badge": "Inspector workflow",
+      "subtitle": "Walk through the 5-section inspection and auto-create work orders for any defects found",
+      "button": "Start Inspection"
+    },
+    "metrics": {
+      "reportedToday": "DSP-reported defects today",
+      "createWOTitle": "Create work order (no inspection required)",
+      "rushOrderFmt_one": "{{count}} Rush Order",
+      "rushOrderFmt_other": "{{count}} Rush Orders",
+      "vansInspected": "Vans Inspected",
+      "ofFleetFmt": "of {{count}}",
+      "nextInspectionFmt": "Next inspection",
+      "flaggedFmt": "{{count}} flagged",
+      "flaggedTitleFmt_one": "{{count}} van flagged as not inspectable today",
+      "flaggedTitleFmt_other": "{{count}} vans flagged as not inspectable today",
+      "defectsForApproval": "Defects for approval",
+      "scheduledRepairs": "Scheduled Repairs",
+      "defectsRepaired": "Defects Repaired",
+      "currentWeek": "Current Week",
+      "pendingFeedbackFmt": "{{count}} pending feedback"
+    },
+    "charts": {
+      "approvedVsRepaired": "Daily Approved vs Repaired Defects",
+      "approvedSeries": "Approved Defects",
+      "repairedSeries": "Repaired",
+      "openDefects": "Open Defects"
+    }
+  },
+  "todaysDefects": {
+    "defaultTitle": "Today's Defects",
+    "totalFmt": "{{count}} total",
+    "scheduledFmt": "{{count}} Scheduled",
+    "rushOrderFmt_one": "{{count}} Rush Order",
+    "rushOrderFmt_other": "{{count}} Rush Orders",
+    "selectMultipleTitle": "Select multiple defects to bulk-convert",
+    "exitSelectModeTitle": "Exit select mode",
+    "cancel": "Cancel",
+    "select": "Select",
+    "createDefect": "Create Defect",
+    "bulkBar": {
+      "selectedFmt": "{{count}} selected",
+      "needsSingleVan": "Bulk WO requires defects from a single vehicle",
+      "vansSelectedFmt": "({{count}} vans selected)",
+      "fromVan": "from",
+      "clear": "Clear",
+      "bulkReject": "Bulk Reject",
+      "bulkRejectTitle": "Reject all selected defects",
+      "bulkCreateWO": "Bulk Create WO",
+      "bulkCreateWOTitle": "Create one work order containing all selected defects",
+      "bulkCreateWODisabledTitle": "All selected defects must belong to the same vehicle"
+    },
+    "filter": {
+      "vendorLabel": "Vendor:",
+      "statusLabel": "Status:"
+    },
+    "vendorType": {
+      "all": "All",
+      "amr": "AMR",
+      "body": "Body",
+      "netradyne": "Netradyne",
+      "tires": "Tires",
+      "detailing": "Detailing"
+    },
+    "statusFilter": {
+      "all": "All",
+      "open": "Open",
+      "Logged": "Logged",
+      "Repair Ordered": "Repair Ordered",
+      "Scheduled": "Scheduled",
+      "Rejected": "Rejected"
+    },
+    "table": {
+      "selectAllAria": "Select all visible defects",
+      "van": "Van",
+      "defect": "Defect",
+      "category": "Category",
+      "reportedBy": "Reported by",
+      "status": "Status",
+      "actions": "Actions",
+      "selectAriaFmt": "Select defect {{id}}",
+      "alreadyHandledTitle": "This defect is already converted or rejected",
+      "viewPhotosFmt_one": "View {{count}} photo",
+      "viewPhotosFmt_other": "View {{count}} photos",
+      "addPhoto": "Add photo",
+      "statusBadge": {
+        "Rush Order": "Rush Order",
+        "Scheduled": "Scheduled",
+        "Repair Ordered": "Repair Ordered",
+        "Logged": "Logged",
+        "Rejected": "Rejected"
+      },
+      "rowState": {
+        "rejected": "Rejected",
+        "woSent": "WO sent"
+      },
+      "rejectTitle": "Reject defect",
+      "reject": "Reject",
+      "createWOTitle": "Create Work Order for this defect",
+      "createWO": "Create WO",
+      "noMatch": "No defects match the current filters.",
+      "clearFilters": "Clear filters"
+    }
+  },
+  "cardDetail": {
+    "title": {
+      "reported": "DSP-reported Defects Today",
+      "immediate": "Immediate Action Required",
+      "inspected": "Vans Inspected in Recent QC DVIC",
+      "scheduled": "Scheduled Repairs"
+    },
+    "summary": {
+      "reportedDefaultFmt_one": "{{count}} defect reported across fleet today",
+      "reportedDefaultFmt_other": "{{count}} defects reported across fleet today",
+      "reportedEmpty": "No defects reported today",
+      "inspectedFmt": "{{inspected}} inspected · {{incomplete}} not inspectable today"
+    },
+    "close": "Close",
+    "orderFlexFleet": "Order Flex Fleet"
+  },
+  "inspectedRenderer": {
+    "primaryVendor": "Primary Vendor today:",
+    "keysRecordedLabel": "keys recorded",
+    "vehiclesLabel": "vehicles",
+    "withIssuesLabel": "with issues",
+    "notInspectableLabel": "not inspectable",
+    "statusLabel": "Status:",
+    "legend": {
+      "clean": "Clean",
+      "defective": "Defective"
+    },
+    "filterByVendor": "Filter by inspecting vendor",
+    "inspectorCategories": {
+      "amr": "AMR",
+      "amrDesc": "Amazon Mechanical Repairs",
+      "body": "Body Defects",
+      "bodyDesc": "Body & paint work",
+      "tires": "Tires",
+      "tiresDesc": "Tire service",
+      "detailing": "Detailing",
+      "detailingDesc": "Cleaning / interior detail"
+    },
+    "clear": "Clear",
+    "inspectedHeadingFmt": "Inspected ({{filtered}})",
+    "inspectedHeadingFilteredFmt": "Inspected ({{filtered}} of {{total}})",
+    "notInspectable": "Not inspectable",
+    "techPrefix": "— Tech:",
+    "vendorPrefix": "Vendor:",
+    "noFilterMatch": "No inspections match the selected filters.",
+    "clickTip": "Tip: click any van to open its report — from there, approve defects (auto-create a work order) or reject them.",
+    "notInspectedHeadingFmt": "Not Inspected ({{count}})",
+    "approveNewHeadingFmt": "Approve New ({{count}})"
+  },
+  "immediateRenderer": {
+    "summary": "Defects awaiting your approval",
+    "pendingChipFmt": "{{count}} pending",
+    "approvedChipFmt": "{{count}} approved",
+    "rejectedChipFmt": "{{count}} rejected",
+    "pendingHeadingFmt": "Pending ({{count}})",
+    "pendingBadge": "Pending",
+    "reject": "Reject",
+    "approveAndCreateWO": "Approve & Create WO",
+    "processedHeadingFmt": "Processed this session ({{count}})",
+    "approvedRow": "Approved → WO",
+    "rejectedRow": "Rejected",
+    "emptyState": "No defects pending approval"
+  },
+  "scheduledRepair": {
+    "defectToRepairLabel": "Defect to repair",
+    "dspResponseLabel": "DSP Response",
+    "selectResponse": "Select response…",
+    "keyLocationLabel": "Key Location",
+    "selectLocation": "Select location…",
+    "describeKeyLocation": "Describe key location",
+    "keyLocationPlaceholder": "e.g. Glove box, driver seat pocket…",
+    "dspResponseOption": {
+      "Confirmed": "Confirmed",
+      "Vehicle not available": "Vehicle not available",
+      "Cancel": "Cancel"
+    },
+    "keyLocationOption": {
+      "Cup holder": "Cup holder",
+      "Fuel compartment": "Fuel compartment",
+      "Other": "Other"
+    }
+  },
+  "defectBreakdown": {
+    "defectsFmt_one": "{{count}} defect",
+    "defectsFmt_other": "{{count}} defects",
+    "pendingReviewFmt": "{{count}} pending review",
+    "approvedFmt": "✓ {{count}} approved",
+    "rejectedFmt": "✕ {{count}} rejected"
+  }
+}
