@@ -1,1 +1,393 @@
-{}
+{
+  "shell": {
+    "heading": "Administration",
+    "subtitleFmt_one": "{{org}} · {{count}} user",
+    "subtitleFmt_other": "{{org}} · {{count}} users"
+  },
+  "tabs": {
+    "users": "Users",
+    "invitations": "Invitations",
+    "security": "Security",
+    "organization": "Organization",
+    "pm": "Preventive Maintenance",
+    "defects": "Defect Rules"
+  },
+  "dspPicker": {
+    "noneSelected": "No DSPs assigned — this user won't see any WOs",
+    "allSelected": "All DSPs selected",
+    "selectedCountFmt": "{{selected}} of {{total}} DSPs selected",
+    "clearAll": "Clear all",
+    "selectAll": "Select all",
+    "stationFmt": "Station {{station}} · {{count}} vans"
+  },
+  "users": {
+    "searchPlaceholder": "Search users…",
+    "inviteUser": "Invite User",
+    "table": {
+      "user": "User",
+      "roles": "Roles",
+      "dspsAssigned": "DSPs Assigned",
+      "status": "Status",
+      "twoFA": "2FA",
+      "lastLogin": "Last login"
+    },
+    "status": {
+      "active": "Active",
+      "pending": "Pending",
+      "invited": "Invited"
+    },
+    "noneAssignment": "None",
+    "allCountFmt": "All ({{count}})",
+    "noneWontSeeWOs": "None — user won't see any WOs",
+    "allDspsFmt": "All {{count}} DSPs",
+    "lastLoginNever": "Never",
+    "noMatch": "No users match your search.",
+    "mobileDspsLabel": "DSPs assigned"
+  },
+  "inviteModal": {
+    "title": "Invite User",
+    "subtitle": "They'll receive an email to set their password",
+    "fullName": "Full name",
+    "fullNamePlaceholder": "e.g. Jose Pérez",
+    "email": "Email",
+    "emailPlaceholder": "jose@example.com",
+    "rolesLabel": "Roles",
+    "rolesHintVendor": "Only vendor roles are available — you can't grant DSP or platform roles from here.",
+    "rolesHintDsp": "Only DSP roles are available for your organization.",
+    "rolesHintPlatform": "Assign any platform role.",
+    "dspAssignmentsLabel": "DSP Assignments",
+    "dspAssignmentsHint": "Choose which DSPs this user will handle. They'll only see WOs and vehicles from the DSPs selected here.",
+    "cancel": "Cancel",
+    "sending": "Sending…",
+    "sendInvite": "Send Invite"
+  },
+  "invitations": {
+    "heading": "Invitations",
+    "subtitleSiteAdmin": "Invite new DSP owners, vendors, or technicians. They get an email with a one-click link to set up their account. If SMTP isn't configured yet, copy the invite link manually from the row below.",
+    "subtitleVendor": "Invite new admins or technicians for your shop. They get an email with a one-click link to set up their account. If SMTP isn't configured yet, copy the invite link manually from the row below.",
+    "subtitleDsp": "Invite new co-owners for your DSP. They get an email with a one-click link to set up their account. If SMTP isn't configured yet, copy the invite link manually from the row below.",
+    "newInvitation": "New invitation",
+    "pendingFmt": "{{count}} pending",
+    "acceptedFmt": "{{count}} accepted",
+    "totalFmt": "{{count}} total",
+    "loading": "Loading…",
+    "emptyPart1": "No invitations yet. Click",
+    "emptyPart2": "to send one.",
+    "table": {
+      "invitee": "Invitee",
+      "role": "Role",
+      "organization": "Organization",
+      "status": "Status",
+      "expires": "Expires",
+      "actions": "Actions"
+    },
+    "statusBadge": {
+      "accepted": "accepted",
+      "revoked": "revoked",
+      "expired": "expired",
+      "pending": "pending"
+    },
+    "smtpNotConfigured": "SMTP not configured — copy link",
+    "copyLinkTitle": "Copy invite link",
+    "resendTitle": "Re-send email + bump expiry",
+    "revokeTitle": "Revoke invitation",
+    "resendResetTitle": "Re-send + reset expiry",
+    "confirmRevokeFmt": "Revoke invitation for {{email}}? They will not be able to use the link.",
+    "resendFailedFmt": "Resend failed: {{error}}",
+    "revokeFailedFmt": "Revoke failed: {{error}}",
+    "copyManualPrompt": "Copy the invitation link:"
+  },
+  "roles": {
+    "dsp_owner": "DSP Owner",
+    "dsp_manager": "DSP Manager",
+    "dsp_inspector": "DSP Inspector",
+    "dsp_viewer": "DSP Viewer",
+    "vendor_admin": "Vendor Admin",
+    "service_writer": "Service Writer",
+    "technician": "Technician",
+    "vendor_viewer": "Vendor Viewer",
+    "site_admin": "Site Admin"
+  },
+  "roleDescriptions": {
+    "dsp_owner": "Full admin: billing, users, fleet, inspections, work orders.",
+    "dsp_manager": "Manages fleet + WOs. Cannot manage users or billing.",
+    "dsp_inspector": "Runs DVIC inspections + reports defects. Read-only on WOs.",
+    "dsp_viewer": "Read-only across the DSP.",
+    "vendor_admin": "Full admin: billing, users, WO acceptance, technician assignment.",
+    "service_writer": "Receives WOs, assigns technicians, talks with the DSP.",
+    "technician": "Picks up assigned WOs, marks progress, completes work.",
+    "vendor_viewer": "Read-only across the vendor.",
+    "site_admin": "Nova Fora team — full system access."
+  },
+  "createInvitationModal": {
+    "title": "New invitation",
+    "roleLabel": "Role *",
+    "noPermission": "Your role doesn't have permission to invite anyone.",
+    "emailLabel": "Email *",
+    "fullNameLabel": "Their name (optional)",
+    "organizationLabel": "Organization",
+    "createNewOrg": "Create new org",
+    "addToOrgFmt": "Add to {{org}}",
+    "orgTypeLabel": "Organization type *",
+    "orgType": {
+      "dsp": "DSP",
+      "vendor": "Vendor"
+    },
+    "orgNameLabel": "Organization name *",
+    "orgNamePlaceholderDsp": "Sunshine Logistics LLC",
+    "orgNamePlaceholderVendor": "Carlos Auto Repair",
+    "willBeAddedFmt": "Will be added to <strong>{{org}}</strong>.",
+    "willBeAddedPart1": "Will be added to",
+    "cancel": "Cancel",
+    "sending": "Sending…",
+    "sendInvitation": "Send invitation"
+  },
+  "security": {
+    "changePassword": {
+      "title": "Change password",
+      "subtitle": "Use at least 12 characters, mix of letters and numbers",
+      "current": "Current password",
+      "next": "New password",
+      "confirm": "Confirm new password",
+      "update": "Update Password"
+    },
+    "twoFA": {
+      "title": "Two-factor authentication",
+      "enabledBadge": "Enabled",
+      "subtitle": "Add an extra layer of security with TOTP (Google Authenticator, Authy, 1Password)",
+      "disable": "Disable 2FA",
+      "backupHint": "Backup codes available in account",
+      "enable": "Enable 2FA"
+    },
+    "sessions": {
+      "title": "Active sessions",
+      "subtitle": "Devices currently signed in to your account",
+      "currentBadge": "Current",
+      "activeNow": "Active now",
+      "hoursAgoFmt": "{{count}} hours ago",
+      "signOut": "Sign out",
+      "signOutAllOthers": "Sign out of all other devices"
+    }
+  },
+  "setup2FA": {
+    "title": "Enable 2FA",
+    "stepFmt": "Step {{step}} of 2",
+    "step1Intro": "Scan this QR code with your authenticator app, or enter the secret key manually.",
+    "manualKeyHint": "Or enter this secret key manually:",
+    "copied": "Copied",
+    "copy": "Copy",
+    "step2Intro": "Enter the 6-digit code from your authenticator app:",
+    "cancel": "Cancel",
+    "back": "Back",
+    "next": "Next",
+    "enable": "Enable 2FA"
+  },
+  "accountManager": {
+    "askQuestion": "Ask a question",
+    "scheduleTime": "Schedule time with me!"
+  },
+  "organization": {
+    "businessDetails": {
+      "title": "Business details",
+      "subtitle": "Shown to partners and on invoices",
+      "orgName": "Organization name",
+      "phone": "Business phone",
+      "smsPhone": "SMS phone",
+      "lotLocation": "Default lot location",
+      "address": "Business address"
+    },
+    "smsOptIn": {
+      "title": "Inspection Impossible SMS",
+      "subtitle": "Notify via SMS when an inspector cannot complete an inspection (keys missing, vehicle not found, etc.)"
+    },
+    "eveningReminder": {
+      "title": "Set evening reminder text for keys and/or scheduled repairs",
+      "warning": "Vendors will not dispatch without confirmation of readiness",
+      "sendAt": "Send at",
+      "toSmsPhone": "to the DSP SMS phone"
+    },
+    "keyReturn": {
+      "title": "Key(s) return time, location, lockbox code, etc.",
+      "subtitle": "Shared with vendors so drivers know where to drop keys after overnight repairs",
+      "placeholder": "e.g. Front office lockbox, code 4827. Drop keys in the blue bin after hours."
+    },
+    "preferredVendors": {
+      "title": "Preferred Vendors (AMR, Body, Detailing, and Flex Fleet)",
+      "subtitle": "Auto-route work orders to your preferred vendor for each category"
+    },
+    "slack": {
+      "title": "Slack Integration",
+      "subtitle": "Mirror priority alerts (Rush Orders, Grounded Vehicles, Completions) into a Slack channel",
+      "channelLabel": "Channel",
+      "connectButton": "Connect Slack workspace"
+    },
+    "vendorServices": {
+      "title": "Services offered",
+      "subtitle": "DSPs match to vendors based on these capabilities",
+      "selectedCountFmt_one": "{{count}} service selected",
+      "selectedCountFmt_other": "{{count}} services selected"
+    },
+    "saveChanges": "Save Changes"
+  },
+  "pm": {
+    "stat": {
+      "upcoming": "Upcoming",
+      "scheduled": "Scheduled",
+      "total": "Total"
+    },
+    "upcomingPMs": "Upcoming PMs",
+    "schedulePM": "Schedule PM",
+    "statusBadge": {
+      "upcoming": "Upcoming",
+      "scheduled": "Scheduled"
+    },
+    "vendorLabel": "Vendor:",
+    "dueLabel": "Due",
+    "daysFmt_one": "{{count}} day",
+    "daysFmt_other": "{{count}} days",
+    "triggerFmt": "Trigger: {{miles}} mi",
+    "milesShort": "mi",
+    "noPMs": "No PM jobs scheduled.",
+    "intervals": {
+      "title": "PM Intervals by Vehicle Type",
+      "typesCountFmt": "{{count}} types",
+      "readOnly": "Read-only",
+      "intervalsCountFmt": "{{count}} intervals",
+      "done": "Done",
+      "edit": "Edit intervals",
+      "dueEveryFmt": "Due every {{miles}} miles",
+      "dueAtFmt": "Due at {{list}} miles",
+      "everyLabel": "every",
+      "atLabel": "at"
+    }
+  },
+  "dvicCatalog": {
+    "title": "Defect Catalog",
+    "amazonLocked": "Amazon rules locked",
+    "subtitlePart1": "Items the inspector checks for this vehicle template. Amazon rules cannot be modified; add your own custom items with",
+    "subtitlePart2": "+ Custom Defect",
+    "subtitlePart3": ".",
+    "customDefectButton": "Custom Defect",
+    "amazonRulesLabel": "Amazon rules",
+    "customRulesLabel": "custom",
+    "table": {
+      "source": "Source",
+      "section": "Section",
+      "part": "Part",
+      "defect": "Defect",
+      "group": "Group",
+      "class": "Class",
+      "line": "Line",
+      "targets": "Targets"
+    },
+    "loading": "Loading inspection rules…",
+    "pending": "Pending",
+    "noDefects": "No defects configured for this template.",
+    "controlHintPart1": "You control",
+    "controlHintSection": "Section",
+    "controlHintPart": "Part",
+    "controlHintDefect": "Defect",
+    "controlHintMid1": "text for custom items, plus the",
+    "controlHintTuple": "target tuple",
+    "controlHintMid2": "(which catalog rule it maps to). Your DFS Account Manager curates",
+    "controlHintClass": "Class",
+    "controlHintGroup": "Group",
+    "controlHintLine": "Line",
+    "controlHintEnd": "for analytics consistency."
+  },
+  "addCustomDefect": {
+    "title": "Add Custom Defect",
+    "subtitle": "DSP-source rule, persisted to the V2.2 catalog",
+    "infoBanner": "The new rule references an existing (part, defect_type) tuple from the V2.2 catalog so it inherits the validation and routing wiring. Tick \"Show in wizard\" if inspectors should see it during walkarounds.",
+    "vehicleClassesLabel": "Vehicle classes *",
+    "sectionLabel": "Section",
+    "partLabel": "Part *",
+    "catalogLoadFailed": "(catalog load failed)",
+    "selectPart": "Select a part…",
+    "loading": "Loading…",
+    "defectTypeLabel": "Defect type *",
+    "selectDefectType": "Select a defect type…",
+    "defectTypeHint": "Backend rejects (part, defect_type) pairs that aren't in the V2.2 catalog.",
+    "defectTextLabel": "Defect description *",
+    "defectTextPlaceholder": "What the inspector sees on the form — verbatim.",
+    "classLabel": "Class",
+    "groupLabel": "Group",
+    "lineLabel": "Line",
+    "showInWizard": "Show in inspector wizard",
+    "showInWizardHint": "Adds this rule as a checklist item the inspector sees during walkarounds. Off if the rule is admin-only / for reporting.",
+    "wizardCategoryLabel": "Wizard part category *",
+    "wizardCategoryPlaceholder": "DSP custom checks",
+    "wizardCategoryHint": "Header label inside the section the inspector sees.",
+    "photoRequired": "Photo required (off for sensory defects: odor, brake noise, etc.)",
+    "brandedOnly": "Branded only (Amazon DOT / Prime decals — hides for Owner/Rental vans)",
+    "cancel": "Cancel",
+    "saving": "Saving…",
+    "addDefect": "Add Defect"
+  },
+  "defectRules": {
+    "explanation": {
+      "title": "Defect Auto-Approval Rules",
+      "bodyPart1": "Normally, every reported defect requires your manual approval before a work order is created.",
+      "bodyPart2": "Auto-approval rules let you skip that step",
+      "bodyPart3": "for routine, low-risk categories so vendors can start working immediately.",
+      "autoApprovedFmt": "{{count}} auto-approved",
+      "manualFmt": "{{count}} manual",
+      "ofCategoriesFmt": "of {{count}} categories"
+    },
+    "presets": {
+      "title": "Quick presets",
+      "subtitle": "— click to apply, then fine-tune below",
+      "conservative": "Conservative",
+      "conservativeScope": "*Branded ULCs only",
+      "conservativeDesc": "Lowest-risk scope — only Amazon-managed fleet, safe categories",
+      "balanced": "Balanced",
+      "balancedRecommended": "Recommended",
+      "balancedScope": "*All AMR",
+      "balancedDesc": "Everything your primary AMR vendor covers — routine maintenance auto-approved",
+      "comprehensive": "Comprehensive",
+      "comprehensiveScope": "Branded & Rentals",
+      "comprehensiveDesc": "Broadest reach — everything except heavy body and windshield work"
+    },
+    "globalCap": {
+      "title": "Global cost cap",
+      "subtitle": "Any repair estimate above this value still requires manual approval, regardless of category rules.",
+      "capAt": "Cap repairs at",
+      "perWO": "per WO"
+    },
+    "notify": {
+      "title": "Notify me on auto-approvals",
+      "subtitle": "Send a notification whenever an auto-approval fires so you have full visibility, even without needing to click approve."
+    },
+    "categoryRules": {
+      "title": "Category-by-category rules",
+      "subtitle": "Toggle auto-approval per defect category",
+      "autoBadge": "Auto",
+      "manualBadge": "Manual",
+      "typicalCostFmt": "Typical cost: {{cost}}"
+    },
+    "summary": {
+      "categoriesAutoLabel": "categories set to auto-approve",
+      "capLabel": "cap"
+    },
+    "saveRules": "Save Rules"
+  },
+  "editUserModal": {
+    "title": "Edit User",
+    "fullName": "Full name",
+    "rolesLabel": "Roles",
+    "rolesHintVendor": "Only vendor roles are available — you can't grant DSP or platform roles from here.",
+    "rolesHintDsp": "Only DSP roles are available for your organization.",
+    "rolesHintPlatform": "Any role can be granted.",
+    "dspAssignmentsLabel": "DSP Assignments",
+    "dspAssignmentsHint": "Pick which DSPs this user will handle. Each user only sees WOs and vehicles from the assigned DSPs.",
+    "twoFATitle": "Two-factor auth",
+    "twoFAEnabled": "Enabled",
+    "twoFADisabled": "Not enabled — user can enable in Security",
+    "remove": "Remove",
+    "save": "Save",
+    "confirmRemoveTitleFmt": "Remove {{name}}?",
+    "confirmRemoveBody": "User will lose all access immediately. Historical actions are kept.",
+    "cancel": "Cancel",
+    "confirmRemove": "Remove"
+  }
+}

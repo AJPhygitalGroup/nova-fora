@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import {
   Settings, Users, Shield, Building2, ClipboardCheck, Plus, X, Check, CheckCircle2,
   Mail, Key, Lock, Unlock, Smartphone, Trash2, Edit3, AlertTriangle, Info,
@@ -50,6 +51,7 @@ const SERVICE_ICONS = { WrenchIcon, Zap, Car, Paintbrush, Shield, Armchair, Spar
 // Reusable DSP picker — multi-select with "All" quick action
 // ============================================================
 function DspAssignmentPicker({ selected, onChange, color = 'accent-blue' }) {
+  const { t } = useTranslation('admin');
   const allIds = VENDOR_ASSIGNABLE_DSPS.map((d) => d.id);
   const allSelected = selected.length === allIds.length;
   const noneSelected = selected.length === 0;
@@ -68,13 +70,13 @@ function DspAssignmentPicker({ selected, onChange, color = 'accent-blue' }) {
         <div className="flex items-center gap-2 text-[11px] text-navy-400">
           <Building2 size={11} />
           {noneSelected
-            ? <span className="text-accent-orange font-semibold">No DSPs assigned — this user won't see any WOs</span>
+            ? <span className="text-accent-orange font-semibold">{t('dspPicker.noneSelected', "No DSPs assigned — this user won't see any WOs")}</span>
             : allSelected
-              ? <span className="text-white font-semibold">All DSPs selected</span>
-              : <><span className="text-white font-semibold">{selected.length}</span> of {allIds.length} DSPs selected</>}
+              ? <span className="text-white font-semibold">{t('dspPicker.allSelected', 'All DSPs selected')}</span>
+              : <span className="text-white font-semibold">{t('dspPicker.selectedCountFmt', { selected: selected.length, total: allIds.length, defaultValue: `${selected.length} of ${allIds.length} DSPs selected` })}</span>}
         </div>
         <button onClick={selectAll} className="text-[11px] text-accent-blue hover:underline font-medium">
-          {allSelected ? 'Clear all' : 'Select all'}
+          {allSelected ? t('dspPicker.clearAll', 'Clear all') : t('dspPicker.selectAll', 'Select all')}
         </button>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
@@ -92,7 +94,7 @@ function DspAssignmentPicker({ selected, onChange, color = 'accent-blue' }) {
               </div>
               <div className="min-w-0 flex-1">
                 <div className="text-xs font-semibold text-white truncate">{d.name} <span className="text-navy-400 font-normal">({d.code})</span></div>
-                <div className="text-[10px] text-navy-400">Station {d.station} · {d.vanCount} vans</div>
+                <div className="text-[10px] text-navy-400">{t('dspPicker.stationFmt', { station: d.station, count: d.vanCount, defaultValue: `Station ${d.station} · ${d.vanCount} vans` })}</div>
               </div>
             </button>
           );
@@ -106,6 +108,7 @@ function DspAssignmentPicker({ selected, onChange, color = 'accent-blue' }) {
 // Tab: Users
 // ============================================================
 function UsersTab({ user, users, onUpdateUsers }) {
+  const { t } = useTranslation('admin');
   const [showInvite, setShowInvite] = useState(false);
   const [editUser, setEditUser] = useState(null);
   const [search, setSearch] = useState('');
@@ -122,12 +125,12 @@ function UsersTab({ user, users, onUpdateUsers }) {
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
         <div className="relative flex-1 min-w-[200px]">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-navy-400" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search users…"
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('users.searchPlaceholder', 'Search users…')}
             className="w-full rounded-lg pl-9 pr-3 py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue" />
         </div>
         <button onClick={() => setShowInvite(true)}
           className="flex items-center gap-1.5 px-3 py-2.5 rounded-lg bg-accent-green text-white text-sm font-semibold hover:bg-accent-green/80 cursor-pointer">
-          <Plus size={14} /> Invite User
+          <Plus size={14} /> {t('users.inviteUser', 'Invite User')}
         </button>
       </div>
 
@@ -136,12 +139,12 @@ function UsersTab({ user, users, onUpdateUsers }) {
         <table className="w-full">
           <thead>
             <tr className="border-b border-navy-800 bg-navy-950/40">
-              <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">User</th>
-              <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">Roles</th>
-              {isVendorOrg && <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">DSPs Assigned</th>}
-              <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">Status</th>
-              <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">2FA</th>
-              <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">Last login</th>
+              <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">{t('users.table.user', 'User')}</th>
+              <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">{t('users.table.roles', 'Roles')}</th>
+              {isVendorOrg && <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">{t('users.table.dspsAssigned', 'DSPs Assigned')}</th>}
+              <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">{t('users.table.status', 'Status')}</th>
+              <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">{t('users.table.twoFA', '2FA')}</th>
+              <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">{t('users.table.lastLogin', 'Last login')}</th>
               <th className="w-20" />
             </tr>
           </thead>
@@ -165,9 +168,9 @@ function UsersTab({ user, users, onUpdateUsers }) {
                 {isVendorOrg && (
                   <td className="px-4 py-3">
                     {(u.assignedDsps || []).length === 0 ? (
-                      <span className="text-[11px] text-accent-orange">None</span>
+                      <span className="text-[11px] text-accent-orange">{t('users.noneAssignment', 'None')}</span>
                     ) : (u.assignedDsps || []).length === VENDOR_ASSIGNABLE_DSPS.length ? (
-                      <Badge variant="green">All ({VENDOR_ASSIGNABLE_DSPS.length})</Badge>
+                      <Badge variant="green">{t('users.allCountFmt', { count: VENDOR_ASSIGNABLE_DSPS.length, defaultValue: `All (${VENDOR_ASSIGNABLE_DSPS.length})` })}</Badge>
                     ) : (
                       <div className="flex flex-wrap gap-1">
                         {(u.assignedDsps || []).slice(0, 2).map((did) => {
@@ -180,15 +183,15 @@ function UsersTab({ user, users, onUpdateUsers }) {
                   </td>
                 )}
                 <td className="px-4 py-3">
-                  {u.status === 'active' && <Badge variant="green">Active</Badge>}
-                  {u.status === 'pending' && <Badge variant="gold">Pending</Badge>}
-                  {u.status === 'invited' && <Badge variant="purple">Invited</Badge>}
+                  {u.status === 'active' && <Badge variant="green">{t('users.status.active', 'Active')}</Badge>}
+                  {u.status === 'pending' && <Badge variant="gold">{t('users.status.pending', 'Pending')}</Badge>}
+                  {u.status === 'invited' && <Badge variant="purple">{t('users.status.invited', 'Invited')}</Badge>}
                 </td>
                 <td className="px-4 py-3">
                   {u.twoFAEnabled ? <Lock size={14} className="text-accent-green" /> : <Unlock size={14} className="text-navy-500" />}
                 </td>
                 <td className="px-4 py-3 text-xs text-navy-300">
-                  {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : <span className="text-navy-500">Never</span>}
+                  {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : <span className="text-navy-500">{t('users.lastLoginNever', 'Never')}</span>}
                 </td>
                 <td className="px-4 py-3 text-right">
                   <Edit3 size={14} className="text-navy-400" />
@@ -196,7 +199,7 @@ function UsersTab({ user, users, onUpdateUsers }) {
               </tr>
             ))}
             {filtered.length === 0 && (
-              <tr><td colSpan={isVendorOrg ? 7 : 6} className="px-4 py-10 text-center text-sm text-navy-400">No users match your search.</td></tr>
+              <tr><td colSpan={isVendorOrg ? 7 : 6} className="px-4 py-10 text-center text-sm text-navy-400">{t('users.noMatch', 'No users match your search.')}</td></tr>
             )}
           </tbody>
         </table>
@@ -214,9 +217,9 @@ function UsersTab({ user, users, onUpdateUsers }) {
               </div>
               <div className="flex items-center gap-1 shrink-0">
                 {u.twoFAEnabled && <Lock size={12} className="text-accent-green" />}
-                {u.status === 'active' && <Badge variant="green">Active</Badge>}
-                {u.status === 'pending' && <Badge variant="gold">Pending</Badge>}
-                {u.status === 'invited' && <Badge variant="purple">Invited</Badge>}
+                {u.status === 'active' && <Badge variant="green">{t('users.status.active', 'Active')}</Badge>}
+                {u.status === 'pending' && <Badge variant="gold">{t('users.status.pending', 'Pending')}</Badge>}
+                {u.status === 'invited' && <Badge variant="purple">{t('users.status.invited', 'Invited')}</Badge>}
               </div>
             </div>
             <div className="flex flex-wrap gap-1 mt-1.5">
@@ -227,11 +230,11 @@ function UsersTab({ user, users, onUpdateUsers }) {
             </div>
             {isVendorOrg && (
               <div className="mt-2 pt-2 border-t border-navy-800/60">
-                <div className="text-[10px] text-navy-400 uppercase tracking-wide mb-1 flex items-center gap-1"><Building2 size={9} /> DSPs assigned</div>
+                <div className="text-[10px] text-navy-400 uppercase tracking-wide mb-1 flex items-center gap-1"><Building2 size={9} /> {t('users.mobileDspsLabel', 'DSPs assigned')}</div>
                 {(u.assignedDsps || []).length === 0 ? (
-                  <span className="text-[11px] text-accent-orange">None — user won't see any WOs</span>
+                  <span className="text-[11px] text-accent-orange">{t('users.noneWontSeeWOs', "None — user won't see any WOs")}</span>
                 ) : (u.assignedDsps || []).length === VENDOR_ASSIGNABLE_DSPS.length ? (
-                  <Badge variant="green">All {VENDOR_ASSIGNABLE_DSPS.length} DSPs</Badge>
+                  <Badge variant="green">{t('users.allDspsFmt', { count: VENDOR_ASSIGNABLE_DSPS.length, defaultValue: `All ${VENDOR_ASSIGNABLE_DSPS.length} DSPs` })}</Badge>
                 ) : (
                   <div className="flex flex-wrap gap-1">
                     {(u.assignedDsps || []).map((did) => {
@@ -259,6 +262,7 @@ function UsersTab({ user, users, onUpdateUsers }) {
 }
 
 function InviteUserModal({ onClose, onInvite, isVendorOrg = false, adminOrgType }) {
+  const { t } = useTranslation('admin');
   const assignableRoles = rolesAssignableBy(adminOrgType);
   const defaultRole = isVendorOrg ? 'technician' : adminOrgType === 'dsp' ? 'fleet_owner' : assignableRoles[0]?.id;
   const [form, setForm] = useState({ name: '', email: '', roles: [defaultRole], assignedDsps: [] });
@@ -280,29 +284,29 @@ function InviteUserModal({ onClose, onInvite, isVendorOrg = false, adminOrgType 
         <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-navy-800">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-accent-green/15 flex items-center justify-center"><Mail size={16} className="text-accent-green" /></div>
-            <div><h3 className="text-base font-semibold text-white">Invite User</h3><p className="text-[11px] text-navy-400">They'll receive an email to set their password</p></div>
+            <div><h3 className="text-base font-semibold text-white">{t('inviteModal.title', 'Invite User')}</h3><p className="text-[11px] text-navy-400">{t('inviteModal.subtitle', "They'll receive an email to set their password")}</p></div>
           </div>
           <button onClick={onClose} className="text-navy-400 hover:text-white p-2 -mr-2"><X size={20} /></button>
         </div>
         <div className="px-4 sm:px-6 py-5 space-y-4 overflow-y-auto flex-1">
           <div>
-            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Full name</label>
-            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Jose Pérez"
+            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('inviteModal.fullName', 'Full name')}</label>
+            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t('inviteModal.fullNamePlaceholder', 'e.g. Jose Pérez')}
               className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-green" />
           </div>
           <div>
-            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Email</label>
-            <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="jose@example.com"
+            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('inviteModal.email', 'Email')}</label>
+            <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder={t('inviteModal.emailPlaceholder', 'jose@example.com')}
               className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-green" />
           </div>
           <div>
-            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Roles</label>
+            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('inviteModal.rolesLabel', 'Roles')}</label>
             <p className="text-[11px] text-navy-400 mb-2">
               {isVendorOrg
-                ? 'Only vendor roles are available — you can\'t grant DSP or platform roles from here.'
+                ? t('inviteModal.rolesHintVendor', "Only vendor roles are available — you can't grant DSP or platform roles from here.")
                 : adminOrgType === 'dsp'
-                  ? 'Only DSP roles are available for your organization.'
-                  : 'Assign any platform role.'}
+                  ? t('inviteModal.rolesHintDsp', 'Only DSP roles are available for your organization.')
+                  : t('inviteModal.rolesHintPlatform', 'Assign any platform role.')}
             </p>
             <div className="space-y-1.5">
               {assignableRoles.map((r) => (
@@ -323,18 +327,18 @@ function InviteUserModal({ onClose, onInvite, isVendorOrg = false, adminOrgType 
           {isVendorOrg && (
             <div>
               <label className="text-xs font-semibold text-navy-300 mb-1.5 block flex items-center gap-1.5">
-                <Building2 size={12} className="text-accent-blue" /> DSP Assignments
+                <Building2 size={12} className="text-accent-blue" /> {t('inviteModal.dspAssignmentsLabel', 'DSP Assignments')}
               </label>
-              <p className="text-[11px] text-navy-400 mb-2">Choose which DSPs this user will handle. They'll only see WOs and vehicles from the DSPs selected here.</p>
+              <p className="text-[11px] text-navy-400 mb-2">{t('inviteModal.dspAssignmentsHint', "Choose which DSPs this user will handle. They'll only see WOs and vehicles from the DSPs selected here.")}</p>
               <DspAssignmentPicker selected={form.assignedDsps} onChange={(v) => setForm({ ...form, assignedDsps: v })} color="accent-green" />
             </div>
           )}
         </div>
         <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-3 sm:py-4 border-t border-navy-800 bg-navy-900/80">
-          <button onClick={onClose} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">Cancel</button>
+          <button onClick={onClose} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">{t('inviteModal.cancel', 'Cancel')}</button>
           <button onClick={submit} disabled={!valid || submitting}
             className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-accent-green text-white hover:opacity-90 disabled:opacity-40 cursor-pointer">
-            {submitting ? 'Sending…' : <>Send Invite <Mail size={14} /></>}
+            {submitting ? t('inviteModal.sending', 'Sending…') : <>{t('inviteModal.sendInvite', 'Send Invite')} <Mail size={14} /></>}
           </button>
         </div>
       </motion.div>
@@ -343,6 +347,7 @@ function InviteUserModal({ onClose, onInvite, isVendorOrg = false, adminOrgType 
 }
 
 function EditUserModal({ user, onClose, onSave, onRemove, isVendorOrg = false, adminOrgType }) {
+  const { t } = useTranslation('admin');
   const assignableRoles = rolesAssignableBy(adminOrgType);
   const [form, setForm] = useState({ ...user, assignedDsps: user.assignedDsps || [] });
   const [showRemove, setShowRemove] = useState(false);
@@ -357,20 +362,20 @@ function EditUserModal({ user, onClose, onSave, onRemove, isVendorOrg = false, a
         <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-navy-800">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-accent-blue/15 flex items-center justify-center"><Users size={16} className="text-accent-blue" /></div>
-            <div><h3 className="text-base font-semibold text-white">Edit User</h3><p className="text-[11px] text-navy-400">{user.email}</p></div>
+            <div><h3 className="text-base font-semibold text-white">{t('editUserModal.title', 'Edit User')}</h3><p className="text-[11px] text-navy-400">{user.email}</p></div>
           </div>
           <button onClick={onClose} className="text-navy-400 hover:text-white p-2 -mr-2"><X size={20} /></button>
         </div>
         <div className="px-4 sm:px-6 py-5 space-y-4 overflow-y-auto flex-1">
-          <div><label className="text-xs font-semibold text-navy-300 mb-1.5 block">Full name</label><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue" /></div>
+          <div><label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('editUserModal.fullName', 'Full name')}</label><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue" /></div>
           <div>
-            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Roles</label>
+            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('editUserModal.rolesLabel', 'Roles')}</label>
             <p className="text-[11px] text-navy-400 mb-2">
               {isVendorOrg
-                ? 'Only vendor roles are available — you can\'t grant DSP or platform roles from here.'
+                ? t('editUserModal.rolesHintVendor', "Only vendor roles are available — you can't grant DSP or platform roles from here.")
                 : adminOrgType === 'dsp'
-                  ? 'Only DSP roles are available for your organization.'
-                  : 'Any role can be granted.'}
+                  ? t('editUserModal.rolesHintDsp', 'Only DSP roles are available for your organization.')
+                  : t('editUserModal.rolesHintPlatform', 'Any role can be granted.')}
             </p>
             <div className="space-y-1.5">
               {assignableRoles.map((r) => (
@@ -387,9 +392,9 @@ function EditUserModal({ user, onClose, onSave, onRemove, isVendorOrg = false, a
           {isVendorOrg && (
             <div>
               <label className="text-xs font-semibold text-navy-300 mb-1.5 block flex items-center gap-1.5">
-                <Building2 size={12} className="text-accent-blue" /> DSP Assignments
+                <Building2 size={12} className="text-accent-blue" /> {t('editUserModal.dspAssignmentsLabel', 'DSP Assignments')}
               </label>
-              <p className="text-[11px] text-navy-400 mb-2">Pick which DSPs this user will handle. Each user only sees WOs and vehicles from the assigned DSPs.</p>
+              <p className="text-[11px] text-navy-400 mb-2">{t('editUserModal.dspAssignmentsHint', 'Pick which DSPs this user will handle. Each user only sees WOs and vehicles from the assigned DSPs.')}</p>
               <DspAssignmentPicker selected={form.assignedDsps} onChange={(v) => setForm({ ...form, assignedDsps: v })} color="accent-blue" />
             </div>
           )}
@@ -399,17 +404,17 @@ function EditUserModal({ user, onClose, onSave, onRemove, isVendorOrg = false, a
               {form.twoFAEnabled ? <Lock size={14} className="text-accent-green" /> : <Unlock size={14} className="text-navy-400" />}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-semibold text-white">Two-factor auth</div>
-              <div className="text-[11px] text-navy-400">{form.twoFAEnabled ? 'Enabled' : 'Not enabled — user can enable in Security'}</div>
+              <div className="text-sm font-semibold text-white">{t('editUserModal.twoFATitle', 'Two-factor auth')}</div>
+              <div className="text-[11px] text-navy-400">{form.twoFAEnabled ? t('editUserModal.twoFAEnabled', 'Enabled') : t('editUserModal.twoFADisabled', 'Not enabled — user can enable in Security')}</div>
             </div>
           </div>
         </div>
         <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-3 sm:py-4 border-t border-navy-800 bg-navy-900/80">
           <button onClick={() => setShowRemove(true)} className="flex items-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-medium text-accent-red hover:bg-accent-red/10 cursor-pointer">
-            <Trash2 size={14} /> Remove
+            <Trash2 size={14} /> {t('editUserModal.remove', 'Remove')}
           </button>
           <button onClick={() => onSave(form)} className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-accent-blue text-white hover:opacity-90 cursor-pointer">
-            <Check size={14} /> Save
+            <Check size={14} /> {t('editUserModal.save', 'Save')}
           </button>
         </div>
         <AnimatePresence>
@@ -420,11 +425,11 @@ function EditUserModal({ user, onClose, onSave, onRemove, isVendorOrg = false, a
               <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} onClick={(e) => e.stopPropagation()}
                 className="bg-navy-900 border border-accent-red/40 rounded-xl p-5 max-w-sm w-full text-center">
                 <div className="w-12 h-12 rounded-full bg-accent-red/15 flex items-center justify-center mx-auto mb-3"><AlertTriangle size={22} className="text-accent-red" /></div>
-                <h4 className="text-base font-semibold text-white mb-1">Remove {user.name}?</h4>
-                <p className="text-xs text-navy-400 mb-4">User will lose all access immediately. Historical actions are kept.</p>
+                <h4 className="text-base font-semibold text-white mb-1">{t('editUserModal.confirmRemoveTitleFmt', { name: user.name, defaultValue: `Remove ${user.name}?` })}</h4>
+                <p className="text-xs text-navy-400 mb-4">{t('editUserModal.confirmRemoveBody', 'User will lose all access immediately. Historical actions are kept.')}</p>
                 <div className="flex gap-2">
-                  <button onClick={() => setShowRemove(false)} className="flex-1 px-4 py-2.5 rounded-lg border border-navy-600 text-navy-300 text-sm hover:bg-navy-800 cursor-pointer">Cancel</button>
-                  <button onClick={() => onRemove(user.id)} className="flex-1 px-4 py-2.5 rounded-lg bg-accent-red text-white text-sm font-semibold hover:opacity-90 cursor-pointer">Remove</button>
+                  <button onClick={() => setShowRemove(false)} className="flex-1 px-4 py-2.5 rounded-lg border border-navy-600 text-navy-300 text-sm hover:bg-navy-800 cursor-pointer">{t('editUserModal.cancel', 'Cancel')}</button>
+                  <button onClick={() => onRemove(user.id)} className="flex-1 px-4 py-2.5 rounded-lg bg-accent-red text-white text-sm font-semibold hover:opacity-90 cursor-pointer">{t('editUserModal.confirmRemove', 'Remove')}</button>
                 </div>
               </motion.div>
             </motion.div>
@@ -439,6 +444,7 @@ function EditUserModal({ user, onClose, onSave, onRemove, isVendorOrg = false, a
 // Tab: Invitations — token-based onboarding for new users
 // ============================================================
 function InvitationsTab({ user }) {
+  const { t } = useTranslation('admin');
   const [invs, setInvs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -467,7 +473,7 @@ function InvitationsTab({ user }) {
       setTimeout(() => setCopiedId(null), 2000);
     } catch {
       // older browsers — fall back to a prompt
-      window.prompt('Copy the invitation link:', inv.acceptUrl);
+      window.prompt(t('invitations.copyManualPrompt', 'Copy the invitation link:'), inv.acceptUrl);
     }
   };
 
@@ -476,17 +482,17 @@ function InvitationsTab({ user }) {
       await invitationsApi.resend(inv.id);
       await reload();
     } catch (err) {
-      alert(`Resend failed: ${err.detail || err.message}`);
+      alert(t('invitations.resendFailedFmt', { error: err.detail || err.message, defaultValue: `Resend failed: ${err.detail || err.message}` }));
     }
   };
 
   const handleRevoke = async (inv) => {
-    if (!window.confirm(`Revoke invitation for ${inv.email}? They will not be able to use the link.`)) return;
+    if (!window.confirm(t('invitations.confirmRevokeFmt', { email: inv.email, defaultValue: `Revoke invitation for ${inv.email}? They will not be able to use the link.` }))) return;
     try {
       await invitationsApi.revoke(inv.id);
       await reload();
     } catch (err) {
-      alert(`Revoke failed: ${err.detail || err.message}`);
+      alert(t('invitations.revokeFailedFmt', { error: err.detail || err.message, defaultValue: `Revoke failed: ${err.detail || err.message}` }));
     }
   };
 
@@ -500,30 +506,27 @@ function InvitationsTab({ user }) {
         <div>
           <h3 className="text-base font-semibold text-white mb-1 flex items-center gap-2">
             <Mail size={16} className="text-accent-blue" />
-            Invitations
+            {t('invitations.heading', 'Invitations')}
           </h3>
           <p className="text-xs text-navy-400 max-w-xl">
-            Invite new {user.role === 'site_admin'
-              ? 'DSP owners, vendors, or technicians'
+            {user.role === 'site_admin'
+              ? t('invitations.subtitleSiteAdmin', "Invite new DSP owners, vendors, or technicians. They get an email with a one-click link to set up their account. If SMTP isn't configured yet, copy the invite link manually from the row below.")
               : user.role === 'vendor_admin'
-                ? 'admins or technicians for your shop'
-                : 'co-owners for your DSP'}.
-            They get an email with a one-click link to set up their account.
-            If SMTP isn't configured yet, copy the invite link manually from
-            the row below.
+                ? t('invitations.subtitleVendor', "Invite new admins or technicians for your shop. They get an email with a one-click link to set up their account. If SMTP isn't configured yet, copy the invite link manually from the row below.")
+                : t('invitations.subtitleDsp', "Invite new co-owners for your DSP. They get an email with a one-click link to set up their account. If SMTP isn't configured yet, copy the invite link manually from the row below.")}
           </p>
         </div>
         <button onClick={() => setShowCreate(true)}
           className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-accent-blue text-white text-sm font-semibold hover:opacity-90 cursor-pointer shrink-0">
-          <Plus size={14} /> New invitation
+          <Plus size={14} /> {t('invitations.newInvitation', 'New invitation')}
         </button>
       </div>
 
       {/* Counts */}
       <div className="flex items-center gap-2 text-xs flex-wrap">
-        <Badge variant="gold">{pending} pending</Badge>
-        <Badge variant="green">{accepted} accepted</Badge>
-        <span className="text-navy-500">{invs.length} total</span>
+        <Badge variant="gold">{t('invitations.pendingFmt', { count: pending, defaultValue: `${pending} pending` })}</Badge>
+        <Badge variant="green">{t('invitations.acceptedFmt', { count: accepted, defaultValue: `${accepted} accepted` })}</Badge>
+        <span className="text-navy-500">{t('invitations.totalFmt', { count: invs.length, defaultValue: `${invs.length} total` })}</span>
       </div>
 
       {error && (
@@ -536,22 +539,22 @@ function InvitationsTab({ user }) {
       <div className="bg-navy-900/60 border border-navy-700/40 rounded-xl overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-10 text-navy-400 text-sm">
-            <Loader2 size={16} className="animate-spin mr-2" /> Loading…
+            <Loader2 size={16} className="animate-spin mr-2" /> {t('invitations.loading', 'Loading…')}
           </div>
         ) : invs.length === 0 ? (
           <div className="text-center py-10 text-navy-400 text-sm">
-            No invitations yet. Click <span className="text-accent-blue">New invitation</span> to send one.
+            {t('invitations.emptyPart1', 'No invitations yet. Click')} <span className="text-accent-blue">{t('invitations.newInvitation', 'New invitation')}</span> {t('invitations.emptyPart2', 'to send one.')}
           </div>
         ) : (
           <table className="w-full text-xs">
             <thead className="bg-navy-950/50">
               <tr className="text-navy-400 text-[10px] uppercase tracking-wide">
-                <th className="text-left px-3 py-2 font-semibold">Invitee</th>
-                <th className="text-left px-3 py-2 font-semibold">Role</th>
-                <th className="text-left px-3 py-2 font-semibold">Organization</th>
-                <th className="text-left px-3 py-2 font-semibold">Status</th>
-                <th className="text-left px-3 py-2 font-semibold">Expires</th>
-                <th className="text-right px-3 py-2 font-semibold">Actions</th>
+                <th className="text-left px-3 py-2 font-semibold">{t('invitations.table.invitee', 'Invitee')}</th>
+                <th className="text-left px-3 py-2 font-semibold">{t('invitations.table.role', 'Role')}</th>
+                <th className="text-left px-3 py-2 font-semibold">{t('invitations.table.organization', 'Organization')}</th>
+                <th className="text-left px-3 py-2 font-semibold">{t('invitations.table.status', 'Status')}</th>
+                <th className="text-left px-3 py-2 font-semibold">{t('invitations.table.expires', 'Expires')}</th>
+                <th className="text-right px-3 py-2 font-semibold">{t('invitations.table.actions', 'Actions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -565,7 +568,7 @@ function InvitationsTab({ user }) {
                       <div className="text-[11px] text-navy-400 font-mono">{inv.email}</div>
                     </td>
                     <td className="px-3 py-2.5 text-navy-200">
-                      {ROLE_LABELS[inv.role] || inv.role}
+                      {t(`roles.${inv.role}`, ROLE_LABELS[inv.role] || inv.role)}
                     </td>
                     <td className="px-3 py-2.5 text-navy-200">
                       {inv.orgName || '—'}
@@ -577,10 +580,12 @@ function InvitationsTab({ user }) {
                         : inv.status === 'revoked' ? 'gray'
                         : expired ? 'red' : 'gold'
                       }>
-                        {expired && inv.status === 'pending' ? 'expired' : inv.status}
+                        {expired && inv.status === 'pending'
+                          ? t('invitations.statusBadge.expired', 'expired')
+                          : t(`invitations.statusBadge.${inv.status}`, inv.status)}
                       </Badge>
                       {!inv.smtpDelivered && inv.status === 'pending' && (
-                        <div className="text-[10px] text-accent-orange mt-0.5">SMTP not configured — copy link</div>
+                        <div className="text-[10px] text-accent-orange mt-0.5">{t('invitations.smtpNotConfigured', 'SMTP not configured — copy link')}</div>
                       )}
                     </td>
                     <td className="px-3 py-2.5 text-navy-300 whitespace-nowrap">
@@ -593,17 +598,17 @@ function InvitationsTab({ user }) {
                         {isPending && (
                           <>
                             <button onClick={() => handleCopy(inv)}
-                              title="Copy invite link"
+                              title={t('invitations.copyLinkTitle', 'Copy invite link')}
                               className={`p-1.5 rounded ${copiedId === inv.id ? 'bg-accent-green/20 text-accent-green' : 'text-navy-400 hover:text-white hover:bg-navy-800'}`}>
                               {copiedId === inv.id ? <Check size={13} /> : <Copy size={13} />}
                             </button>
                             <button onClick={() => handleResend(inv)}
-                              title="Re-send email + bump expiry"
+                              title={t('invitations.resendTitle', 'Re-send email + bump expiry')}
                               className="p-1.5 rounded text-navy-400 hover:text-white hover:bg-navy-800">
                               <RotateCw size={13} />
                             </button>
                             <button onClick={() => handleRevoke(inv)}
-                              title="Revoke invitation"
+                              title={t('invitations.revokeTitle', 'Revoke invitation')}
                               className="p-1.5 rounded text-navy-400 hover:text-accent-red hover:bg-accent-red/10">
                               <Trash2 size={13} />
                             </button>
@@ -612,7 +617,7 @@ function InvitationsTab({ user }) {
                         {!isPending && inv.status === 'pending' && (
                           // expired but not accepted — allow resend
                           <button onClick={() => handleResend(inv)}
-                            title="Re-send + reset expiry"
+                            title={t('invitations.resendResetTitle', 'Re-send + reset expiry')}
                             className="p-1.5 rounded text-navy-400 hover:text-white hover:bg-navy-800">
                             <RotateCw size={13} />
                           </button>
@@ -695,6 +700,7 @@ const DSP_ROLES = new Set(['dsp_owner', 'dsp_manager', 'dsp_inspector', 'dsp_vie
 const VENDOR_ROLES = new Set(['vendor_admin', 'service_writer', 'technician', 'vendor_viewer']);
 
 function CreateInvitationModal({ user, onClose, onCreated }) {
+  const { t } = useTranslation('admin');
   const isSiteAdmin = user?.role === 'site_admin';
 
   // Pull the allowed targets from the central matrix so a permission change
@@ -706,8 +712,8 @@ function CreateInvitationModal({ user, onClose, onCreated }) {
     .filter((r) => r !== 'site_admin' || user?.orgType === 'platform')
     .map((value) => ({
       value,
-      label: ROLE_LABELS[value] || value,
-      desc: ROLE_DESCRIPTIONS[value] || '',
+      label: t(`roles.${value}`, ROLE_LABELS[value] || value),
+      desc: t(`roleDescriptions.${value}`, ROLE_DESCRIPTIONS[value] || ''),
     }));
 
   // Site admins can create new orgs OR add to existing one (theirs).
@@ -729,10 +735,10 @@ function CreateInvitationModal({ user, onClose, onCreated }) {
   // UI honest: pick "DSP Manager" → org_type locks to "dsp".
   useEffect(() => {
     if (form.target === 'new' && form.role) {
-      const t = DSP_ROLES.has(form.role) ? 'dsp'
+      const nextType = DSP_ROLES.has(form.role) ? 'dsp'
               : VENDOR_ROLES.has(form.role) ? 'vendor'
               : form.orgType;
-      if (t !== form.orgType) setForm((f) => ({ ...f, orgType: t }));
+      if (nextType !== form.orgType) setForm((f) => ({ ...f, orgType: nextType }));
     }
   }, [form.role, form.target]);  // eslint-disable-line
 
@@ -778,7 +784,7 @@ function CreateInvitationModal({ user, onClose, onCreated }) {
         <div className="px-5 py-4 border-b border-navy-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Send size={16} className="text-accent-blue" />
-            <h3 className="text-sm font-semibold text-white">New invitation</h3>
+            <h3 className="text-sm font-semibold text-white">{t('createInvitationModal.title', 'New invitation')}</h3>
           </div>
           <button onClick={onClose} className="text-navy-400 hover:text-white p-1 -mr-1"><X size={18} /></button>
         </div>
@@ -790,10 +796,10 @@ function CreateInvitationModal({ user, onClose, onCreated }) {
             </div>
           )}
 
-          <Field label="Role *">
+          <Field label={t('createInvitationModal.roleLabel', 'Role *')}>
             {roleOptions.length === 0 ? (
               <div className="px-3 py-2.5 rounded-md bg-navy-800 border border-navy-700 text-xs text-navy-400">
-                Your role doesn't have permission to invite anyone.
+                {t('createInvitationModal.noPermission', "Your role doesn't have permission to invite anyone.")}
               </div>
             ) : (
               <>
@@ -803,20 +809,20 @@ function CreateInvitationModal({ user, onClose, onCreated }) {
                 </select>
                 {form.role && (
                   <p className="text-[11px] text-navy-400 mt-1.5 leading-snug">
-                    {ROLE_DESCRIPTIONS[form.role]}
+                    {t(`roleDescriptions.${form.role}`, ROLE_DESCRIPTIONS[form.role])}
                   </p>
                 )}
               </>
             )}
           </Field>
 
-          <Field label="Email *">
+          <Field label={t('createInvitationModal.emailLabel', 'Email *')}>
             <input type="email" value={form.email} onChange={(e) => update('email', e.target.value)}
               placeholder="ana@example.com"
               className="w-full px-3 py-2.5 rounded-md bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue text-sm" required />
           </Field>
 
-          <Field label="Their name (optional)">
+          <Field label={t('createInvitationModal.fullNameLabel', 'Their name (optional)')}>
             <input type="text" value={form.fullName} onChange={(e) => update('fullName', e.target.value)}
               placeholder="Ana López"
               className="w-full px-3 py-2.5 rounded-md bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue text-sm" />
@@ -824,21 +830,21 @@ function CreateInvitationModal({ user, onClose, onCreated }) {
 
           {/* New-org vs own-org picker (site admin only) */}
           {canCreateNewOrg && (
-            <Field label="Organization">
+            <Field label={t('createInvitationModal.organizationLabel', 'Organization')}>
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <label className={`flex items-center justify-center px-3 py-2.5 rounded-md border cursor-pointer ${
                   form.target === 'new' ? 'border-accent-blue bg-accent-blue/10 text-accent-blue' : 'border-navy-700 bg-navy-800 text-navy-300'
                 }`}>
                   <input type="radio" name="target" value="new" checked={form.target === 'new'}
                     onChange={(e) => update('target', e.target.value)} className="hidden" />
-                  Create new org
+                  {t('createInvitationModal.createNewOrg', 'Create new org')}
                 </label>
                 <label className={`flex items-center justify-center px-3 py-2.5 rounded-md border cursor-pointer ${
                   form.target === 'own' ? 'border-accent-blue bg-accent-blue/10 text-accent-blue' : 'border-navy-700 bg-navy-800 text-navy-300'
                 }`}>
                   <input type="radio" name="target" value="own" checked={form.target === 'own'}
                     onChange={(e) => update('target', e.target.value)} className="hidden" />
-                  Add to {user.org}
+                  {t('createInvitationModal.addToOrgFmt', { org: user.org, defaultValue: `Add to ${user.org}` })}
                 </label>
               </div>
             </Field>
@@ -846,9 +852,9 @@ function CreateInvitationModal({ user, onClose, onCreated }) {
 
           {form.target === 'new' && (
             <>
-              <Field label="Organization type *">
+              <Field label={t('createInvitationModal.orgTypeLabel', 'Organization type *')}>
                 <div className="grid grid-cols-2 gap-2 text-xs">
-                  {[{ v: 'dsp', l: 'DSP' }, { v: 'vendor', l: 'Vendor' }].map((opt) => (
+                  {[{ v: 'dsp', l: t('createInvitationModal.orgType.dsp', 'DSP') }, { v: 'vendor', l: t('createInvitationModal.orgType.vendor', 'Vendor') }].map((opt) => (
                     <label key={opt.v} className={`flex items-center justify-center px-3 py-2.5 rounded-md border cursor-pointer ${
                       form.orgType === opt.v ? 'border-accent-blue bg-accent-blue/10 text-accent-blue' : 'border-navy-700 bg-navy-800 text-navy-300'
                     }`}>
@@ -859,9 +865,9 @@ function CreateInvitationModal({ user, onClose, onCreated }) {
                   ))}
                 </div>
               </Field>
-              <Field label="Organization name *">
+              <Field label={t('createInvitationModal.orgNameLabel', 'Organization name *')}>
                 <input type="text" value={form.orgName} onChange={(e) => update('orgName', e.target.value)}
-                  placeholder={form.orgType === 'dsp' ? 'Sunshine Logistics LLC' : 'Carlos Auto Repair'}
+                  placeholder={form.orgType === 'dsp' ? t('createInvitationModal.orgNamePlaceholderDsp', 'Sunshine Logistics LLC') : t('createInvitationModal.orgNamePlaceholderVendor', 'Carlos Auto Repair')}
                   className="w-full px-3 py-2.5 rounded-md bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue text-sm" required />
               </Field>
             </>
@@ -869,18 +875,18 @@ function CreateInvitationModal({ user, onClose, onCreated }) {
 
           {form.target === 'own' && (
             <div className="px-3 py-2 rounded-lg bg-navy-800/60 border border-navy-700 text-xs text-navy-300">
-              Will be added to <strong className="text-white">{user.org}</strong>.
+              {t('createInvitationModal.willBeAddedPart1', 'Will be added to')} <strong className="text-white">{user.org}</strong>.
             </div>
           )}
 
           <div className="flex items-center justify-end gap-2 pt-2">
             <button type="button" onClick={onClose}
               className="px-4 py-2 rounded-md text-xs font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">
-              Cancel
+              {t('createInvitationModal.cancel', 'Cancel')}
             </button>
             <button type="submit" disabled={!valid || submitting}
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-accent-blue text-white text-xs font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">
-              {submitting ? <><Loader2 size={12} className="animate-spin" /> Sending…</> : <><Send size={12} /> Send invitation</>}
+              {submitting ? <><Loader2 size={12} className="animate-spin" /> {t('createInvitationModal.sending', 'Sending…')}</> : <><Send size={12} /> {t('createInvitationModal.sendInvitation', 'Send invitation')}</>}
             </button>
           </div>
         </form>
@@ -910,6 +916,7 @@ function parseOrgIntId(orgId) {
 // Tab: Security
 // ============================================================
 function SecurityTab({ user }) {
+  const { t } = useTranslation('admin');
   const [show2FA, setShow2FA] = useState(false);
   const [twoFAEnabled, setTwoFAEnabled] = useState(user.role === 'dsp_owner' || user.role === 'vendor_admin');
   const [passwordForm, setPasswordForm] = useState({ current: '', next: '', confirm: '' });
@@ -922,13 +929,13 @@ function SecurityTab({ user }) {
         <div className="flex items-center gap-3 mb-4">
           <div className="w-10 h-10 rounded-lg bg-accent-blue/15 flex items-center justify-center"><Key size={18} className="text-accent-blue" /></div>
           <div>
-            <h3 className="text-base font-semibold text-white">Change password</h3>
-            <p className="text-[11px] text-navy-400">Use at least 12 characters, mix of letters and numbers</p>
+            <h3 className="text-base font-semibold text-white">{t('security.changePassword.title', 'Change password')}</h3>
+            <p className="text-[11px] text-navy-400">{t('security.changePassword.subtitle', 'Use at least 12 characters, mix of letters and numbers')}</p>
           </div>
         </div>
         <div className="space-y-3">
           <div>
-            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Current password</label>
+            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('security.changePassword.current', 'Current password')}</label>
             <div className="relative">
               <input type={showCurrent ? 'text' : 'password'} value={passwordForm.current} onChange={(e) => setPasswordForm({ ...passwordForm, current: e.target.value })}
                 className="w-full rounded-lg pl-3 pr-10 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue" />
@@ -938,17 +945,17 @@ function SecurityTab({ user }) {
             </div>
           </div>
           <div>
-            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">New password</label>
+            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('security.changePassword.next', 'New password')}</label>
             <input type="password" value={passwordForm.next} onChange={(e) => setPasswordForm({ ...passwordForm, next: e.target.value })}
               className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue" />
           </div>
           <div>
-            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Confirm new password</label>
+            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('security.changePassword.confirm', 'Confirm new password')}</label>
             <input type="password" value={passwordForm.confirm} onChange={(e) => setPasswordForm({ ...passwordForm, confirm: e.target.value })}
               className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue" />
           </div>
           <button className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-accent-blue text-white text-sm font-semibold hover:opacity-90 cursor-pointer">
-            <Check size={14} /> Update Password
+            <Check size={14} /> {t('security.changePassword.update', 'Update Password')}
           </button>
         </div>
       </div>
@@ -962,23 +969,23 @@ function SecurityTab({ user }) {
             </div>
             <div>
               <h3 className="text-base font-semibold text-white flex items-center gap-2">
-                Two-factor authentication
-                {twoFAEnabled && <Badge variant="green">Enabled</Badge>}
+                {t('security.twoFA.title', 'Two-factor authentication')}
+                {twoFAEnabled && <Badge variant="green">{t('security.twoFA.enabledBadge', 'Enabled')}</Badge>}
               </h3>
-              <p className="text-[11px] text-navy-400">Add an extra layer of security with TOTP (Google Authenticator, Authy, 1Password)</p>
+              <p className="text-[11px] text-navy-400">{t('security.twoFA.subtitle', 'Add an extra layer of security with TOTP (Google Authenticator, Authy, 1Password)')}</p>
             </div>
           </div>
         </div>
         {twoFAEnabled ? (
           <div className="flex items-center gap-2">
             <button onClick={() => setTwoFAEnabled(false)} className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-accent-red/40 bg-accent-red/10 text-accent-red text-sm font-semibold hover:bg-accent-red/20 cursor-pointer">
-              <Unlock size={14} /> Disable 2FA
+              <Unlock size={14} /> {t('security.twoFA.disable', 'Disable 2FA')}
             </button>
-            <span className="text-[11px] text-navy-400">Backup codes available in account</span>
+            <span className="text-[11px] text-navy-400">{t('security.twoFA.backupHint', 'Backup codes available in account')}</span>
           </div>
         ) : (
           <button onClick={() => setShow2FA(true)} className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent-green text-white text-sm font-semibold hover:opacity-90 cursor-pointer">
-            <Smartphone size={14} /> Enable 2FA
+            <Smartphone size={14} /> {t('security.twoFA.enable', 'Enable 2FA')}
           </button>
         )}
       </div>
@@ -988,21 +995,21 @@ function SecurityTab({ user }) {
         <div className="flex items-center gap-3 mb-4">
           <div className="w-10 h-10 rounded-lg bg-accent-gold/15 flex items-center justify-center"><Clock size={18} className="text-accent-gold" /></div>
           <div>
-            <h3 className="text-base font-semibold text-white">Active sessions</h3>
-            <p className="text-[11px] text-navy-400">Devices currently signed in to your account</p>
+            <h3 className="text-base font-semibold text-white">{t('security.sessions.title', 'Active sessions')}</h3>
+            <p className="text-[11px] text-navy-400">{t('security.sessions.subtitle', 'Devices currently signed in to your account')}</p>
           </div>
         </div>
         <div className="space-y-2">
           <div className="flex items-center justify-between p-3 rounded-lg bg-accent-green/5 border border-accent-green/30">
-            <div><div className="text-sm font-semibold text-white">Chrome on Windows <Badge variant="green">Current</Badge></div><div className="text-[11px] text-navy-400">Seattle, WA · Active now</div></div>
+            <div><div className="text-sm font-semibold text-white">Chrome on Windows <Badge variant="green">{t('security.sessions.currentBadge', 'Current')}</Badge></div><div className="text-[11px] text-navy-400">Seattle, WA · {t('security.sessions.activeNow', 'Active now')}</div></div>
             <Check size={14} className="text-accent-green" />
           </div>
           <div className="flex items-center justify-between p-3 rounded-lg bg-navy-800/40 border border-navy-700/40">
-            <div><div className="text-sm font-semibold text-white">Safari on iPhone</div><div className="text-[11px] text-navy-400">Seattle, WA · 2 hours ago</div></div>
-            <button className="text-[11px] text-accent-red hover:underline">Sign out</button>
+            <div><div className="text-sm font-semibold text-white">Safari on iPhone</div><div className="text-[11px] text-navy-400">Seattle, WA · {t('security.sessions.hoursAgoFmt', { count: 2, defaultValue: '2 hours ago' })}</div></div>
+            <button className="text-[11px] text-accent-red hover:underline">{t('security.sessions.signOut', 'Sign out')}</button>
           </div>
         </div>
-        <button className="mt-3 text-sm text-accent-red hover:underline">Sign out of all other devices</button>
+        <button className="mt-3 text-sm text-accent-red hover:underline">{t('security.sessions.signOutAllOthers', 'Sign out of all other devices')}</button>
       </div>
 
       <AnimatePresence>
@@ -1013,6 +1020,7 @@ function SecurityTab({ user }) {
 }
 
 function Setup2FAModal({ onClose, onEnable }) {
+  const { t } = useTranslation('admin');
   const [step, setStep] = useState(1);
   const [code, setCode] = useState('');
   const secretKey = 'ABCD EFGH IJKL MNOP QRST UVWX';
@@ -1027,14 +1035,14 @@ function Setup2FAModal({ onClose, onEnable }) {
         <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-navy-800">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-accent-green/15 flex items-center justify-center"><Smartphone size={16} className="text-accent-green" /></div>
-            <div><h3 className="text-base font-semibold text-white">Enable 2FA</h3><p className="text-[11px] text-navy-400">Step {step} of 2</p></div>
+            <div><h3 className="text-base font-semibold text-white">{t('setup2FA.title', 'Enable 2FA')}</h3><p className="text-[11px] text-navy-400">{t('setup2FA.stepFmt', { step, defaultValue: `Step ${step} of 2` })}</p></div>
           </div>
           <button onClick={onClose} className="text-navy-400 hover:text-white p-2 -mr-2"><X size={20} /></button>
         </div>
         <div className="px-4 sm:px-6 py-5 overflow-y-auto flex-1">
           {step === 1 ? (
             <div className="space-y-4">
-              <div className="text-sm text-navy-200">Scan this QR code with your authenticator app, or enter the secret key manually.</div>
+              <div className="text-sm text-navy-200">{t('setup2FA.step1Intro', 'Scan this QR code with your authenticator app, or enter the secret key manually.')}</div>
               <div className="bg-white rounded-xl p-5 mx-auto w-fit">
                 <div className="w-40 h-40 grid grid-cols-8 grid-rows-8 gap-0.5">
                   {Array.from({ length: 64 }).map((_, i) => (
@@ -1043,19 +1051,19 @@ function Setup2FAModal({ onClose, onEnable }) {
                 </div>
               </div>
               <div>
-                <div className="text-[11px] text-navy-400 mb-1">Or enter this secret key manually:</div>
+                <div className="text-[11px] text-navy-400 mb-1">{t('setup2FA.manualKeyHint', 'Or enter this secret key manually:')}</div>
                 <div className="flex items-center gap-2 rounded-lg bg-navy-800 border border-navy-700 px-3 py-2.5">
                   <span className="flex-1 text-sm font-mono text-white tracking-wider">{secretKey}</span>
                   <button onClick={() => { navigator.clipboard?.writeText(secretKey.replace(/ /g, '')); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
                     className="text-accent-blue text-xs font-semibold hover:underline">
-                    {copied ? <><Check size={12} className="inline mr-0.5" /> Copied</> : <><Copy size={12} className="inline mr-0.5" /> Copy</>}
+                    {copied ? <><Check size={12} className="inline mr-0.5" /> {t('setup2FA.copied', 'Copied')}</> : <><Copy size={12} className="inline mr-0.5" /> {t('setup2FA.copy', 'Copy')}</>}
                   </button>
                 </div>
               </div>
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="text-sm text-navy-200">Enter the 6-digit code from your authenticator app:</div>
+              <div className="text-sm text-navy-200">{t('setup2FA.step2Intro', 'Enter the 6-digit code from your authenticator app:')}</div>
               <input value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                 placeholder="000000" inputMode="numeric" maxLength={6}
                 className="w-full rounded-lg px-4 py-4 text-2xl font-mono text-center tracking-widest bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-green" autoFocus />
@@ -1064,11 +1072,11 @@ function Setup2FAModal({ onClose, onEnable }) {
         </div>
         <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-3 sm:py-4 border-t border-navy-800 bg-navy-900/80">
           <button onClick={step === 1 ? onClose : () => setStep(1)} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">
-            {step === 1 ? 'Cancel' : 'Back'}
+            {step === 1 ? t('setup2FA.cancel', 'Cancel') : t('setup2FA.back', 'Back')}
           </button>
           <button onClick={step === 1 ? () => setStep(2) : onEnable} disabled={step === 2 && code.length !== 6}
             className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-accent-green text-white hover:opacity-90 disabled:opacity-40 cursor-pointer">
-            {step === 1 ? <>Next <ChevronRight size={14} /></> : <>Enable 2FA <Check size={14} /></>}
+            {step === 1 ? <>{t('setup2FA.next', 'Next')} <ChevronRight size={14} /></> : <>{t('setup2FA.enable', 'Enable 2FA')} <Check size={14} /></>}
           </button>
         </div>
       </motion.div>
@@ -1079,6 +1087,7 @@ function Setup2FAModal({ onClose, onEnable }) {
 // Account Manager contact card shown on the Organization tab — gives the
 // customer a direct line to their Nova Fora rep (Ask a question / Schedule time).
 function AccountManagerCard() {
+  const { t } = useTranslation('admin');
   const am = {
     name: 'Jorge Escalona',
     title: 'Account Manager',
@@ -1093,7 +1102,7 @@ function AccountManagerCard() {
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-base font-semibold text-white truncate">{am.name}</div>
-          <div className="text-[11px] text-navy-400">{am.title}</div>
+          <div className="text-[11px] text-navy-400">Account Manager</div>
         </div>
       </div>
       <div className="pt-3 border-t border-navy-800 space-y-3">
@@ -1101,7 +1110,7 @@ function AccountManagerCard() {
           className="flex items-center justify-between gap-2 text-sm text-white hover:text-accent-blue group">
           <span className="flex items-center gap-2">
             <MessageSquare size={14} className="text-accent-blue" />
-            <span className="underline decoration-navy-600 underline-offset-4 group-hover:decoration-accent-blue">Ask a question</span>
+            <span className="underline decoration-navy-600 underline-offset-4 group-hover:decoration-accent-blue">{t('accountManager.askQuestion', 'Ask a question')}</span>
           </span>
           <ExternalLink size={12} className="text-navy-500 group-hover:text-accent-blue" />
         </a>
@@ -1109,7 +1118,7 @@ function AccountManagerCard() {
           className="flex items-center justify-between gap-2 text-sm text-white hover:text-accent-blue group">
           <span className="flex items-center gap-2">
             <Calendar size={14} className="text-accent-blue" />
-            <span className="underline decoration-navy-600 underline-offset-4 group-hover:decoration-accent-blue">Schedule time with me!</span>
+            <span className="underline decoration-navy-600 underline-offset-4 group-hover:decoration-accent-blue">{t('accountManager.scheduleTime', 'Schedule time with me!')}</span>
           </span>
           <ExternalLink size={12} className="text-navy-500 group-hover:text-accent-blue" />
         </a>
@@ -1122,6 +1131,7 @@ function AccountManagerCard() {
 // Tab: Organization
 // ============================================================
 function OrganizationTab({ user }) {
+  const { t } = useTranslation('admin');
   const isDsp = user.role === 'dsp_owner';
   const isVendor = user.role === 'vendor_admin';
   const [form, setForm] = useState({
@@ -1152,14 +1162,14 @@ function OrganizationTab({ user }) {
         <div className="lg:col-span-2 bg-navy-900/60 border border-navy-700/40 rounded-xl p-4 sm:p-5">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-10 h-10 rounded-lg bg-accent-blue/15 flex items-center justify-center"><Building2 size={18} className="text-accent-blue" /></div>
-            <div><h3 className="text-base font-semibold text-white">Business details</h3><p className="text-[11px] text-navy-400">Shown to partners and on invoices</p></div>
+            <div><h3 className="text-base font-semibold text-white">{t('organization.businessDetails.title', 'Business details')}</h3><p className="text-[11px] text-navy-400">{t('organization.businessDetails.subtitle', 'Shown to partners and on invoices')}</p></div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div><label className="text-xs font-semibold text-navy-300 mb-1.5 block">Organization name</label><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue" /></div>
-            <div><label className="text-xs font-semibold text-navy-300 mb-1.5 block">Business phone</label><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue" /></div>
-            <div><label className="text-xs font-semibold text-navy-300 mb-1.5 block">SMS phone</label><input value={form.smsPhone} onChange={(e) => setForm({ ...form, smsPhone: e.target.value })} className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue" /></div>
-            <div><label className="text-xs font-semibold text-navy-300 mb-1.5 block">Default lot location</label><input value={form.lotLocation} onChange={(e) => setForm({ ...form, lotLocation: e.target.value })} className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue" /></div>
-            <div className="sm:col-span-2"><label className="text-xs font-semibold text-navy-300 mb-1.5 block">Business address</label><input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue" /></div>
+            <div><label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('organization.businessDetails.orgName', 'Organization name')}</label><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue" /></div>
+            <div><label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('organization.businessDetails.phone', 'Business phone')}</label><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue" /></div>
+            <div><label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('organization.businessDetails.smsPhone', 'SMS phone')}</label><input value={form.smsPhone} onChange={(e) => setForm({ ...form, smsPhone: e.target.value })} className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue" /></div>
+            <div><label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('organization.businessDetails.lotLocation', 'Default lot location')}</label><input value={form.lotLocation} onChange={(e) => setForm({ ...form, lotLocation: e.target.value })} className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue" /></div>
+            <div className="sm:col-span-2"><label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('organization.businessDetails.address', 'Business address')}</label><input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} className="w-full rounded-lg px-3 py-3 sm:py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue" /></div>
           </div>
         </div>
 
@@ -1172,8 +1182,8 @@ function OrganizationTab({ user }) {
         <label className="flex items-start gap-3 cursor-pointer">
           <input type="checkbox" checked={form.inspectionImpossibleSMS} onChange={() => setForm({ ...form, inspectionImpossibleSMS: !form.inspectionImpossibleSMS })} className="mt-1 w-5 h-5" />
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1"><MessageSquare size={14} className="text-accent-blue" /><span className="text-sm font-semibold text-white">Inspection Impossible SMS</span></div>
-            <div className="text-[11px] text-navy-400">Notify via SMS when an inspector cannot complete an inspection (keys missing, vehicle not found, etc.)</div>
+            <div className="flex items-center gap-2 mb-1"><MessageSquare size={14} className="text-accent-blue" /><span className="text-sm font-semibold text-white">{t('organization.smsOptIn.title', 'Inspection Impossible SMS')}</span></div>
+            <div className="text-[11px] text-navy-400">{t('organization.smsOptIn.subtitle', 'Notify via SMS when an inspector cannot complete an inspection (keys missing, vehicle not found, etc.)')}</div>
           </div>
         </label>
       </div>
@@ -1185,18 +1195,18 @@ function OrganizationTab({ user }) {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1 flex-wrap">
               <Clock size={14} className="text-accent-blue" />
-              <span className="text-sm font-semibold text-white">Set evening reminder text for keys and/or scheduled repairs</span>
+              <span className="text-sm font-semibold text-white">{t('organization.eveningReminder.title', 'Set evening reminder text for keys and/or scheduled repairs')}</span>
             </div>
-            <div className="text-[11px] text-accent-orange font-semibold">Vendors will not dispatch without confirmation of readiness</div>
+            <div className="text-[11px] text-accent-orange font-semibold">{t('organization.eveningReminder.warning', 'Vendors will not dispatch without confirmation of readiness')}</div>
             <AnimatePresence initial={false}>
               {form.eveningReminder && (
                 <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
                   className="overflow-hidden mt-3">
                   <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-navy-400">Send at</span>
+                    <span className="text-[11px] text-navy-400">{t('organization.eveningReminder.sendAt', 'Send at')}</span>
                     <input type="time" value={form.eveningReminderTime} onChange={(e) => setForm({ ...form, eveningReminderTime: e.target.value })}
                       className="rounded-lg px-3 py-1.5 text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue" />
-                    <span className="text-[11px] text-navy-400">to the DSP SMS phone</span>
+                    <span className="text-[11px] text-navy-400">{t('organization.eveningReminder.toSmsPhone', 'to the DSP SMS phone')}</span>
                   </div>
                 </motion.div>
               )}
@@ -1210,14 +1220,14 @@ function OrganizationTab({ user }) {
         <label className="flex items-start gap-3 cursor-pointer">
           <input type="checkbox" checked={form.keyReturnInfo} onChange={() => setForm({ ...form, keyReturnInfo: !form.keyReturnInfo })} className="mt-1 w-5 h-5" />
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1"><Key size={14} className="text-accent-gold" /><span className="text-sm font-semibold text-white">Key(s) return time, location, lockbox code, etc.</span></div>
-            <div className="text-[11px] text-navy-400">Shared with vendors so drivers know where to drop keys after overnight repairs</div>
+            <div className="flex items-center gap-2 mb-1"><Key size={14} className="text-accent-gold" /><span className="text-sm font-semibold text-white">{t('organization.keyReturn.title', 'Key(s) return time, location, lockbox code, etc.')}</span></div>
+            <div className="text-[11px] text-navy-400">{t('organization.keyReturn.subtitle', 'Shared with vendors so drivers know where to drop keys after overnight repairs')}</div>
             <AnimatePresence initial={false}>
               {form.keyReturnInfo && (
                 <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
                   className="overflow-hidden mt-3">
                   <textarea value={form.keyReturnText} onChange={(e) => setForm({ ...form, keyReturnText: e.target.value })} rows={2}
-                    placeholder="e.g. Front office lockbox, code 4827. Drop keys in the blue bin after hours."
+                    placeholder={t('organization.keyReturn.placeholder', 'e.g. Front office lockbox, code 4827. Drop keys in the blue bin after hours.')}
                     className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-gold resize-none" />
                 </motion.div>
               )}
@@ -1231,8 +1241,8 @@ function OrganizationTab({ user }) {
         <label className="flex items-start gap-3 cursor-pointer">
           <input type="checkbox" checked={form.preferredVendors} onChange={() => setForm({ ...form, preferredVendors: !form.preferredVendors })} className="mt-1 w-5 h-5" />
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1"><Building2 size={14} className="text-accent-purple" /><span className="text-sm font-semibold text-white">Preferred Vendors (AMR, Body, Detailing, and Flex Fleet)</span></div>
-            <div className="text-[11px] text-navy-400">Auto-route work orders to your preferred vendor for each category</div>
+            <div className="flex items-center gap-2 mb-1"><Building2 size={14} className="text-accent-purple" /><span className="text-sm font-semibold text-white">{t('organization.preferredVendors.title', 'Preferred Vendors (AMR, Body, Detailing, and Flex Fleet)')}</span></div>
+            <div className="text-[11px] text-navy-400">{t('organization.preferredVendors.subtitle', 'Auto-route work orders to your preferred vendor for each category')}</div>
             <AnimatePresence initial={false}>
               {form.preferredVendors && (
                 <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
@@ -1258,19 +1268,19 @@ function OrganizationTab({ user }) {
         <label className="flex items-start gap-3 cursor-pointer">
           <input type="checkbox" checked={form.slackIntegration} onChange={() => setForm({ ...form, slackIntegration: !form.slackIntegration })} className="mt-1 w-5 h-5" />
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1"><MessageSquare size={14} className="text-accent-green" /><span className="text-sm font-semibold text-white">Slack Integration</span></div>
-            <div className="text-[11px] text-navy-400">Mirror priority alerts (Rush Orders, Grounded Vehicles, Completions) into a Slack channel</div>
+            <div className="flex items-center gap-2 mb-1"><MessageSquare size={14} className="text-accent-green" /><span className="text-sm font-semibold text-white">{t('organization.slack.title', 'Slack Integration')}</span></div>
+            <div className="text-[11px] text-navy-400">{t('organization.slack.subtitle', 'Mirror priority alerts (Rush Orders, Grounded Vehicles, Completions) into a Slack channel')}</div>
             <AnimatePresence initial={false}>
               {form.slackIntegration && (
                 <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
                   className="overflow-hidden mt-3 space-y-2">
                   <div className="flex items-center gap-2">
-                    <label className="text-[11px] text-navy-400 shrink-0">Channel</label>
+                    <label className="text-[11px] text-navy-400 shrink-0">{t('organization.slack.channelLabel', 'Channel')}</label>
                     <input value={form.slackChannel} onChange={(e) => setForm({ ...form, slackChannel: e.target.value })} placeholder="#fleet-ops"
                       className="flex-1 rounded-lg px-3 py-1.5 text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-green font-mono" />
                   </div>
                   <button className="flex items-center gap-2 px-3 py-2 rounded-md bg-accent-green/15 border border-accent-green/40 text-accent-green text-xs font-semibold hover:bg-accent-green/25 cursor-pointer">
-                    <Check size={12} /> Connect Slack workspace
+                    <Check size={12} /> {t('organization.slack.connectButton', 'Connect Slack workspace')}
                   </button>
                 </motion.div>
               )}
@@ -1284,7 +1294,7 @@ function OrganizationTab({ user }) {
         <div className="bg-navy-900/60 border border-navy-700/40 rounded-xl p-4 sm:p-5">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-10 h-10 rounded-lg bg-accent-purple/15 flex items-center justify-center"><WrenchIcon size={18} className="text-accent-purple" /></div>
-            <div><h3 className="text-base font-semibold text-white">Services offered</h3><p className="text-[11px] text-navy-400">DSPs match to vendors based on these capabilities</p></div>
+            <div><h3 className="text-base font-semibold text-white">{t('organization.vendorServices.title', 'Services offered')}</h3><p className="text-[11px] text-navy-400">{t('organization.vendorServices.subtitle', 'DSPs match to vendors based on these capabilities')}</p></div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
             {VENDOR_SERVICES.map((s) => {
@@ -1303,14 +1313,14 @@ function OrganizationTab({ user }) {
             })}
           </div>
           <div className="mt-3 text-[11px] text-navy-400">
-            <span className="text-white font-semibold">{form.servicesOffered.length}</span> service{form.servicesOffered.length !== 1 ? 's' : ''} selected
+            {t('organization.vendorServices.selectedCountFmt', { count: form.servicesOffered.length, defaultValue: `${form.servicesOffered.length} service${form.servicesOffered.length !== 1 ? 's' : ''} selected` })}
           </div>
         </div>
       )}
 
       <div className="flex justify-end">
         <button className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-accent-blue text-white text-sm font-semibold hover:opacity-90 cursor-pointer">
-          <Check size={14} /> Save Changes
+          <Check size={14} /> {t('organization.saveChanges', 'Save Changes')}
         </button>
       </div>
     </div>
@@ -1321,15 +1331,16 @@ function OrganizationTab({ user }) {
 // Tab: Preventive Maintenance
 // ============================================================
 function PMTab({ user }) {
+  const { t } = useTranslation('admin');
   const isDsp = user.role === 'dsp_owner';
   const jobs = isDsp ? preventiveMaintenanceJobs.filter((j) => j.dspId === user.orgId) : preventiveMaintenanceJobs;
 
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-3 gap-2">
-        <StatBox label="Upcoming" value={jobs.filter((j) => j.status === 'upcoming').length} color="text-accent-gold" />
-        <StatBox label="Scheduled" value={jobs.filter((j) => j.status === 'scheduled').length} color="text-accent-blue" />
-        <StatBox label="Total" value={jobs.length} color="text-white" />
+        <StatBox label={t('pm.stat.upcoming', 'Upcoming')} value={jobs.filter((j) => j.status === 'upcoming').length} color="text-accent-gold" />
+        <StatBox label={t('pm.stat.scheduled', 'Scheduled')} value={jobs.filter((j) => j.status === 'scheduled').length} color="text-accent-blue" />
+        <StatBox label={t('pm.stat.total', 'Total')} value={jobs.length} color="text-white" />
       </div>
 
       {/* Two-column: Upcoming PMs (left) + PM Intervals by Vehicle Type (right) */}
@@ -1337,9 +1348,9 @@ function PMTab({ user }) {
         {/* LEFT: Upcoming PMs */}
         <div className="bg-navy-900/60 border border-navy-700/40 rounded-xl overflow-hidden">
           <div className="px-4 py-3 border-b border-navy-800 bg-navy-950/40 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-white">Upcoming PMs</h3>
+            <h3 className="text-sm font-semibold text-white">{t('pm.upcomingPMs', 'Upcoming PMs')}</h3>
             <button className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-accent-green text-white text-xs font-semibold hover:opacity-90 cursor-pointer">
-              <Plus size={12} /> Schedule PM
+              <Plus size={12} /> {t('pm.schedulePM', 'Schedule PM')}
             </button>
           </div>
           <div className="divide-y divide-navy-800/60 max-h-[560px] overflow-y-auto">
@@ -1355,21 +1366,21 @@ function PMTab({ user }) {
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <span className="text-sm font-semibold text-white">{j.type}</span>
                         <Badge variant="gray">{j.vehicleId}</Badge>
-                        <Badge variant={j.status === 'upcoming' ? 'gold' : 'blue'}>{j.status === 'upcoming' ? 'Upcoming' : 'Scheduled'}</Badge>
+                        <Badge variant={j.status === 'upcoming' ? 'gold' : 'blue'}>{j.status === 'upcoming' ? t('pm.statusBadge.upcoming', 'Upcoming') : t('pm.statusBadge.scheduled', 'Scheduled')}</Badge>
                       </div>
-                      <div className="text-[11px] text-navy-400">Vendor: <span className="text-white">{j.vendor}</span></div>
+                      <div className="text-[11px] text-navy-400">{t('pm.vendorLabel', 'Vendor:')} <span className="text-white">{j.vendor}</span></div>
                     </div>
                     <div className="text-right shrink-0">
-                      <div className="text-[11px] text-navy-400">Due</div>
+                      <div className="text-[11px] text-navy-400">{t('pm.dueLabel', 'Due')}</div>
                       <div className="text-xs text-white font-semibold">{j.dueAt}</div>
-                      {daysUntil !== null && <div className={`text-[10px] ${daysUntil <= 3 ? 'text-accent-red' : daysUntil <= 7 ? 'text-accent-gold' : 'text-navy-500'}`}>{daysUntil} days</div>}
+                      {daysUntil !== null && <div className={`text-[10px] ${daysUntil <= 3 ? 'text-accent-red' : daysUntil <= 7 ? 'text-accent-gold' : 'text-navy-500'}`}>{t('pm.daysFmt', { count: daysUntil, defaultValue: `${daysUntil} days` })}</div>}
                     </div>
                   </div>
                   {progressPct !== null && (
                     <div>
                       <div className="flex justify-between text-[10px] text-navy-400 mb-1">
-                        <span>{j.currentValue?.toLocaleString()} mi</span>
-                        <span>Trigger: {j.triggerAt.toLocaleString()} mi</span>
+                        <span>{j.currentValue?.toLocaleString()} {t('pm.milesShort', 'mi')}</span>
+                        <span>{t('pm.triggerFmt', { miles: j.triggerAt.toLocaleString(), defaultValue: `Trigger: ${j.triggerAt.toLocaleString()} mi` })}</span>
                       </div>
                       <div className="h-1.5 rounded-full bg-navy-800 overflow-hidden">
                         <motion.div className={`h-full rounded-full ${progressPct >= 95 ? 'bg-accent-red' : progressPct >= 85 ? 'bg-accent-orange' : 'bg-accent-green'}`}
@@ -1381,7 +1392,7 @@ function PMTab({ user }) {
               );
             })}
             {jobs.length === 0 && (
-              <div className="px-4 py-10 text-center text-sm text-navy-400">No PM jobs scheduled.</div>
+              <div className="px-4 py-10 text-center text-sm text-navy-400">{t('pm.noPMs', 'No PM jobs scheduled.')}</div>
             )}
           </div>
         </div>
@@ -1397,6 +1408,7 @@ function PMTab({ user }) {
 // PM Intervals by Vehicle Type — editable except for Branded
 // ============================================================
 function PMIntervalsPanel() {
+  const { t } = useTranslation('admin');
   // Local editable copy so the customer can tweak non-branded intervals in demo
   const [groups, setGroups] = useState(() =>
     pmIntervalsByVehicleType.map((g) => ({ ...g, intervals: g.intervals.map((i) => ({ ...i, milesList: i.milesList ? [...i.milesList] : undefined })) }))
@@ -1415,9 +1427,9 @@ function PMIntervalsPanel() {
       <div className="px-4 py-3 border-b border-navy-800 bg-navy-950/40 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Gauge size={14} className="text-accent-blue" />
-          <h3 className="text-sm font-semibold text-white">PM Intervals by Vehicle Type</h3>
+          <h3 className="text-sm font-semibold text-white">{t('pm.intervals.title', 'PM Intervals by Vehicle Type')}</h3>
         </div>
-        <span className="text-[11px] text-navy-400">{groups.length} types</span>
+        <span className="text-[11px] text-navy-400">{t('pm.intervals.typesCountFmt', { count: groups.length, defaultValue: `${groups.length} types` })}</span>
       </div>
       <div className="divide-y divide-navy-800/60 max-h-[560px] overflow-y-auto">
         {groups.map((g, typeIdx) => {
@@ -1430,17 +1442,17 @@ function PMIntervalsPanel() {
                   <Badge variant={g.type === 'Rental' ? 'purple' : g.type === 'Owned' ? 'blue' : g.type === 'Step Van' ? 'gold' : 'gray'} size="md">{g.type}</Badge>
                   {g.locked ? (
                     <span className="inline-flex items-center gap-1 text-[10px] text-navy-400">
-                      <Lock size={10} /> Read-only
+                      <Lock size={10} /> {t('pm.intervals.readOnly', 'Read-only')}
                     </span>
                   ) : (
-                    <span className="text-[10px] text-navy-500">{g.intervals.length} intervals</span>
+                    <span className="text-[10px] text-navy-500">{t('pm.intervals.intervalsCountFmt', { count: g.intervals.length, defaultValue: `${g.intervals.length} intervals` })}</span>
                   )}
                 </div>
                 {!g.locked && (
                   <button
                     onClick={() => setEditingGroup(isEditing ? null : g.type)}
                     className={`text-[11px] font-semibold cursor-pointer ${isEditing ? 'text-accent-green' : 'text-accent-blue hover:underline'}`}>
-                    {isEditing ? <><Check size={11} className="inline mr-0.5" /> Done</> : <><Edit3 size={10} className="inline mr-0.5" /> Edit intervals</>}
+                    {isEditing ? <><Check size={11} className="inline mr-0.5" /> {t('pm.intervals.done', 'Done')}</> : <><Edit3 size={10} className="inline mr-0.5" /> {t('pm.intervals.edit', 'Edit intervals')}</>}
                   </button>
                 )}
               </div>
@@ -1468,6 +1480,7 @@ function PMIntervalsPanel() {
 }
 
 function IntervalRow({ interval, editable, onChange }) {
+  const { t } = useTranslation('admin');
   const [localMiles, setLocalMiles] = useState(interval.miles ?? interval.milesList?.join(', ') ?? '');
 
   const handleSave = () => {
@@ -1481,8 +1494,8 @@ function IntervalRow({ interval, editable, onChange }) {
   };
 
   const displayValue = interval.mode === 'every'
-    ? `Due every ${interval.miles?.toLocaleString()} miles`
-    : `Due at ${interval.milesList?.map((n) => n.toLocaleString()).join('; ')} miles`;
+    ? t('pm.intervals.dueEveryFmt', { miles: interval.miles?.toLocaleString(), defaultValue: `Due every ${interval.miles?.toLocaleString()} miles` })
+    : t('pm.intervals.dueAtFmt', { list: interval.milesList?.map((n) => n.toLocaleString()).join('; '), defaultValue: `Due at ${interval.milesList?.map((n) => n.toLocaleString()).join('; ')} miles` });
 
   return (
     <div className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md text-xs ${
@@ -1491,12 +1504,12 @@ function IntervalRow({ interval, editable, onChange }) {
       <span className="text-white truncate">{interval.service}</span>
       {editable ? (
         <div className="flex items-center gap-1 shrink-0">
-          {interval.mode === 'every' ? <span className="text-[10px] text-navy-400">every</span> : <span className="text-[10px] text-navy-400">at</span>}
+          {interval.mode === 'every' ? <span className="text-[10px] text-navy-400">{t('pm.intervals.everyLabel', 'every')}</span> : <span className="text-[10px] text-navy-400">{t('pm.intervals.atLabel', 'at')}</span>}
           <input value={localMiles} onChange={(e) => setLocalMiles(e.target.value)}
             onBlur={handleSave}
             onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); }}
             className="w-24 text-right rounded-md px-2 py-0.5 text-xs font-mono bg-navy-900 border border-navy-700 text-white outline-none focus:border-accent-blue" />
-          <span className="text-[10px] text-navy-400">mi</span>
+          <span className="text-[10px] text-navy-400">{t('pm.milesShort', 'mi')}</span>
         </div>
       ) : (
         <span className="text-navy-300 text-right truncate">{displayValue}</span>
@@ -1517,6 +1530,7 @@ const SOURCE_VARIANT = {
 };
 
 function DvicDefectCatalog() {
+  const { t } = useTranslation('admin');
   // Active vehicle_class tab. Defaults to the most common one (Branded Cargo Van).
   const [activeTemplate, setActiveTemplate] = useState('regular_cargo_van');
   // Cache of fetched rules per vehicle_class so flipping tabs doesn't re-fetch.
@@ -1568,29 +1582,29 @@ function DvicDefectCatalog() {
           <div>
             <div className="flex items-center gap-2 mb-1">
               <ClipboardCheck size={14} className="text-accent-blue" />
-              <h3 className="text-sm font-semibold text-white">Defect Catalog</h3>
-              <Badge variant="gold"><Lock size={9} className="inline mr-0.5" /> Amazon rules locked</Badge>
+              <h3 className="text-sm font-semibold text-white">{t('dvicCatalog.title', 'Defect Catalog')}</h3>
+              <Badge variant="gold"><Lock size={9} className="inline mr-0.5" /> {t('dvicCatalog.amazonLocked', 'Amazon rules locked')}</Badge>
             </div>
-            <p className="text-[11px] text-navy-400">Items the inspector checks for this vehicle template. Amazon rules cannot be modified; add your own custom items with <span className="text-white font-medium">+ Custom Defect</span>.</p>
+            <p className="text-[11px] text-navy-400">{t('dvicCatalog.subtitlePart1', 'Items the inspector checks for this vehicle template. Amazon rules cannot be modified; add your own custom items with')} <span className="text-white font-medium">{t('dvicCatalog.subtitlePart2', '+ Custom Defect')}</span>{t('dvicCatalog.subtitlePart3', '.')}</p>
           </div>
           <button onClick={() => setShowAddDefect(true)}
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-accent-green text-white text-xs font-semibold hover:opacity-90 cursor-pointer shrink-0">
-            <Plus size={12} /> Custom Defect
+            <Plus size={12} /> {t('dvicCatalog.customDefectButton', 'Custom Defect')}
           </button>
         </div>
 
         {/* Template sub-tabs */}
         <div className="flex items-center gap-1 overflow-x-auto">
-          {DVIC_TEMPLATES.map((t) => {
-            const active = activeTemplate === t.id;
-            const count = (rulesByClass[t.id] || []).length;
-            const known = rulesByClass[t.id] !== undefined;
+          {DVIC_TEMPLATES.map((tpl) => {
+            const active = activeTemplate === tpl.id;
+            const count = (rulesByClass[tpl.id] || []).length;
+            const known = rulesByClass[tpl.id] !== undefined;
             return (
-              <button key={t.id} onClick={() => setActiveTemplate(t.id)}
+              <button key={tpl.id} onClick={() => setActiveTemplate(tpl.id)}
                 className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
                   active ? 'bg-accent-blue/15 border border-accent-blue/50 text-accent-blue' : 'bg-navy-800 border border-navy-700 text-navy-300 hover:text-white'
                 }`}>
-                {t.label}
+                {tpl.label}
                 <span className={`px-1.5 py-0.5 rounded text-[10px] ${active ? 'bg-accent-blue/20' : 'bg-navy-700/50 text-navy-400'}`}>
                   {known ? count : '…'}
                 </span>
@@ -1600,8 +1614,8 @@ function DvicDefectCatalog() {
         </div>
 
         <div className="mt-2 text-[11px] text-navy-400">
-          <span className="text-accent-gold font-semibold">{amazonCount}</span> Amazon rules &middot;{' '}
-          <span className="text-accent-blue font-semibold">{customCount}</span> custom
+          <span className="text-accent-gold font-semibold">{amazonCount}</span> {t('dvicCatalog.amazonRulesLabel', 'Amazon rules')} &middot;{' '}
+          <span className="text-accent-blue font-semibold">{customCount}</span> {t('dvicCatalog.customRulesLabel', 'custom')}
         </div>
       </div>
 
@@ -1610,20 +1624,20 @@ function DvicDefectCatalog() {
         <table className="w-full text-xs">
           <thead>
             <tr className="text-navy-400 text-[10px] uppercase tracking-wide border-b border-navy-800 bg-navy-950/30">
-              <th className="text-left px-3 py-2 font-semibold">Source</th>
-              <th className="text-left px-3 py-2 font-semibold">Section</th>
-              <th className="text-left px-3 py-2 font-semibold">Part</th>
-              <th className="text-left px-3 py-2 font-semibold">Defect</th>
-              <th className="text-left px-3 py-2 font-semibold">Group</th>
-              <th className="text-left px-3 py-2 font-semibold">Class</th>
-              <th className="text-left px-3 py-2 font-semibold">Line</th>
-              <th className="text-left px-3 py-2 font-semibold">Targets</th>
+              <th className="text-left px-3 py-2 font-semibold">{t('dvicCatalog.table.source', 'Source')}</th>
+              <th className="text-left px-3 py-2 font-semibold">{t('dvicCatalog.table.section', 'Section')}</th>
+              <th className="text-left px-3 py-2 font-semibold">{t('dvicCatalog.table.part', 'Part')}</th>
+              <th className="text-left px-3 py-2 font-semibold">{t('dvicCatalog.table.defect', 'Defect')}</th>
+              <th className="text-left px-3 py-2 font-semibold">{t('dvicCatalog.table.group', 'Group')}</th>
+              <th className="text-left px-3 py-2 font-semibold">{t('dvicCatalog.table.class', 'Class')}</th>
+              <th className="text-left px-3 py-2 font-semibold">{t('dvicCatalog.table.line', 'Line')}</th>
+              <th className="text-left px-3 py-2 font-semibold">{t('dvicCatalog.table.targets', 'Targets')}</th>
             </tr>
           </thead>
           <tbody>
             {isLoading && (
               <tr><td colSpan={8} className="px-3 py-12 text-center text-sm text-navy-400">
-                <Loader2 size={16} className="inline mr-2 animate-spin" /> Loading inspection rules…
+                <Loader2 size={16} className="inline mr-2 animate-spin" /> {t('dvicCatalog.loading', 'Loading inspection rules…')}
               </td></tr>
             )}
             {!isLoading && fetchError && (
@@ -1637,7 +1651,7 @@ function DvicDefectCatalog() {
               const isAmazon = d.source === 'Amazon';
               const partsDisplay = (d.parts || []).join(', ') || '—';
               const targetsDisplay = (d.targets || [])
-                .map((t) => `${t.part}/${t.defect_type}`)
+                .map((target) => `${target.part}/${target.defect_type}`)
                 .join(', ');
               return (
                 <tr key={d.id} className={`border-b border-navy-800/50 last:border-b-0 ${isAmazon ? 'bg-accent-gold/[0.03]' : 'hover:bg-navy-800/30'}`}>
@@ -1653,13 +1667,13 @@ function DvicDefectCatalog() {
                     <div className="line-clamp-2">{d.defect_text}</div>
                   </td>
                   <td className="px-3 py-2.5 text-navy-300">
-                    {d.group || <span className="text-accent-gold italic">Pending</span>}
+                    {d.group || <span className="text-accent-gold italic">{t('dvicCatalog.pending', 'Pending')}</span>}
                   </td>
                   <td className="px-3 py-2.5 text-navy-300">
-                    {d.classification || <span className="text-accent-gold italic">Pending</span>}
+                    {d.classification || <span className="text-accent-gold italic">{t('dvicCatalog.pending', 'Pending')}</span>}
                   </td>
                   <td className="px-3 py-2.5 text-navy-300">
-                    {d.line || <span className="text-accent-gold italic">Pending</span>}
+                    {d.line || <span className="text-accent-gold italic">{t('dvicCatalog.pending', 'Pending')}</span>}
                   </td>
                   <td className="px-3 py-2.5 text-navy-400 font-mono text-[10px] max-w-[180px]">
                     <div className="line-clamp-2" title={targetsDisplay}>{targetsDisplay || '—'}</div>
@@ -1668,7 +1682,7 @@ function DvicDefectCatalog() {
               );
             })}
             {!isLoading && !fetchError && currentItems.length === 0 && (
-              <tr><td colSpan={8} className="px-3 py-8 text-center text-sm text-navy-400">No defects configured for this template.</td></tr>
+              <tr><td colSpan={8} className="px-3 py-8 text-center text-sm text-navy-400">{t('dvicCatalog.noDefects', 'No defects configured for this template.')}</td></tr>
             )}
           </tbody>
         </table>
@@ -1677,8 +1691,7 @@ function DvicDefectCatalog() {
       <div className="px-4 py-2.5 border-t border-navy-800 bg-navy-950/30 text-[11px] text-navy-400 flex items-start gap-1.5">
         <Info size={11} className="text-navy-500 mt-0.5 shrink-0" />
         <span>
-          You control <strong className="text-white">Section</strong>, <strong className="text-white">Part</strong> and the verbatim <strong className="text-white">Defect</strong> text for custom items, plus the <strong className="text-white">target tuple</strong> (which catalog rule it maps to).
-          Your DFS Account Manager curates <strong className="text-white">Class</strong>, <strong className="text-white">Group</strong> and <strong className="text-white">Line</strong> for analytics consistency.
+          {t('dvicCatalog.controlHintPart1', 'You control')} <strong className="text-white">{t('dvicCatalog.controlHintSection', 'Section')}</strong>, <strong className="text-white">{t('dvicCatalog.controlHintPart', 'Part')}</strong> {t('dvicCatalog.controlHintMid1', 'text for custom items, plus the')} <strong className="text-white">{t('dvicCatalog.controlHintTuple', 'target tuple')}</strong> {t('dvicCatalog.controlHintMid2', '(which catalog rule it maps to). Your DFS Account Manager curates')} <strong className="text-white">{t('dvicCatalog.controlHintClass', 'Class')}</strong>, <strong className="text-white">{t('dvicCatalog.controlHintGroup', 'Group')}</strong>, <strong className="text-white">{t('dvicCatalog.controlHintLine', 'Line')}</strong> {t('dvicCatalog.controlHintEnd', 'for analytics consistency.')}
         </span>
       </div>
 
@@ -1703,6 +1716,7 @@ function DvicDefectCatalog() {
 // since cross-class rules don't make sense as a "custom" addition.
 // ============================================================
 function AddCustomDefectModal({ defaultVehicleClass, onCreated, onClose }) {
+  const { t } = useTranslation('admin');
   const [form, setForm] = useState({
     defectText: '',
     section: 'general',
@@ -1850,8 +1864,8 @@ function AddCustomDefectModal({ defaultVehicleClass, onCreated, onClose }) {
               <Plus size={16} className="text-accent-green" />
             </div>
             <div>
-              <h3 className="text-base font-semibold text-white">Add Custom Defect</h3>
-              <p className="text-[11px] text-navy-400">DSP-source rule, persisted to the V2.2 catalog</p>
+              <h3 className="text-base font-semibold text-white">{t('addCustomDefect.title', 'Add Custom Defect')}</h3>
+              <p className="text-[11px] text-navy-400">{t('addCustomDefect.subtitle', 'DSP-source rule, persisted to the V2.2 catalog')}</p>
             </div>
           </div>
           <button onClick={onClose} className="text-navy-400 hover:text-white p-2 -mr-2"><X size={20} /></button>
@@ -1859,7 +1873,7 @@ function AddCustomDefectModal({ defaultVehicleClass, onCreated, onClose }) {
         <div className="px-4 sm:px-6 py-5 space-y-4 overflow-y-auto flex-1">
           <div className="flex items-start gap-2 p-3 rounded-lg bg-accent-blue/10 border border-accent-blue/30 text-[11px] text-navy-200">
             <Info size={12} className="text-accent-blue mt-0.5 shrink-0" />
-            <div>The new rule references an existing <span className="font-mono text-white">(part, defect_type)</span> tuple from the V2.2 catalog so it inherits the validation and routing wiring. Tick "Show in wizard" if inspectors should see it during walkarounds.</div>
+            <div>{t('addCustomDefect.infoBanner', 'The new rule references an existing (part, defect_type) tuple from the V2.2 catalog so it inherits the validation and routing wiring. Tick "Show in wizard" if inspectors should see it during walkarounds.')}</div>
           </div>
 
           {submitError && (
@@ -1870,19 +1884,19 @@ function AddCustomDefectModal({ defaultVehicleClass, onCreated, onClose }) {
           )}
 
           <div>
-            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Vehicle classes *</label>
+            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('addCustomDefect.vehicleClassesLabel', 'Vehicle classes *')}</label>
             <div className="flex flex-wrap gap-1.5">
-              {DVIC_TEMPLATES.map((t) => {
-                const checked = form.vehicleClasses.includes(t.id);
+              {DVIC_TEMPLATES.map((tpl) => {
+                const checked = form.vehicleClasses.includes(tpl.id);
                 return (
-                  <button key={t.id} type="button" onClick={() => toggleClass(t.id)}
+                  <button key={tpl.id} type="button" onClick={() => toggleClass(tpl.id)}
                     className={`px-3 py-1.5 rounded-md border text-xs font-semibold cursor-pointer transition-all ${
                       checked
                         ? 'bg-accent-blue/15 border-accent-blue/50 text-accent-blue'
                         : 'bg-navy-800 border-navy-700 text-navy-300 hover:text-white'
                     }`}>
                     {checked && <Check size={11} className="inline mr-1" />}
-                    {t.label}
+                    {tpl.label}
                   </button>
                 );
               })}
@@ -1891,7 +1905,7 @@ function AddCustomDefectModal({ defaultVehicleClass, onCreated, onClose }) {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Section</label>
+              <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('addCustomDefect.sectionLabel', 'Section')}</label>
               <select value={form.section} onChange={(e) => setForm({ ...form, section: e.target.value })}
                 className="w-full rounded-lg px-3 py-2.5 text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-green cursor-pointer">
                 {DVIC_SECTIONS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
@@ -1899,37 +1913,37 @@ function AddCustomDefectModal({ defaultVehicleClass, onCreated, onClose }) {
             </div>
             <div>
               <label className="text-xs font-semibold text-navy-300 mb-1.5 block">
-                Part *
-                {catalogError && <span className="ml-1 text-accent-red">(catalog load failed)</span>}
+                {t('addCustomDefect.partLabel', 'Part *')}
+                {catalogError && <span className="ml-1 text-accent-red">{t('addCustomDefect.catalogLoadFailed', '(catalog load failed)')}</span>}
               </label>
               <select value={form.part} onChange={(e) => setForm({ ...form, part: e.target.value })}
                 className="w-full rounded-lg px-3 py-2.5 text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-green cursor-pointer">
-                <option value="">{catalog ? 'Select a part…' : 'Loading…'}</option>
+                <option value="">{catalog ? t('addCustomDefect.selectPart', 'Select a part…') : t('addCustomDefect.loading', 'Loading…')}</option>
                 {partOptions.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
               </select>
             </div>
           </div>
 
           <div>
-            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Defect type *</label>
+            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('addCustomDefect.defectTypeLabel', 'Defect type *')}</label>
             <select value={form.defectType} onChange={(e) => setForm({ ...form, defectType: e.target.value })}
               className="w-full rounded-lg px-3 py-2.5 text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-green cursor-pointer">
-              <option value="">Select a defect type…</option>
+              <option value="">{t('addCustomDefect.selectDefectType', 'Select a defect type…')}</option>
               {defectTypeOptions.map((dt) => <option key={dt} value={dt}>{dt.replace(/_/g, ' ')}</option>)}
             </select>
-            <p className="text-[10px] text-navy-500 mt-1">Backend rejects (part, defect_type) pairs that aren't in the V2.2 catalog.</p>
+            <p className="text-[10px] text-navy-500 mt-1">{t('addCustomDefect.defectTypeHint', "Backend rejects (part, defect_type) pairs that aren't in the V2.2 catalog.")}</p>
           </div>
 
           <div>
-            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">Defect description *</label>
+            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('addCustomDefect.defectTextLabel', 'Defect description *')}</label>
             <textarea value={form.defectText} onChange={(e) => setForm({ ...form, defectText: e.target.value })} rows={2}
-              placeholder="What the inspector sees on the form — verbatim."
+              placeholder={t('addCustomDefect.defectTextPlaceholder', 'What the inspector sees on the form — verbatim.')}
               className="w-full rounded-lg px-3 py-2.5 text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-green resize-none" />
           </div>
 
           <div className="grid grid-cols-3 gap-2">
             <div>
-              <label className="text-[10px] font-semibold text-navy-400 mb-1 block uppercase tracking-wide">Class</label>
+              <label className="text-[10px] font-semibold text-navy-400 mb-1 block uppercase tracking-wide">{t('addCustomDefect.classLabel', 'Class')}</label>
               <select value={form.classification} onChange={(e) => setForm({ ...form, classification: e.target.value })}
                 className="w-full rounded-md px-2 py-2 text-xs bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-green cursor-pointer">
                 <option value="">—</option>
@@ -1937,7 +1951,7 @@ function AddCustomDefectModal({ defaultVehicleClass, onCreated, onClose }) {
               </select>
             </div>
             <div>
-              <label className="text-[10px] font-semibold text-navy-400 mb-1 block uppercase tracking-wide">Group</label>
+              <label className="text-[10px] font-semibold text-navy-400 mb-1 block uppercase tracking-wide">{t('addCustomDefect.groupLabel', 'Group')}</label>
               <select value={form.group} onChange={(e) => setForm({ ...form, group: e.target.value })}
                 className="w-full rounded-md px-2 py-2 text-xs bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-green cursor-pointer">
                 <option value="">—</option>
@@ -1945,7 +1959,7 @@ function AddCustomDefectModal({ defaultVehicleClass, onCreated, onClose }) {
               </select>
             </div>
             <div>
-              <label className="text-[10px] font-semibold text-navy-400 mb-1 block uppercase tracking-wide">Line</label>
+              <label className="text-[10px] font-semibold text-navy-400 mb-1 block uppercase tracking-wide">{t('addCustomDefect.lineLabel', 'Line')}</label>
               <select value={form.line} onChange={(e) => setForm({ ...form, line: e.target.value })}
                 className="w-full rounded-md px-2 py-2 text-xs bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-green cursor-pointer">
                 <option value="">—</option>
@@ -1960,44 +1974,43 @@ function AddCustomDefectModal({ defaultVehicleClass, onCreated, onClose }) {
                 onChange={(e) => setForm({ ...form, addToWizard: e.target.checked })}
                 className="mt-0.5 w-4 h-4 accent-accent-green" />
               <div>
-                <div className="text-xs font-semibold text-white">Show in inspector wizard</div>
+                <div className="text-xs font-semibold text-white">{t('addCustomDefect.showInWizard', 'Show in inspector wizard')}</div>
                 <div className="text-[10px] text-navy-400">
-                  Adds this rule as a checklist item the inspector sees during walkarounds.
-                  Off if the rule is admin-only / for reporting.
+                  {t('addCustomDefect.showInWizardHint', 'Adds this rule as a checklist item the inspector sees during walkarounds. Off if the rule is admin-only / for reporting.')}
                 </div>
               </div>
             </label>
             {form.addToWizard && (
               <div className="ml-6 space-y-2">
                 <div>
-                  <label className="text-[10px] font-semibold text-navy-400 mb-1 block uppercase tracking-wide">Wizard part category *</label>
+                  <label className="text-[10px] font-semibold text-navy-400 mb-1 block uppercase tracking-wide">{t('addCustomDefect.wizardCategoryLabel', 'Wizard part category *')}</label>
                   <input value={form.wizardPartCategory}
                     onChange={(e) => setForm({ ...form, wizardPartCategory: e.target.value })}
-                    placeholder="DSP custom checks"
+                    placeholder={t('addCustomDefect.wizardCategoryPlaceholder', 'DSP custom checks')}
                     className="w-full rounded-md px-3 py-2 text-xs bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-green" />
-                  <p className="text-[10px] text-navy-500 mt-0.5">Header label inside the section the inspector sees.</p>
+                  <p className="text-[10px] text-navy-500 mt-0.5">{t('addCustomDefect.wizardCategoryHint', 'Header label inside the section the inspector sees.')}</p>
                 </div>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={form.wizardPhotoRequired}
                     onChange={(e) => setForm({ ...form, wizardPhotoRequired: e.target.checked })}
                     className="w-3.5 h-3.5 accent-accent-green" />
-                  <span className="text-[11px] text-navy-200">Photo required (off for sensory defects: odor, brake noise, etc.)</span>
+                  <span className="text-[11px] text-navy-200">{t('addCustomDefect.photoRequired', 'Photo required (off for sensory defects: odor, brake noise, etc.)')}</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={form.wizardRequiresBranding}
                     onChange={(e) => setForm({ ...form, wizardRequiresBranding: e.target.checked })}
                     className="w-3.5 h-3.5 accent-accent-green" />
-                  <span className="text-[11px] text-navy-200">Branded only (Amazon DOT / Prime decals — hides for Owner/Rental vans)</span>
+                  <span className="text-[11px] text-navy-200">{t('addCustomDefect.brandedOnly', 'Branded only (Amazon DOT / Prime decals — hides for Owner/Rental vans)')}</span>
                 </label>
               </div>
             )}
           </div>
         </div>
         <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-3 sm:py-4 border-t border-navy-800 bg-navy-900/80">
-          <button onClick={onClose} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">Cancel</button>
+          <button onClick={onClose} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">{t('addCustomDefect.cancel', 'Cancel')}</button>
           <button onClick={submit} disabled={!valid || submitting}
             className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-accent-green text-white hover:opacity-90 disabled:opacity-40 cursor-pointer">
-            {submitting ? <><Loader2 size={14} className="animate-spin" /> Saving…</> : <><Check size={14} /> Add Defect</>}
+            {submitting ? <><Loader2 size={14} className="animate-spin" /> {t('addCustomDefect.saving', 'Saving…')}</> : <><Check size={14} /> {t('addCustomDefect.addDefect', 'Add Defect')}</>}
           </button>
         </div>
       </motion.div>
@@ -2009,6 +2022,7 @@ function AddCustomDefectModal({ defaultVehicleClass, onCreated, onClose }) {
 // Tab: Defect Rules — Auto-approval by category (DSP Owner only)
 // ============================================================
 function DefectRulesTab({ user }) {
+  const { t } = useTranslation('admin');
   // State: for each category, rule is { enabled: bool, maxCost: number|null }
   const [rules, setRules] = useState(() => {
     const out = {};
@@ -2063,22 +2077,21 @@ function DefectRulesTab({ user }) {
             <CheckCheck size={18} className="text-accent-green" />
           </div>
           <div className="min-w-0 flex-1">
-            <h3 className="text-base font-semibold text-white mb-1">Defect Auto-Approval Rules</h3>
+            <h3 className="text-base font-semibold text-white mb-1">{t('defectRules.explanation.title', 'Defect Auto-Approval Rules')}</h3>
             <p className="text-xs text-navy-300">
-              Normally, every reported defect requires your manual approval before a work order is created.
-              <strong className="text-white"> Auto-approval rules let you skip that step</strong> for routine, low-risk categories
-              so vendors can start working immediately.
+              {t('defectRules.explanation.bodyPart1', 'Normally, every reported defect requires your manual approval before a work order is created.')}
+              <strong className="text-white"> {t('defectRules.explanation.bodyPart2', 'Auto-approval rules let you skip that step')}</strong> {t('defectRules.explanation.bodyPart3', 'for routine, low-risk categories so vendors can start working immediately.')}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap text-xs">
           <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-accent-green/15 border border-accent-green/40 text-accent-green font-semibold">
-            <CheckCheck size={11} /> {autoApprovedCount} auto-approved
+            <CheckCheck size={11} /> {t('defectRules.explanation.autoApprovedFmt', { count: autoApprovedCount, defaultValue: `${autoApprovedCount} auto-approved` })}
           </div>
           <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-navy-800 border border-navy-700 text-navy-300 font-semibold">
-            <Ban size={11} /> {totalCategories - autoApprovedCount} manual
+            <Ban size={11} /> {t('defectRules.explanation.manualFmt', { count: totalCategories - autoApprovedCount, defaultValue: `${totalCategories - autoApprovedCount} manual` })}
           </div>
-          <span className="text-navy-400">of {totalCategories} categories</span>
+          <span className="text-navy-400">{t('defectRules.explanation.ofCategoriesFmt', { count: totalCategories, defaultValue: `of ${totalCategories} categories` })}</span>
         </div>
       </div>
 
@@ -2086,37 +2099,37 @@ function DefectRulesTab({ user }) {
       <div className="bg-navy-900/60 border border-navy-700/40 rounded-xl p-4 sm:p-5">
         <div className="flex items-center gap-2 mb-3">
           <ZapIcon size={14} className="text-accent-gold" />
-          <h4 className="text-sm font-semibold text-white">Quick presets</h4>
-          <span className="text-[11px] text-navy-400">— click to apply, then fine-tune below</span>
+          <h4 className="text-sm font-semibold text-white">{t('defectRules.presets.title', 'Quick presets')}</h4>
+          <span className="text-[11px] text-navy-400">{t('defectRules.presets.subtitle', '— click to apply, then fine-tune below')}</span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <button onClick={() => applyPreset('conservative')}
             className="text-left p-3 rounded-lg border border-navy-700 bg-navy-800/40 hover:border-accent-blue/40 hover:bg-accent-blue/5 cursor-pointer transition-all">
             <div className="flex items-center gap-2 mb-1">
               <Shield size={14} className="text-accent-blue" />
-              <span className="text-sm font-semibold text-white">Conservative</span>
+              <span className="text-sm font-semibold text-white">{t('defectRules.presets.conservative', 'Conservative')}</span>
             </div>
-            <div className="text-[11px] text-white font-semibold">*Branded ULCs only</div>
-            <div className="text-[11px] text-navy-400 mt-0.5">Lowest-risk scope — only Amazon-managed fleet, safe categories</div>
+            <div className="text-[11px] text-white font-semibold">{t('defectRules.presets.conservativeScope', '*Branded ULCs only')}</div>
+            <div className="text-[11px] text-navy-400 mt-0.5">{t('defectRules.presets.conservativeDesc', 'Lowest-risk scope — only Amazon-managed fleet, safe categories')}</div>
           </button>
           <button onClick={() => applyPreset('balanced')}
             className="text-left p-3 rounded-lg border border-navy-700 bg-navy-800/40 hover:border-accent-gold/40 hover:bg-accent-gold/5 cursor-pointer transition-all">
             <div className="flex items-center gap-2 mb-1">
               <Gauge size={14} className="text-accent-gold" />
-              <span className="text-sm font-semibold text-white">Balanced</span>
-              <Badge variant="gold">Recommended</Badge>
+              <span className="text-sm font-semibold text-white">{t('defectRules.presets.balanced', 'Balanced')}</span>
+              <Badge variant="gold">{t('defectRules.presets.balancedRecommended', 'Recommended')}</Badge>
             </div>
-            <div className="text-[11px] text-white font-semibold">*All AMR</div>
-            <div className="text-[11px] text-navy-400 mt-0.5">Everything your primary AMR vendor covers — routine maintenance auto-approved</div>
+            <div className="text-[11px] text-white font-semibold">{t('defectRules.presets.balancedScope', '*All AMR')}</div>
+            <div className="text-[11px] text-navy-400 mt-0.5">{t('defectRules.presets.balancedDesc', 'Everything your primary AMR vendor covers — routine maintenance auto-approved')}</div>
           </button>
           <button onClick={() => applyPreset('comprehensive')}
             className="text-left p-3 rounded-lg border border-navy-700 bg-navy-800/40 hover:border-accent-green/40 hover:bg-accent-green/5 cursor-pointer transition-all">
             <div className="flex items-center gap-2 mb-1">
               <ZapIcon size={14} className="text-accent-green" />
-              <span className="text-sm font-semibold text-white">Comprehensive</span>
+              <span className="text-sm font-semibold text-white">{t('defectRules.presets.comprehensive', 'Comprehensive')}</span>
             </div>
-            <div className="text-[11px] text-white font-semibold">Branded &amp; Rentals</div>
-            <div className="text-[11px] text-navy-400 mt-0.5">Broadest reach — everything except heavy body and windshield work</div>
+            <div className="text-[11px] text-white font-semibold">{t('defectRules.presets.comprehensiveScope', 'Branded & Rentals')}</div>
+            <div className="text-[11px] text-navy-400 mt-0.5">{t('defectRules.presets.comprehensiveDesc', 'Broadest reach — everything except heavy body and windshield work')}</div>
           </button>
         </div>
       </div>
@@ -2126,19 +2139,19 @@ function DefectRulesTab({ user }) {
         <label className="flex items-start gap-3 cursor-pointer mb-3">
           <input type="checkbox" checked={maxCostEnabled} onChange={() => setMaxCostEnabled(!maxCostEnabled)} className="mt-1 w-5 h-5" />
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1"><Ban size={14} className="text-accent-orange" /><span className="text-sm font-semibold text-white">Global cost cap</span></div>
-            <div className="text-[11px] text-navy-400">Any repair estimate above this value still requires manual approval, regardless of category rules.</div>
+            <div className="flex items-center gap-2 mb-1"><Ban size={14} className="text-accent-orange" /><span className="text-sm font-semibold text-white">{t('defectRules.globalCap.title', 'Global cost cap')}</span></div>
+            <div className="text-[11px] text-navy-400">{t('defectRules.globalCap.subtitle', 'Any repair estimate above this value still requires manual approval, regardless of category rules.')}</div>
           </div>
         </label>
         {maxCostEnabled && (
           <div className="pl-8 flex items-center gap-2">
-            <span className="text-sm text-navy-300">Cap repairs at</span>
+            <span className="text-sm text-navy-300">{t('defectRules.globalCap.capAt', 'Cap repairs at')}</span>
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-navy-400 text-sm">$</span>
               <input type="number" step="50" value={globalMaxCost} onChange={(e) => setGlobalMaxCost(parseInt(e.target.value) || 0)}
                 className="w-32 rounded-lg pl-7 pr-3 py-2 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-orange" />
             </div>
-            <span className="text-sm text-navy-400">per WO</span>
+            <span className="text-sm text-navy-400">{t('defectRules.globalCap.perWO', 'per WO')}</span>
           </div>
         )}
       </div>
@@ -2148,8 +2161,8 @@ function DefectRulesTab({ user }) {
         <label className="flex items-start gap-3 cursor-pointer">
           <input type="checkbox" checked={notifyEnabled} onChange={() => setNotifyEnabled(!notifyEnabled)} className="mt-1 w-5 h-5" />
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1"><MessageSquare size={14} className="text-accent-blue" /><span className="text-sm font-semibold text-white">Notify me on auto-approvals</span></div>
-            <div className="text-[11px] text-navy-400">Send a notification whenever an auto-approval fires so you have full visibility, even without needing to click approve.</div>
+            <div className="flex items-center gap-2 mb-1"><MessageSquare size={14} className="text-accent-blue" /><span className="text-sm font-semibold text-white">{t('defectRules.notify.title', 'Notify me on auto-approvals')}</span></div>
+            <div className="text-[11px] text-navy-400">{t('defectRules.notify.subtitle', 'Send a notification whenever an auto-approval fires so you have full visibility, even without needing to click approve.')}</div>
           </div>
         </label>
       </div>
@@ -2157,8 +2170,8 @@ function DefectRulesTab({ user }) {
       {/* Category rules list */}
       <div className="bg-navy-900/60 border border-navy-700/40 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-navy-800 bg-navy-950/40">
-          <h4 className="text-sm font-semibold text-white">Category-by-category rules</h4>
-          <p className="text-[11px] text-navy-400">Toggle auto-approval per defect category</p>
+          <h4 className="text-sm font-semibold text-white">{t('defectRules.categoryRules.title', 'Category-by-category rules')}</h4>
+          <p className="text-[11px] text-navy-400">{t('defectRules.categoryRules.subtitle', 'Toggle auto-approval per defect category')}</p>
         </div>
         <div className="divide-y divide-navy-800/60">
           {DEFECT_CATEGORIES.map((cat) => {
@@ -2177,12 +2190,12 @@ function DefectRulesTab({ user }) {
                       <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                         <span className="text-sm font-semibold text-white">{cat.label}</span>
                         {rule.enabled && (
-                          <Badge variant="green"><CheckCheck size={9} className="inline mr-0.5" /> Auto</Badge>
+                          <Badge variant="green"><CheckCheck size={9} className="inline mr-0.5" /> {t('defectRules.categoryRules.autoBadge', 'Auto')}</Badge>
                         )}
-                        {!rule.enabled && <Badge variant="gray">Manual</Badge>}
+                        {!rule.enabled && <Badge variant="gray">{t('defectRules.categoryRules.manualBadge', 'Manual')}</Badge>}
                       </div>
                       <div className="text-[11px] text-navy-400">{cat.description}</div>
-                      <div className="text-[10px] text-navy-500 mt-0.5">Typical cost: {cat.typicalCost}</div>
+                      <div className="text-[10px] text-navy-500 mt-0.5">{t('defectRules.categoryRules.typicalCostFmt', { cost: cat.typicalCost, defaultValue: `Typical cost: ${cat.typicalCost}` })}</div>
                     </div>
                   </div>
                   {/* Toggle switch */}
@@ -2208,11 +2221,11 @@ function DefectRulesTab({ user }) {
       {/* Summary + save */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="text-xs text-navy-400">
-          <span className="text-accent-green font-semibold">{autoApprovedCount}</span> categories set to auto-approve
-          {maxCostEnabled && <> · cap <span className="text-white font-semibold">${globalMaxCost.toLocaleString()}</span></>}
+          <span className="text-accent-green font-semibold">{autoApprovedCount}</span> {t('defectRules.summary.categoriesAutoLabel', 'categories set to auto-approve')}
+          {maxCostEnabled && <> · {t('defectRules.summary.capLabel', 'cap')} <span className="text-white font-semibold">${globalMaxCost.toLocaleString()}</span></>}
         </div>
         <button className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-accent-green text-white text-sm font-semibold hover:opacity-90 cursor-pointer">
-          <Check size={14} /> Save Rules
+          <Check size={14} /> {t('defectRules.saveRules', 'Save Rules')}
         </button>
       </div>
     </div>
@@ -2232,6 +2245,7 @@ function StatBox({ label, value, color }) {
 // Main Component
 // ============================================================
 export default function AdminPanel({ user }) {
+  const { t } = useTranslation('admin');
   const isSiteAdmin = user?.role === 'site_admin';
   const isDspOwner = user?.role === 'dsp_owner';
   // Org admins (owners + managers + service_writers + site_admin) get the
@@ -2241,13 +2255,13 @@ export default function AdminPanel({ user }) {
   const isOrgAdmin = isOrgAdminRole(user);
 
   const tabs = [
-    { id: 'users',       label: 'Users',         icon: Users,           available: isOrgAdmin },
-    { id: 'invitations', label: 'Invitations',   icon: Mail,            available: isOrgAdmin },
-    { id: 'security',    label: 'Security',      icon: Shield,          available: true },
-    { id: 'org',         label: 'Organization',  icon: Building2,       available: isOrgAdmin },
-    { id: 'pm',          label: 'Preventive Maintenance', icon: RefreshCw, available: isOrgAdmin },
-    { id: 'defects',     label: 'Defect Rules',  icon: CheckCheck,      available: isDspOwner || isSiteAdmin },
-  ].filter((t) => t.available);
+    { id: 'users',       label: t('tabs.users', 'Users'),               icon: Users,        available: isOrgAdmin },
+    { id: 'invitations', label: t('tabs.invitations', 'Invitations'),   icon: Mail,         available: isOrgAdmin },
+    { id: 'security',    label: t('tabs.security', 'Security'),         icon: Shield,       available: true },
+    { id: 'org',         label: t('tabs.organization', 'Organization'), icon: Building2,    available: isOrgAdmin },
+    { id: 'pm',          label: t('tabs.pm', 'Preventive Maintenance'), icon: RefreshCw,    available: isOrgAdmin },
+    { id: 'defects',     label: t('tabs.defects', 'Defect Rules'),      icon: CheckCheck,   available: isDspOwner || isSiteAdmin },
+  ].filter((tab) => tab.available);
 
   const [activeTab, setActiveTab] = useState(tabs[0]?.id || 'security');
 
@@ -2259,24 +2273,24 @@ export default function AdminPanel({ user }) {
   return (
     <div>
       <div className="mb-4 sm:mb-6">
-        <h2 className="text-2xl font-bold text-white mb-1">Administration</h2>
+        <h2 className="text-2xl font-bold text-white mb-1">{t('shell.heading', 'Administration')}</h2>
         <p className="text-navy-400 text-sm">
-          {user.org} &middot; <span className="text-white font-medium">{users.length}</span> {users.length === 1 ? 'user' : 'users'}
+          {t('shell.subtitleFmt', { count: users.length, org: user.org, defaultValue: `${user.org} · ${users.length} ${users.length === 1 ? 'user' : 'users'}` })}
         </p>
       </div>
 
       {/* Tab navigation */}
       <div className="flex items-center gap-1 mb-4 sm:mb-6 border-b border-navy-800 overflow-x-auto">
-        {tabs.map((t) => {
-          const Icon = t.icon;
-          const active = activeTab === t.id;
+        {tabs.map((tab) => {
+          const Icon = tab.icon;
+          const active = activeTab === tab.id;
           return (
-            <button key={t.id} onClick={() => setActiveTab(t.id)}
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
               className={`relative flex items-center gap-2 px-3 sm:px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors cursor-pointer ${
                 active ? 'text-white' : 'text-navy-400 hover:text-white'
               }`}>
               <Icon size={14} />
-              {t.label}
+              {tab.label}
               {active && (
                 <motion.div layoutId="adminTabIndicator"
                   className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-accent-blue to-accent-purple"

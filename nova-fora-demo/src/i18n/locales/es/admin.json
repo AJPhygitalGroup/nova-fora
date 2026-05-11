@@ -1,1 +1,393 @@
-{}
+{
+  "shell": {
+    "heading": "Administración",
+    "subtitleFmt_one": "{{org}} · {{count}} usuario",
+    "subtitleFmt_other": "{{org}} · {{count}} usuarios"
+  },
+  "tabs": {
+    "users": "Usuarios",
+    "invitations": "Invitaciones",
+    "security": "Seguridad",
+    "organization": "Organización",
+    "pm": "Mantenimiento preventivo",
+    "defects": "Reglas de defectos"
+  },
+  "dspPicker": {
+    "noneSelected": "Sin DSPs asignados — este usuario no verá WOs",
+    "allSelected": "Todos los DSPs seleccionados",
+    "selectedCountFmt": "{{selected}} de {{total}} DSPs seleccionados",
+    "clearAll": "Limpiar todo",
+    "selectAll": "Seleccionar todos",
+    "stationFmt": "Estación {{station}} · {{count}} vans"
+  },
+  "users": {
+    "searchPlaceholder": "Buscar usuarios…",
+    "inviteUser": "Invitar usuario",
+    "table": {
+      "user": "Usuario",
+      "roles": "Roles",
+      "dspsAssigned": "DSPs asignados",
+      "status": "Estado",
+      "twoFA": "2FA",
+      "lastLogin": "Último ingreso"
+    },
+    "status": {
+      "active": "Activo",
+      "pending": "Pendiente",
+      "invited": "Invitado"
+    },
+    "noneAssignment": "Ninguno",
+    "allCountFmt": "Todos ({{count}})",
+    "noneWontSeeWOs": "Ninguno — no verá ningún WO",
+    "allDspsFmt": "Todos los {{count}} DSPs",
+    "lastLoginNever": "Nunca",
+    "noMatch": "Ningún usuario coincide con tu búsqueda.",
+    "mobileDspsLabel": "DSPs asignados"
+  },
+  "inviteModal": {
+    "title": "Invitar usuario",
+    "subtitle": "Recibirá un correo para crear su contraseña",
+    "fullName": "Nombre completo",
+    "fullNamePlaceholder": "ej. José Pérez",
+    "email": "Correo",
+    "emailPlaceholder": "jose@example.com",
+    "rolesLabel": "Roles",
+    "rolesHintVendor": "Solo roles de vendor disponibles — no puedes otorgar roles de DSP o plataforma desde aquí.",
+    "rolesHintDsp": "Solo roles de DSP están disponibles para tu organización.",
+    "rolesHintPlatform": "Asigna cualquier rol de la plataforma.",
+    "dspAssignmentsLabel": "Asignación de DSPs",
+    "dspAssignmentsHint": "Elige qué DSPs atenderá este usuario. Solo verá WOs y vehículos de los DSPs seleccionados aquí.",
+    "cancel": "Cancelar",
+    "sending": "Enviando…",
+    "sendInvite": "Enviar invitación"
+  },
+  "invitations": {
+    "heading": "Invitaciones",
+    "subtitleSiteAdmin": "Invita a nuevos dueños de DSP, vendors o técnicos. Reciben un correo con un enlace de un clic para crear su cuenta. Si SMTP aún no está configurado, copia el enlace manualmente desde la fila de abajo.",
+    "subtitleVendor": "Invita a nuevos admins o técnicos para tu taller. Reciben un correo con un enlace de un clic para crear su cuenta. Si SMTP aún no está configurado, copia el enlace manualmente desde la fila de abajo.",
+    "subtitleDsp": "Invita a nuevos co-propietarios para tu DSP. Reciben un correo con un enlace de un clic para crear su cuenta. Si SMTP aún no está configurado, copia el enlace manualmente desde la fila de abajo.",
+    "newInvitation": "Nueva invitación",
+    "pendingFmt": "{{count}} pendientes",
+    "acceptedFmt": "{{count}} aceptadas",
+    "totalFmt": "{{count}} en total",
+    "loading": "Cargando…",
+    "emptyPart1": "Aún no hay invitaciones. Toca",
+    "emptyPart2": "para enviar una.",
+    "table": {
+      "invitee": "Invitado",
+      "role": "Rol",
+      "organization": "Organización",
+      "status": "Estado",
+      "expires": "Vence",
+      "actions": "Acciones"
+    },
+    "statusBadge": {
+      "accepted": "aceptada",
+      "revoked": "revocada",
+      "expired": "vencida",
+      "pending": "pendiente"
+    },
+    "smtpNotConfigured": "SMTP no configurado — copia el enlace",
+    "copyLinkTitle": "Copiar enlace de invitación",
+    "resendTitle": "Reenviar correo + extender vencimiento",
+    "revokeTitle": "Revocar invitación",
+    "resendResetTitle": "Reenviar + reiniciar vencimiento",
+    "confirmRevokeFmt": "¿Revocar invitación de {{email}}? No podrán usar el enlace.",
+    "resendFailedFmt": "Reenvío fallido: {{error}}",
+    "revokeFailedFmt": "Revocación fallida: {{error}}",
+    "copyManualPrompt": "Copia el enlace de invitación:"
+  },
+  "roles": {
+    "dsp_owner": "Dueño de DSP",
+    "dsp_manager": "Gerente de DSP",
+    "dsp_inspector": "Inspector de DSP",
+    "dsp_viewer": "Visor de DSP",
+    "vendor_admin": "Admin del Vendor",
+    "service_writer": "Asesor de servicio",
+    "technician": "Técnico",
+    "vendor_viewer": "Visor del Vendor",
+    "site_admin": "Admin del sitio"
+  },
+  "roleDescriptions": {
+    "dsp_owner": "Admin completo: facturación, usuarios, flota, inspecciones, órdenes de trabajo.",
+    "dsp_manager": "Gestiona flota + WOs. No gestiona usuarios ni facturación.",
+    "dsp_inspector": "Ejecuta inspecciones DVIC + reporta defectos. Solo lectura en WOs.",
+    "dsp_viewer": "Solo lectura en todo el DSP.",
+    "vendor_admin": "Admin completo: facturación, usuarios, aceptación de WO, asignación de técnicos.",
+    "service_writer": "Recibe WOs, asigna técnicos, habla con el DSP.",
+    "technician": "Toma WOs asignados, marca progreso, completa el trabajo.",
+    "vendor_viewer": "Solo lectura en todo el vendor.",
+    "site_admin": "Equipo de Nova Fora — acceso total al sistema."
+  },
+  "createInvitationModal": {
+    "title": "Nueva invitación",
+    "roleLabel": "Rol *",
+    "noPermission": "Tu rol no tiene permiso para invitar.",
+    "emailLabel": "Correo *",
+    "fullNameLabel": "Su nombre (opcional)",
+    "organizationLabel": "Organización",
+    "createNewOrg": "Crear nueva organización",
+    "addToOrgFmt": "Agregar a {{org}}",
+    "orgTypeLabel": "Tipo de organización *",
+    "orgType": {
+      "dsp": "DSP",
+      "vendor": "Vendor"
+    },
+    "orgNameLabel": "Nombre de la organización *",
+    "orgNamePlaceholderDsp": "Sunshine Logistics LLC",
+    "orgNamePlaceholderVendor": "Carlos Auto Repair",
+    "willBeAddedFmt": "Se agregará a <strong>{{org}}</strong>.",
+    "willBeAddedPart1": "Se agregará a",
+    "cancel": "Cancelar",
+    "sending": "Enviando…",
+    "sendInvitation": "Enviar invitación"
+  },
+  "security": {
+    "changePassword": {
+      "title": "Cambiar contraseña",
+      "subtitle": "Usa al menos 12 caracteres, mezcla de letras y números",
+      "current": "Contraseña actual",
+      "next": "Nueva contraseña",
+      "confirm": "Confirmar nueva contraseña",
+      "update": "Actualizar contraseña"
+    },
+    "twoFA": {
+      "title": "Autenticación de dos factores",
+      "enabledBadge": "Activado",
+      "subtitle": "Agrega una capa extra de seguridad con TOTP (Google Authenticator, Authy, 1Password)",
+      "disable": "Desactivar 2FA",
+      "backupHint": "Códigos de respaldo disponibles en la cuenta",
+      "enable": "Activar 2FA"
+    },
+    "sessions": {
+      "title": "Sesiones activas",
+      "subtitle": "Dispositivos actualmente conectados a tu cuenta",
+      "currentBadge": "Actual",
+      "activeNow": "Activo ahora",
+      "hoursAgoFmt": "hace {{count}} horas",
+      "signOut": "Cerrar sesión",
+      "signOutAllOthers": "Cerrar sesión en todos los demás dispositivos"
+    }
+  },
+  "setup2FA": {
+    "title": "Activar 2FA",
+    "stepFmt": "Paso {{step}} de 2",
+    "step1Intro": "Escanea este código QR con tu app de autenticación, o ingresa la clave secreta manualmente.",
+    "manualKeyHint": "O ingresa esta clave secreta manualmente:",
+    "copied": "Copiado",
+    "copy": "Copiar",
+    "step2Intro": "Ingresa el código de 6 dígitos de tu app de autenticación:",
+    "cancel": "Cancelar",
+    "back": "Atrás",
+    "next": "Siguiente",
+    "enable": "Activar 2FA"
+  },
+  "accountManager": {
+    "askQuestion": "Hacer una pregunta",
+    "scheduleTime": "¡Agenda tiempo conmigo!"
+  },
+  "organization": {
+    "businessDetails": {
+      "title": "Datos del negocio",
+      "subtitle": "Visibles para socios y en las facturas",
+      "orgName": "Nombre de la organización",
+      "phone": "Teléfono del negocio",
+      "smsPhone": "Teléfono SMS",
+      "lotLocation": "Ubicación del lote por defecto",
+      "address": "Dirección del negocio"
+    },
+    "smsOptIn": {
+      "title": "SMS de inspección imposible",
+      "subtitle": "Notificar por SMS cuando un inspector no puede completar una inspección (faltan llaves, vehículo no encontrado, etc.)"
+    },
+    "eveningReminder": {
+      "title": "Configurar SMS recordatorio nocturno de llaves o reparaciones programadas",
+      "warning": "Los vendors no despacharán sin confirmación de listo",
+      "sendAt": "Enviar a las",
+      "toSmsPhone": "al teléfono SMS del DSP"
+    },
+    "keyReturn": {
+      "title": "Horario, ubicación y código de caja de llaves",
+      "subtitle": "Se comparte con los vendors para que los drivers sepan dónde dejar las llaves después de reparaciones nocturnas",
+      "placeholder": "ej. Caja en oficina principal, código 4827. Deja las llaves en el bote azul fuera de horario."
+    },
+    "preferredVendors": {
+      "title": "Vendors preferidos (AMR, Carrocería, Detalle y Flex Fleet)",
+      "subtitle": "Enruta automáticamente las órdenes a tu vendor preferido para cada categoría"
+    },
+    "slack": {
+      "title": "Integración con Slack",
+      "subtitle": "Replica alertas prioritarias (órdenes urgentes, vehículos en tierra, finalizaciones) a un canal de Slack",
+      "channelLabel": "Canal",
+      "connectButton": "Conectar workspace de Slack"
+    },
+    "vendorServices": {
+      "title": "Servicios ofrecidos",
+      "subtitle": "Los DSPs hacen match con vendors según estas capacidades",
+      "selectedCountFmt_one": "{{count}} servicio seleccionado",
+      "selectedCountFmt_other": "{{count}} servicios seleccionados"
+    },
+    "saveChanges": "Guardar cambios"
+  },
+  "pm": {
+    "stat": {
+      "upcoming": "Próximos",
+      "scheduled": "Programados",
+      "total": "Total"
+    },
+    "upcomingPMs": "PMs próximos",
+    "schedulePM": "Programar PM",
+    "statusBadge": {
+      "upcoming": "Próximo",
+      "scheduled": "Programado"
+    },
+    "vendorLabel": "Vendor:",
+    "dueLabel": "Vence",
+    "daysFmt_one": "{{count}} día",
+    "daysFmt_other": "{{count}} días",
+    "triggerFmt": "Trigger: {{miles}} mi",
+    "milesShort": "mi",
+    "noPMs": "No hay PMs programados.",
+    "intervals": {
+      "title": "Intervalos PM por tipo de vehículo",
+      "typesCountFmt": "{{count}} tipos",
+      "readOnly": "Solo lectura",
+      "intervalsCountFmt": "{{count}} intervalos",
+      "done": "Listo",
+      "edit": "Editar intervalos",
+      "dueEveryFmt": "Vence cada {{miles}} millas",
+      "dueAtFmt": "Vence a las {{list}} millas",
+      "everyLabel": "cada",
+      "atLabel": "a las"
+    }
+  },
+  "dvicCatalog": {
+    "title": "Catálogo de defectos",
+    "amazonLocked": "Reglas de Amazon bloqueadas",
+    "subtitlePart1": "Items que el inspector revisa para esta plantilla de vehículo. Las reglas de Amazon no se pueden modificar; agrega tus propios items personalizados con",
+    "subtitlePart2": "+ Defecto personalizado",
+    "subtitlePart3": ".",
+    "customDefectButton": "Defecto personalizado",
+    "amazonRulesLabel": "reglas de Amazon",
+    "customRulesLabel": "personalizadas",
+    "table": {
+      "source": "Origen",
+      "section": "Sección",
+      "part": "Parte",
+      "defect": "Defecto",
+      "group": "Grupo",
+      "class": "Clase",
+      "line": "Línea",
+      "targets": "Targets"
+    },
+    "loading": "Cargando reglas de inspección…",
+    "pending": "Pendiente",
+    "noDefects": "No hay defectos configurados para esta plantilla.",
+    "controlHintPart1": "Tú controlas",
+    "controlHintSection": "Sección",
+    "controlHintPart": "Parte",
+    "controlHintDefect": "Defecto",
+    "controlHintMid1": "para items personalizados, más el",
+    "controlHintTuple": "tuple objetivo",
+    "controlHintMid2": "(con qué regla del catálogo se vincula). Tu Account Manager de DFS cura",
+    "controlHintClass": "Clase",
+    "controlHintGroup": "Grupo",
+    "controlHintLine": "Línea",
+    "controlHintEnd": "para consistencia analítica."
+  },
+  "addCustomDefect": {
+    "title": "Agregar defecto personalizado",
+    "subtitle": "Regla de origen DSP, persistida en el catálogo V2.2",
+    "infoBanner": "La nueva regla referencia un tuple (part, defect_type) existente del catálogo V2.2 para heredar la validación y el ruteo. Marca \"Mostrar en wizard\" si los inspectores deben verlo durante recorridos.",
+    "vehicleClassesLabel": "Clases de vehículo *",
+    "sectionLabel": "Sección",
+    "partLabel": "Parte *",
+    "catalogLoadFailed": "(falló la carga del catálogo)",
+    "selectPart": "Selecciona una parte…",
+    "loading": "Cargando…",
+    "defectTypeLabel": "Tipo de defecto *",
+    "selectDefectType": "Selecciona un tipo de defecto…",
+    "defectTypeHint": "El backend rechaza pares (part, defect_type) que no estén en el catálogo V2.2.",
+    "defectTextLabel": "Descripción del defecto *",
+    "defectTextPlaceholder": "Lo que el inspector ve en la forma — textual.",
+    "classLabel": "Clase",
+    "groupLabel": "Grupo",
+    "lineLabel": "Línea",
+    "showInWizard": "Mostrar en el wizard del inspector",
+    "showInWizardHint": "Agrega esta regla como item del checklist que el inspector ve durante recorridos. Apágala si la regla es solo para admin o reporte.",
+    "wizardCategoryLabel": "Categoría en el wizard *",
+    "wizardCategoryPlaceholder": "Revisiones personalizadas del DSP",
+    "wizardCategoryHint": "Etiqueta de encabezado dentro de la sección que ve el inspector.",
+    "photoRequired": "Foto requerida (desactivar para defectos sensoriales: olor, ruido de frenos, etc.)",
+    "brandedOnly": "Solo branded (calcomanías Amazon DOT / Prime — se oculta para vans Owner/Rental)",
+    "cancel": "Cancelar",
+    "saving": "Guardando…",
+    "addDefect": "Agregar defecto"
+  },
+  "defectRules": {
+    "explanation": {
+      "title": "Reglas de auto-aprobación de defectos",
+      "bodyPart1": "Normalmente, cada defecto reportado requiere tu aprobación manual antes de crear una orden de trabajo.",
+      "bodyPart2": "Las reglas de auto-aprobación te permiten saltar ese paso",
+      "bodyPart3": "para categorías rutinarias de bajo riesgo, así los vendors arrancan de inmediato.",
+      "autoApprovedFmt": "{{count}} con auto-aprobación",
+      "manualFmt": "{{count}} manual",
+      "ofCategoriesFmt": "de {{count}} categorías"
+    },
+    "presets": {
+      "title": "Presets rápidos",
+      "subtitle": "— toca para aplicar, luego ajusta abajo",
+      "conservative": "Conservador",
+      "conservativeScope": "*Solo ULCs branded",
+      "conservativeDesc": "Alcance mínimo — solo flota gestionada por Amazon, categorías seguras",
+      "balanced": "Balanceado",
+      "balancedRecommended": "Recomendado",
+      "balancedScope": "*Todo AMR",
+      "balancedDesc": "Todo lo que cubre tu vendor AMR principal — mantenimiento rutinario auto-aprobado",
+      "comprehensive": "Amplio",
+      "comprehensiveScope": "Branded y rentas",
+      "comprehensiveDesc": "Alcance máximo — todo excepto carrocería pesada y parabrisas"
+    },
+    "globalCap": {
+      "title": "Tope global de costo",
+      "subtitle": "Cualquier estimado de reparación por encima de este valor sigue requiriendo aprobación manual, sin importar las reglas de categoría.",
+      "capAt": "Limitar reparaciones a",
+      "perWO": "por WO"
+    },
+    "notify": {
+      "title": "Notifícame las auto-aprobaciones",
+      "subtitle": "Envía una notificación cada vez que se dispara una auto-aprobación para tener visibilidad completa, incluso sin necesidad de aprobar."
+    },
+    "categoryRules": {
+      "title": "Reglas por categoría",
+      "subtitle": "Activa o desactiva la auto-aprobación por categoría de defecto",
+      "autoBadge": "Auto",
+      "manualBadge": "Manual",
+      "typicalCostFmt": "Costo típico: {{cost}}"
+    },
+    "summary": {
+      "categoriesAutoLabel": "categorías con auto-aprobación",
+      "capLabel": "tope"
+    },
+    "saveRules": "Guardar reglas"
+  },
+  "editUserModal": {
+    "title": "Editar usuario",
+    "fullName": "Nombre completo",
+    "rolesLabel": "Roles",
+    "rolesHintVendor": "Solo roles de vendor disponibles — no puedes otorgar roles de DSP o plataforma desde aquí.",
+    "rolesHintDsp": "Solo roles de DSP están disponibles para tu organización.",
+    "rolesHintPlatform": "Cualquier rol puede ser otorgado.",
+    "dspAssignmentsLabel": "Asignación de DSPs",
+    "dspAssignmentsHint": "Elige qué DSPs atenderá este usuario. Cada usuario solo ve WOs y vehículos de los DSPs asignados.",
+    "twoFATitle": "Autenticación de dos factores",
+    "twoFAEnabled": "Activado",
+    "twoFADisabled": "No activado — el usuario puede activarlo en Seguridad",
+    "remove": "Eliminar",
+    "save": "Guardar",
+    "confirmRemoveTitleFmt": "¿Eliminar a {{name}}?",
+    "confirmRemoveBody": "El usuario perderá todo el acceso de inmediato. Las acciones históricas se conservan.",
+    "cancel": "Cancelar",
+    "confirmRemove": "Eliminar"
+  }
+}
