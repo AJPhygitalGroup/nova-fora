@@ -2,6 +2,12 @@
 
 Import all models here so Alembic's autogenerate sees them.
 Adding a new table = add an import line below + run `alembic revision --autogenerate`.
+
+WO V2.0 note (branch `wo-v2-rebuild`):
+  The V1 `WorkOrder` / `WorkOrderItem` models were deleted in PR 2 of
+  the rebuild. The 14 new V2.0 entities live in `app.models.work_orders`
+  (folder package). They're exported here for Alembic visibility AND for
+  convenience: callers can keep doing `from app.models import WorkOrder`.
 """
 from app.models.base import timestamp_column, utc_now
 from app.models.defect import Defect, DefectSource
@@ -36,14 +42,38 @@ from app.models.organization import OrgType, Organization
 from app.models.photo import Photo, PhotoCategory
 from app.models.user import User, UserRole, UserStatus
 from app.models.vehicle import Ownership, Vehicle
-from app.models.work_order import (
+from app.models.work_orders import (
+    DeclineReasonCode,
+    DefectResolution,
+    DefectResolutionStatus,
+    DefectReview,
+    DefectReviewDecision,
+    DefectReviewDecisionMethod,
+    DspSetting,
+    LineItemBillingType,
+    LineItemCategory,
+    LineItemStatus,
+    NoteAuthorRole,
+    RepairRequest,
+    RepairRequestDefect,
+    RepairRequestStatus,
+    RepairType,
+    StatusTrackingMode,
+    VendorWorkshop,
+    WoActivityLog,
+    WoActivityLogEntityType,
     WorkOrder,
-    WorkOrderFlag,
-    WorkOrderItem,
+    WorkOrderLineItem,
+    WorkOrderLineItemResolution,
+    WorkOrderNote,
+    WorkOrderPhoto,
+    WorkOrderPhotoStage,
+    WorkOrderRo,
     WorkOrderStatus,
 )
 
 __all__ = [
+    # Defects
     "Defect",
     "DefectApplicability",
     "DefectClassification",
@@ -58,9 +88,8 @@ __all__ = [
     "DefectType",
     "DvicSection",
     "DvicTemplateItem",
+    # Inspections
     "Inspection",
-    "Invitation",
-    "InvitationStatus",
     "InspectionResult",
     "InspectionRule",
     "InspectionRuleLine",
@@ -68,6 +97,10 @@ __all__ = [
     "InspectionRuleTarget",
     "InspectionStatus",
     "OdometerSource",
+    # Invitations
+    "Invitation",
+    "InvitationStatus",
+    # Org / user / vehicle
     "OrgType",
     "Organization",
     "Ownership",
@@ -79,10 +112,35 @@ __all__ = [
     "UserStatus",
     "Vehicle",
     "VehicleClass",
+    # WO V2.0 (14 tables + enums)
+    "DeclineReasonCode",
+    "DefectResolution",
+    "DefectResolutionStatus",
+    "DefectReview",
+    "DefectReviewDecision",
+    "DefectReviewDecisionMethod",
+    "DspSetting",
+    "LineItemBillingType",
+    "LineItemCategory",
+    "LineItemStatus",
+    "NoteAuthorRole",
+    "RepairRequest",
+    "RepairRequestDefect",
+    "RepairRequestStatus",
+    "RepairType",
+    "StatusTrackingMode",
+    "VendorWorkshop",
+    "WoActivityLog",
+    "WoActivityLogEntityType",
     "WorkOrder",
-    "WorkOrderFlag",
-    "WorkOrderItem",
+    "WorkOrderLineItem",
+    "WorkOrderLineItemResolution",
+    "WorkOrderNote",
+    "WorkOrderPhoto",
+    "WorkOrderPhotoStage",
+    "WorkOrderRo",
     "WorkOrderStatus",
+    # Base utilities
     "timestamp_column",
     "utc_now",
 ]

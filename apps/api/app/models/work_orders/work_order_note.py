@@ -1,0 +1,56 @@
+"""WorkOrderNote — threaded notes on a WO.
+
+`author_role` records who's "speaking" so the UI can render with the
+right styling (customer vs vendor vs technician vs system). `author_id`
+is NULL for system notes (router placement, status auto-transitions).
+"""
+from datetime import datetime
+
+import sqlalchemy as sa
+from sqlalchemy import Column
+from sqlmodel import Field, SQLModel
+
+from app.models.base import utc_now
+from app.models.work_orders.enums import NoteAuthorRole
+
+
+class WorkOrderNote(SQLModel, table=True):
+    __tablename__ = "work_order_notes"
+
+    id: int | None = Field(default=None, primary_key=True)
+    work_order_id: int = Field(
+        sa_column=Column(
+            "work_order_id",
+            sa.Integer,
+            sa.ForeignKey("work_orders.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
+    author_id: int | None = Field(
+        default=None,
+        foreign_key="users.id",
+        description="NULL for system notes (no human author).",
+    )
+    author_role: NoteAuthorRole = Field(
+        sa_column=Column(
+            "author_role",
+            sa.Enum(
+                NoteAuthorRole,
+                native_enum=False,
+                length=30,
+                values_callable=lambda e: [m.value for m in e],
+            ),
+            nullable=False,
+        ),
+    )
+    body: str = Field(nullable=False)
+
+    created_at: datetime = Field(
+        default_factory=utc_now,
+        sa_column=Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
+    )

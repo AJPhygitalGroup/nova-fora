@@ -25,7 +25,7 @@ from app.models.defect import Defect
 from app.models.inspection import Inspection
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
-from app.models.work_order import WorkOrder
+from app.models.work_orders import VendorWorkshop, WorkOrder
 from app.routes.inspections import _parse_inspection_id
 from app.routes.vehicles import _parse_vehicle_id  # shared helper
 from app.schemas.photo import (
@@ -128,7 +128,7 @@ async def _check_parent_access(
         ).scalar_one_or_none()
         if wo is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "work order not found")
-        _require_wo_scope(wo, current)
+        await _require_wo_scope(wo, current, session)
         return ("work_orders", wo.id)
 
     raise HTTPException(status.HTTP_400_BAD_REQUEST, f"unknown kind: {kind}")
@@ -145,8 +145,13 @@ def _require_inspection_scope(insp: Inspection | None, current: User) -> None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "not your inspection")
 
 
-def _require_wo_scope(wo: WorkOrder, current: User) -> None:
-    """WO photos: visible parties (DSP, vendor, assigned tech) + site_admin."""
+async def _require_wo_scope(wo: WorkOrder, current: User, session: AsyncSession) -> None:
+    """WO photos: visible parties (DSP, vendor workshop's org, assigned tech) + site_admin.
+
+    V2.0 note: the vendor relationship is now indirect — `wo.vendor_workshop_id`
+    points to a `VendorWorkshop`, which optionally has `organization_id` set to
+    the Nova Fora vendor org. We resolve it lazily here.
+    """
     if current.role == UserRole.SITE_ADMIN:
         return
     if (
@@ -154,11 +159,25 @@ def _require_wo_scope(wo: WorkOrder, current: User) -> None:
         and wo.dsp_id != current.organization_id
     ):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "not your work order")
-    if (
-        current.role in (UserRole.VENDOR_ADMIN, UserRole.TECHNICIAN)
-        and wo.vendor_id != current.organization_id
-    ):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "not your work order")
+    if current.role in (UserRole.VENDOR_ADMIN, UserRole.TECHNICIAN):
+        # Resolve the workshop's owning org. Vendor scope = workshop org matches.
+        # Tech scope = either workshop org matches OR they're assigned to the WO.
+        workshop = (
+            await session.execute(
+                select(VendorWorkshop).where(VendorWorkshop.id == wo.vendor_workshop_id)
+            )
+        ).scalar_one_or_none()
+        workshop_org_id = workshop.organization_id if workshop else None
+        is_their_workshop = (
+            workshop_org_id is not None
+            and workshop_org_id == current.organization_id
+        )
+        is_their_assignment = (
+            current.role == UserRole.TECHNICIAN
+            and wo.assigned_technician_id == current.id
+        )
+        if not (is_their_workshop or is_their_assignment):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "not your work order")
 
 
 @router.post("/presigned", response_model=PresignedUploadResponse)
