@@ -5,7 +5,7 @@
   POST /auth/logout    stateless JWT — server-side is a no-op, frontend clears storage
   GET  /auth/me        returns the current user (full UserResponse shape)
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -19,6 +19,8 @@ from app.auth.jwt import (
     decode_token,
 )
 from app.db import get_session
+from app.i18n_errors import E, tr_error
+from app.i18n_helpers import get_request_language
 from app.models.organization import Organization
 from app.models.user import User, UserStatus
 from app.schemas.auth import LoginRequest, RefreshRequest, TokenPair
@@ -30,7 +32,9 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
 
 
-async def _build_user_response(user: User, session: AsyncSession) -> UserResponse:
+async def _build_user_response(
+    user: User, session: AsyncSession, lang: str = "en"
+) -> UserResponse:
     """Fetch the user's org so the response includes org name + prefixed id."""
     org = (
         await session.execute(
@@ -41,7 +45,7 @@ async def _build_user_response(user: User, session: AsyncSession) -> UserRespons
         # Shouldn't happen due to FK, but defensive.
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="user has dangling organization_id",
+            detail=tr_error(E.DANGLING_ORG, lang),
         )
     return UserResponse.from_user_and_org(
         user=user,
@@ -62,8 +66,10 @@ async def _build_user_response(user: User, session: AsyncSession) -> UserRespons
 )
 async def login(
     body: LoginRequest,
+    request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> TokenPair:
+    lang = get_request_language(request)
     user = (
         await session.execute(select(User).where(User.email == body.email.lower()))
     ).scalar_one_or_none()
@@ -72,13 +78,13 @@ async def login(
     if user is None or not verify_password(body.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid credentials",
+            detail=tr_error(E.INVALID_CREDENTIALS, lang),
         )
 
     if user.status != UserStatus.ACTIVE:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"user status is {user.status.value}",
+            detail=tr_error(E.USER_STATUS, lang, status=user.status.value),
         )
 
     # Update last_login_at (best effort — don't fail login if this fails)
@@ -101,13 +107,16 @@ async def login(
 )
 async def refresh(
     body: RefreshRequest,
+    request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> TokenPair:
+    lang = get_request_language(request)
     try:
         payload = decode_token(body.refresh_token, expected_type=TokenType.REFRESH)
     except TokenError as e:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=tr_error(E.INVALID_TOKEN, lang),
         ) from e
 
     try:
@@ -115,7 +124,7 @@ async def refresh(
     except (KeyError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid token subject",
+            detail=tr_error(E.INVALID_TOKEN_SUBJECT, lang),
         ) from None
 
     user = (
@@ -123,7 +132,8 @@ async def refresh(
     ).scalar_one_or_none()
     if user is None or user.status != UserStatus.ACTIVE:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="user no longer active"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=tr_error(E.USER_NO_LONGER_ACTIVE, lang),
         )
 
     return TokenPair(
@@ -156,10 +166,11 @@ async def logout(current: User = Depends(get_current_user)) -> None:
     summary="Return the currently authenticated user",
 )
 async def me(
+    request: Request,
     current: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> UserResponse:
-    return await _build_user_response(current, session)
+    return await _build_user_response(current, session, get_request_language(request))
 
 
 # ─────────────────────────────────────────────────────
@@ -190,6 +201,7 @@ class _LanguageUpdate(BaseModel):
     summary="Update the authenticated user's i18n preference",
 )
 async def update_language(
+    request: Request,
     body: _LanguageUpdate = Body(...),
     current: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
@@ -200,4 +212,4 @@ async def update_language(
         session.add(current)
         await session.commit()
         await session.refresh(current)
-    return await _build_user_response(current, session)
+    return await _build_user_response(current, session, get_request_language(request))

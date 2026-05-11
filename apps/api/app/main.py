@@ -1,9 +1,12 @@
 """FastAPI application entry point."""
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
+from app.i18n_errors import translate_known_detail
+from app.i18n_helpers import get_request_language
 from app.routes import (
     auth,
     defect_catalog,
@@ -92,6 +95,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Localized error handler ───────────────────────────
+# Best-effort reverse translation of HTTPException details: any route that
+# still raises a raw English `detail` string gets translated post-hoc using
+# the registry in `app.i18n_errors`. Routes that already call `tr_error`
+# at the raise site pass through unchanged (their detail won't match the
+# English reverse index).
+@app.exception_handler(HTTPException)
+async def localized_http_exception_handler(request: Request, exc: HTTPException):
+    lang = get_request_language(request)
+    detail = exc.detail
+    if isinstance(detail, str):
+        detail = translate_known_detail(detail, lang)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": detail},
+        headers=getattr(exc, "headers", None),
+    )
+
 
 # ── Routes ────────────────────────────────────────────
 app.include_router(health.router)

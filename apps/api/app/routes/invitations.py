@@ -179,7 +179,14 @@ def _send_invite_email(
     inv: Invitation,
     inviter_name: str,
     org_label: str,
+    lang: str = "en",
 ) -> bool:
+    """Render + send the invitation email in `lang` (en|es).
+
+    `lang` should be the inviter's UI language at send time. We pass it
+    through to the renderer so the invitee gets a localized email that
+    matches the workspace they were invited from.
+    """
     msg = email_service.render_invitation_email(
         invitee_name=inv.full_name,
         inviter_name=inviter_name,
@@ -190,6 +197,7 @@ def _send_invite_email(
         ),
         accept_url=_accept_url(inv.token),
         expires_in_days=settings.invitation_ttl_days,
+        lang=lang,
     )
     msg.to = inv.email
     return email_service.send(msg)
@@ -265,11 +273,15 @@ async def create_invitation(
     await session.commit()
     await session.refresh(inv)
 
-    # Fire-and-forget email
+    # Fire-and-forget email — localized to the inviter's UI language so
+    # the invitee receives a message that matches the workspace they
+    # were invited from. Defaults to "en" if the user hasn't set one.
     org_label = (
         target_org.name if target_org else (body.org_name or "Nova Fora")
     )
-    smtp_ok = _send_invite_email(inv, current.full_name, org_label)
+    smtp_ok = _send_invite_email(
+        inv, current.full_name, org_label, lang=current.language or "en"
+    )
     inv.last_email_sent_at = utc_now()
     session.add(inv)
     await session.commit()
@@ -361,7 +373,9 @@ async def resend_invitation(
         ).scalar_one_or_none()
     org_label = org.name if org else (inv.org_name or "Nova Fora")
 
-    smtp_ok = _send_invite_email(inv, current.full_name, org_label)
+    smtp_ok = _send_invite_email(
+        inv, current.full_name, org_label, lang=current.language or "en"
+    )
     inv.last_email_sent_at = utc_now()
     session.add(inv)
     await session.commit()

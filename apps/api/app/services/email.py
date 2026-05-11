@@ -96,6 +96,74 @@ def send(msg: EmailMessage) -> bool:
 # ─────────────────────────────────────────────────────────
 # Invitation-specific helper
 # ─────────────────────────────────────────────────────────
+# Bilingual invitation templates. The caller picks `lang` based on the
+# invitee's preferred language (falls back to the inviter's org default
+# or "es-MX" for the Nova Fora Mexico market). Adding a new language is
+# a matter of extending these two dicts.
+_INVITATION_COPY: dict[str, dict[str, str]] = {
+    "en": {
+        "greeting_named": "Hi {name},",
+        "greeting_anon": "Hi,",
+        "body_intro": (
+            "{inviter} has invited you to join {org} on Nova Fora as a {role}."
+        ),
+        "body_cta_text": (
+            "Click the link below to accept and finish setting up your account:"
+        ),
+        "body_expiry": (
+            "This link expires in {days} days. If you weren't expecting "
+            "this invitation you can ignore this email."
+        ),
+        "signoff": "— Nova Fora",
+        "subject": "{inviter} invited you to {org} on Nova Fora",
+        "html_heading": "You're invited to Nova Fora",
+        "html_intro": (
+            "<strong>{inviter}</strong> invited you to join "
+            "<strong>{org}</strong> as a <strong>{role}</strong>."
+        ),
+        "html_cta": "Accept invitation",
+        "html_paste_url": "Or paste this URL into your browser:",
+        "html_expiry": (
+            "This link expires in {days} days. If you weren't expecting this "
+            "invitation you can ignore this email."
+        ),
+    },
+    "es": {
+        "greeting_named": "Hola {name},",
+        "greeting_anon": "Hola,",
+        "body_intro": (
+            "{inviter} te ha invitado a unirte a {org} en Nova Fora como {role}."
+        ),
+        "body_cta_text": (
+            "Haz clic en el enlace de abajo para aceptar y terminar de configurar tu cuenta:"
+        ),
+        "body_expiry": (
+            "Este enlace expira en {days} días. Si no esperabas esta "
+            "invitación, puedes ignorar este correo."
+        ),
+        "signoff": "— Nova Fora",
+        "subject": "{inviter} te invitó a {org} en Nova Fora",
+        "html_heading": "Te invitaron a Nova Fora",
+        "html_intro": (
+            "<strong>{inviter}</strong> te invitó a unirte a "
+            "<strong>{org}</strong> como <strong>{role}</strong>."
+        ),
+        "html_cta": "Aceptar invitación",
+        "html_paste_url": "O pega esta URL en tu navegador:",
+        "html_expiry": (
+            "Este enlace expira en {days} días. Si no esperabas esta "
+            "invitación, puedes ignorar este correo."
+        ),
+    },
+}
+
+
+def _copy(lang: str) -> dict[str, str]:
+    """Pick the copy bundle for `lang`, falling back to English."""
+    base = (lang or "en").lower().split("-", 1)[0]
+    return _INVITATION_COPY.get(base) or _INVITATION_COPY["en"]
+
+
 def render_invitation_email(
     *,
     invitee_name: str | None,
@@ -104,45 +172,49 @@ def render_invitation_email(
     role_label: str,
     accept_url: str,
     expires_in_days: int,
+    lang: str = "en",
 ) -> EmailMessage:
-    greeting = f"Hi {invitee_name}," if invitee_name else "Hi,"
+    c = _copy(lang)
+    greeting = (
+        c["greeting_named"].format(name=invitee_name)
+        if invitee_name
+        else c["greeting_anon"]
+    )
     text = (
         f"{greeting}\n\n"
-        f"{inviter_name} has invited you to join {org_label} on Nova Fora as "
-        f"a {role_label}.\n\n"
-        f"Click the link below to accept and finish setting up your account:\n"
+        f"{c['body_intro'].format(inviter=inviter_name, org=org_label, role=role_label)}\n\n"
+        f"{c['body_cta_text']}\n"
         f"{accept_url}\n\n"
-        f"This link expires in {expires_in_days} days. If you weren't expecting "
-        f"this invitation you can ignore this email.\n\n"
-        f"— Nova Fora"
+        f"{c['body_expiry'].format(days=expires_in_days)}\n\n"
+        f"{c['signoff']}"
     )
+    html_intro = c["html_intro"].format(
+        inviter=inviter_name, org=org_label, role=role_label
+    )
+    html_expiry = c["html_expiry"].format(days=expires_in_days)
     html = f"""<!doctype html>
 <html><body style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
                    color:#1f2937; max-width:560px; margin:32px auto; padding:0 16px;">
-  <h2 style="color:#0f172a; margin:0 0 8px;">You're invited to Nova Fora</h2>
-  <p style="margin:0 0 16px;">
-    <strong>{inviter_name}</strong> invited you to join
-    <strong>{org_label}</strong> as a <strong>{role_label}</strong>.
-  </p>
+  <h2 style="color:#0f172a; margin:0 0 8px;">{c['html_heading']}</h2>
+  <p style="margin:0 0 16px;">{html_intro}</p>
   <p style="margin:24px 0;">
     <a href="{accept_url}"
        style="display:inline-block; background:#2563eb; color:#fff; text-decoration:none;
               padding:12px 20px; border-radius:8px; font-weight:600;">
-      Accept invitation
+      {c['html_cta']}
     </a>
   </p>
   <p style="font-size:13px; color:#475569; margin:24px 0 8px;">
-    Or paste this URL into your browser:<br>
+    {c['html_paste_url']}<br>
     <code style="word-break:break-all;">{accept_url}</code>
   </p>
   <p style="font-size:12px; color:#64748b; margin-top:32px;">
-    This link expires in {expires_in_days} days. If you weren't expecting this
-    invitation you can ignore this email.
+    {html_expiry}
   </p>
 </body></html>"""
     return EmailMessage(
         to="",  # caller fills
-        subject=f"{inviter_name} invited you to {org_label} on Nova Fora",
+        subject=c["subject"].format(inviter=inviter_name, org=org_label),
         text=text,
         html=html,
     )
