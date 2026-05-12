@@ -782,25 +782,26 @@ export const directory = {
 // ─────────────────────────────────────────────────────
 // Work Orders module
 // ─────────────────────────────────────────────────────
+/**
+ * V2.0 Work Order API surface.
+ *
+ * Lifecycle endpoints take no body (or a small action payload) and return
+ * the updated WorkOrder. The detail endpoint embeds `lineItems`,
+ * `defectResolutions`, `ros`, and `notes` so the UI doesn't N+1.
+ *
+ * Backend route layout: see `apps/api/app/routes/work_orders.py`.
+ */
 export const workOrders = {
   /**
-   * GET /work-orders — list with role scoping + filters.
-   * params: {
-   *   dspId?, vendorId?, status?, vehicleId?, technicianId?,
-   *   rushOnly?, dateFrom?, dateTo?, page?, perPage?
-   * }
+   * GET /work-orders — list, role-scoped server-side.
+   * params: { status?, dspId?, vendorWorkshopId?, assignedToMe?, limit? }
    */
   list(params = {}) {
     const q = new URLSearchParams();
     const paramMap = {
       dspId: 'dsp_id',
-      vendorId: 'vendor_id',
-      vehicleId: 'vehicle_id',
-      technicianId: 'technician_id',
-      rushOnly: 'rush_only',
-      dateFrom: 'date_from',
-      dateTo: 'date_to',
-      perPage: 'per_page',
+      vendorWorkshopId: 'vendor_workshop_id',
+      assignedToMe: 'assigned_to_me',
     };
     for (const [k, v] of Object.entries(params)) {
       if (v === undefined || v === null || v === '') continue;
@@ -810,93 +811,349 @@ export const workOrders = {
     return apiFetch(`/work-orders${qs ? '?' + qs : ''}`);
   },
 
-  /** GET /work-orders/{id} — full detail incl. items + resolved defect labels */
+  /** GET /work-orders/{id} — detail with line_items + defect_resolutions + ros + notes */
   get(id) {
     return apiFetch(`/work-orders/${encodeURIComponent(id)}`);
   },
 
+  // ── Lifecycle transitions ─────────────────────────
+  /** POST /work-orders/{id}/accept — vendor accept; generates line items */
+  accept(id) {
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/accept`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  },
+
   /**
-   * POST /work-orders — create from N defects.
-   * body: {
-   *   vendorId, items: [{ defectId, repairNotes?, linePartsCost?, lineLaborCost? }],
-   *   flags? ['rush_order'|'stale'|...], scheduledAt?, notes?, fmc?, roNumber?
-   * }
+   * POST /work-orders/{id}/decline — vendor decline.
+   * body: { reason?, declineReasonCode, reroute? } — declineReasonCode is REQUIRED
+   *        (one of the codes in `decline_reason_codes`, e.g. 'specialty_required').
+   *        reroute defaults to true server-side.
+   */
+  decline(id, body) {
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/decline`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /** POST /work-orders/{id}/start — accepted → in_progress */
+  start(id) {
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/start`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  },
+
+  /** POST /work-orders/{id}/complete — body: { lastMileage? } */
+  complete(id, body = {}) {
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/complete`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /** POST /work-orders/{id}/cancel — body: { reason? } */
+  cancel(id, body = {}) {
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /**
+   * POST /work-orders/{id}/assign-technician
+   * body: { technicianId | null }  (null clears the assignment)
+   */
+  assignTechnician(id, technicianId) {
+    return apiFetch(
+      `/work-orders/${encodeURIComponent(id)}/assign-technician`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ technician_id: technicianId }),
+      }
+    );
+  },
+
+  // ── Line items (sub-resource) ─────────────────────
+  /**
+   * POST /work-orders/{id}/line-items — mid-repair addition.
+   * body: { description, category, billingType?, estimatedPrice?, customerRequested? }
+   *        category: 'defect_repair' | 'customer_request' | 'vendor_addition' |
+   *                  'recall' | 'overhead' | 'uncategorized'
+   *        billingType: 'amr' | 'cmr' (defaults to 'cmr' server-side)
+   */
+  addLineItem(id, body) {
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/line-items`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /**
+   * PATCH /work-orders/{id}/line-items/{liId}
+   * body: { description?, estimatedPrice?, finalPrice?, roId?, status?,
+   *         statusReason?, declineReasonCode? }
+   */
+  patchLineItem(id, liId, body) {
+    return apiFetch(
+      `/work-orders/${encodeURIComponent(id)}/line-items/${encodeURIComponent(liId)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(camelToSnake(body)),
+      }
+    );
+  },
+
+  /**
+   * POST /work-orders/{id}/line-items/{liId}/defer — flips to deferred,
+   * spawns a follow-up RR if category=defect_repair.
+   * body: { reasonCode?, statusReason? } — reasonCode defaults to 'parts_unavailable'
+   */
+  deferLineItem(id, liId, body = {}) {
+    return apiFetch(
+      `/work-orders/${encodeURIComponent(id)}/line-items/${encodeURIComponent(liId)}/defer`,
+      {
+        method: 'POST',
+        body: JSON.stringify(camelToSnake(body)),
+      }
+    );
+  },
+
+  // ── Repair Orders (sub-resource) ──────────────────
+  /**
+   * POST /work-orders/{id}/ros — attach an RO#.
+   * body: { roNumber, isPrimary?, modificationReason? }
+   * If isPrimary=true, the server demotes the previous primary.
+   */
+  addRo(id, body) {
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/ros`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /**
+   * PATCH /work-orders/{id}/ros/{roId}
+   * body: { isPrimary?, modificationReason? }
+   */
+  patchRo(id, roId, body) {
+    return apiFetch(
+      `/work-orders/${encodeURIComponent(id)}/ros/${encodeURIComponent(roId)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(camelToSnake(body)),
+      }
+    );
+  },
+
+  // ── Notes (sub-resource) ──────────────────────────
+  /**
+   * POST /work-orders/{id}/notes — append a note to the thread.
+   * body: { body, authorRole? }
+   *        authorRole: 'customer' | 'vendor_service_writer' | 'technician' | 'admin' | 'system'
+   *        (defaults to 'admin' server-side; the front end should pass an
+   *        appropriate role based on the current user.)
+   */
+  addNote(id, body) {
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/notes`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+};
+
+// ─────────────────────────────────────────────────────
+// Vendor workshops — the workshop catalog (V2.0).
+// ─────────────────────────────────────────────────────
+/**
+ * Workshop catalog (distinct from `organizations` rows where org_type=vendor;
+ * the workshop adds repair_types[] + status_tracking_mode that drive routing).
+ *
+ * Auth: site_admin can mutate; everyone else is read-only.
+ */
+export const vendorWorkshops = {
+  /** GET /vendor-workshops — params: { repairType?, includeInactive? } */
+  list(params = {}) {
+    const q = new URLSearchParams();
+    const paramMap = { repairType: 'repair_type', includeInactive: 'include_inactive' };
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined || v === null || v === '') continue;
+      q.set(paramMap[k] || k, String(v));
+    }
+    const qs = q.toString();
+    return apiFetch(`/vendor-workshops${qs ? '?' + qs : ''}`);
+  },
+
+  /** GET /vendor-workshops/{id} — accepts 'VW-001' or '1' */
+  get(id) {
+    return apiFetch(`/vendor-workshops/${encodeURIComponent(id)}`);
+  },
+
+  /**
+   * POST /vendor-workshops — site_admin only.
+   * body: { name, organizationId?, statusTrackingMode?, repairTypes?, isActive? }
+   *        repairTypes: array of 'mechanical'|'body'|'tires'|'pm'|'cnmr'|
+   *                                 'detailing'|'netradyne'
+   *        statusTrackingMode: 'external' (default) | 'internal'
    */
   create(body) {
-    return apiFetch('/work-orders', {
+    return apiFetch('/vendor-workshops', {
       method: 'POST',
       body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /** PATCH /vendor-workshops/{id} — site_admin only. Partial update. */
+  patch(id, body) {
+    return apiFetch(`/vendor-workshops/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /** DELETE /vendor-workshops/{id} — soft-deactivate (sets is_active=false). */
+  deactivate(id) {
+    return apiFetch(`/vendor-workshops/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+  },
+};
+
+// ─────────────────────────────────────────────────────
+// DSP settings (per-DSP V2.0 config).
+// ─────────────────────────────────────────────────────
+/**
+ * Auth: site_admin OR dsp_owner of the same org_id.
+ * GET returns platform defaults if no row exists yet — the front end can
+ * surface those as the current effective config without special-casing.
+ */
+export const dspSettings = {
+  /** GET /dsp-settings/{dspId} — int id of the organization row */
+  get(dspId) {
+    return apiFetch(`/dsp-settings/${encodeURIComponent(dspId)}`);
+  },
+
+  /**
+   * PATCH /dsp-settings/{dspId} — UPSERT.
+   * body: {
+   *   cmrAutoApproveThreshold?, preauthDefectGroups?,
+   *   notes?, reviewSlaHours?, defaultVarianceTolerance?,
+   *   bundlingWindowMinutes?
+   * }
+   */
+  patch(dspId, body) {
+    return apiFetch(`/dsp-settings/${encodeURIComponent(dspId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+};
+
+// ─────────────────────────────────────────────────────
+// Defect reviews (scope approval workflow).
+// ─────────────────────────────────────────────────────
+/**
+ * `queue` returns defects without any review row yet — the manual review
+ * UI. Approval calls into the bundler synchronously so the defect lands
+ * on an RR right away.
+ */
+export const defectReviews = {
+  /**
+   * GET /defect-reviews/queue
+   * params: { dspId? (site_admin-only filter), limit? }
+   * For dsp_owner the response is always scoped to their org regardless
+   * of the dsp_id param.
+   */
+  queue(params = {}) {
+    const q = new URLSearchParams();
+    const paramMap = { dspId: 'dsp_id' };
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined || v === null || v === '') continue;
+      q.set(paramMap[k] || k, String(v));
+    }
+    const qs = q.toString();
+    return apiFetch(`/defect-reviews/queue${qs ? '?' + qs : ''}`);
+  },
+
+  /** GET /defect-reviews/defect/{defectId} — history, newest first */
+  listForDefect(defectId) {
+    return apiFetch(
+      `/defect-reviews/defect/${encodeURIComponent(defectId)}`
+    );
+  },
+
+  /** POST /defect-reviews/defect/{defectId}/approve — body: { reason? } */
+  approve(defectId, body = {}) {
+    return apiFetch(
+      `/defect-reviews/defect/${encodeURIComponent(defectId)}/approve`,
+      {
+        method: 'POST',
+        body: JSON.stringify(camelToSnake(body)),
+      }
+    );
+  },
+
+  /** POST /defect-reviews/defect/{defectId}/reject — body: { reason? } */
+  reject(defectId, body = {}) {
+    return apiFetch(
+      `/defect-reviews/defect/${encodeURIComponent(defectId)}/reject`,
+      {
+        method: 'POST',
+        body: JSON.stringify(camelToSnake(body)),
+      }
+    );
+  },
+};
+
+// ─────────────────────────────────────────────────────
+// Repair Requests (the bundling layer between defects and WOs).
+// ─────────────────────────────────────────────────────
+/**
+ * Created by the bundler when a defect is approved. The UI mostly reads
+ * these + offers a force-route and cancel button. The cron driver
+ * (`bundle-route-cron` CLI) is the production path for window-elapsed
+ * routing; the force-route here lets operators push manually.
+ */
+export const repairRequests = {
+  /**
+   * GET /repair-requests — role-scoped.
+   * params: { status?, dspId? (site_admin only), limit? }
+   */
+  list(params = {}) {
+    const q = new URLSearchParams();
+    const paramMap = { dspId: 'dsp_id' };
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined || v === null || v === '') continue;
+      q.set(paramMap[k] || k, String(v));
+    }
+    const qs = q.toString();
+    return apiFetch(`/repair-requests${qs ? '?' + qs : ''}`);
+  },
+
+  /** GET /repair-requests/{id} — accepts 'RR-NNNNN' or int */
+  get(id) {
+    return apiFetch(`/repair-requests/${encodeURIComponent(id)}`);
+  },
+
+  /** POST /repair-requests/{id}/route — force-route now, skip window */
+  route(id) {
+    return apiFetch(`/repair-requests/${encodeURIComponent(id)}/route`, {
+      method: 'POST',
+      body: JSON.stringify({}),
     });
   },
 
   /**
-   * PATCH /work-orders/{id}/status — state-machine validated transition.
-   * body: { status, declineReason?, cancelReason?, scheduledAt?, notesAppend? }
-   * Required side fields per target:
-   *   - 'scheduled' → scheduledAt
-   *   - 'declined'  → declineReason
-   *   - 'canceled'  → cancelReason
+   * POST /repair-requests/{id}/cancel — cascades to any non-terminal WOs.
+   * body: { reason? }
    */
-  updateStatus(id, body) {
-    return apiFetch(`/work-orders/${encodeURIComponent(id)}/status`, {
-      method: 'PATCH',
-      body: JSON.stringify(camelToSnake(body)),
-    });
-  },
-
-  /** PATCH /work-orders/{id}/assign — vendor assigns/un-assigns a tech.
-   * body: { technicianId | null, notesAppend? } */
-  assign(id, body) {
-    return apiFetch(`/work-orders/${encodeURIComponent(id)}/assign`, {
-      method: 'PATCH',
-      body: JSON.stringify(camelToSnake(body)),
-    });
-  },
-
-  /** PATCH /work-orders/{id}/quote — vendor sets parts/labor/RO#.
-   * body: { partsCost?, laborCost?, roNumber? } */
-  updateQuote(id, body) {
-    return apiFetch(`/work-orders/${encodeURIComponent(id)}/quote`, {
-      method: 'PATCH',
-      body: JSON.stringify(camelToSnake(body)),
-    });
-  },
-
-  /** POST /work-orders/{id}/items — add more defects to existing WO */
-  addItems(id, items) {
-    return apiFetch(`/work-orders/${encodeURIComponent(id)}/items`, {
-      method: 'POST',
-      body: JSON.stringify({ items: camelToSnake(items) }),
-    });
-  },
-
-  /** DELETE /work-orders/{id}/items/{itemId} — un-bundle a defect */
-  removeItem(woId, itemId) {
-    return apiFetch(
-      `/work-orders/${encodeURIComponent(woId)}/items/${encodeURIComponent(itemId)}`,
-      { method: 'DELETE' }
-    );
-  },
-
-  /** GET /work-orders/{id}/photos */
-  listPhotos(id) {
-    return apiFetch(`/work-orders/${encodeURIComponent(id)}/photos`);
-  },
-
-  /** POST /work-orders/{id}/photos — commit after presigned PUT succeeds */
-  commitPhoto(id, body) {
-    return apiFetch(`/work-orders/${encodeURIComponent(id)}/photos`, {
+  cancel(id, body = {}) {
+    return apiFetch(`/repair-requests/${encodeURIComponent(id)}/cancel`, {
       method: 'POST',
       body: JSON.stringify(camelToSnake(body)),
     });
-  },
-
-  /** DELETE /work-orders/{id}/photos/{photoId} — soft delete */
-  deletePhoto(woId, photoId) {
-    return apiFetch(
-      `/work-orders/${encodeURIComponent(woId)}/photos/${encodeURIComponent(photoId)}`,
-      { method: 'DELETE' }
-    );
   },
 };
 
