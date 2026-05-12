@@ -318,19 +318,116 @@ function DeclineModal({ wo, onDecline, onClose }) {
 function CompleteWorkModal({ wo, onComplete, onClose }) {
   const { t } = useTranslation('dashboard');
   const [comments, setComments] = useState('');
-  const [mileage, setMileage] = useState(wo.lastMileage || '');
-  const [odometerPhoto, setOdometerPhoto] = useState(null);
+  // Floor: previously-recorded mileage on the WO (set during inspection
+  // or earlier mid-visit reading). Backend also re-validates against the
+  // inspection's odometer reading and rejects with 422 if violated.
+  const floorMileage = wo._v2?.lastMileage ?? wo.lastMileage ?? null;
+  const [mileage, setMileage] = useState('');
+  const [odometerFile, setOdometerFile] = useState(null);
+  const [odometerPath, setOdometerPath] = useState(null);
+  const [workFile, setWorkFile] = useState(null);
+  const [workPath, setWorkPath] = useState(null);
+  const [uploadingOdo, setUploadingOdo] = useState(false);
+  const [uploadingWork, setUploadingWork] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [mileageError, setMileageError] = useState(null);
 
-  const canSubmit = comments.length > 4 && mileage && String(mileage).length >= 3;
+  const mileageNum = mileage ? Number(mileage) : null;
+  // Local pre-check so the inspector doesn't have to round-trip just to
+  // catch the obvious case. Backend re-checks against the (possibly
+  // higher) inspection.odometer_miles independently.
+  const mileageBelowFloor =
+    mileageNum != null
+    && floorMileage != null
+    && mileageNum < Number(floorMileage);
 
-  const handleSubmit = () => {
-    setSubmitting(true);
-    setTimeout(() => {
-      onComplete({ comments, mileage: Number(mileage), hasPhoto: !!odometerPhoto });
-      onClose();
-    }, 900);
+  const canSubmit =
+    comments.length > 4
+    && mileageNum != null
+    && String(mileage).length >= 3
+    && !mileageBelowFloor
+    && odometerPath
+    && workPath
+    && !uploadingOdo
+    && !uploadingWork;
+
+  // Lazy import the uploads helper so the modal stays cheap when not open
+  // (avoids pulling the compressor + presigned client on the WO list page).
+  const handleFilePicked = async (file, kind) => {
+    const setBusy = kind === 'odo' ? setUploadingOdo : setUploadingWork;
+    const setFile = kind === 'odo' ? setOdometerFile : setWorkFile;
+    const setPath = kind === 'odo' ? setOdometerPath : setWorkPath;
+    setFile({ name: file.name, size: file.size });
+    setBusy(true);
+    try {
+      const { uploads } = await import('../api/client');
+      const { uploadUrl, storageKey } = await uploads.presigned({
+        kind: 'work_order',
+        parentId: wo._v2?.id ?? wo.id,
+        filename: file.name || 'photo.jpg',
+        contentType: file.type || 'image/jpeg',
+      });
+      await uploads.putToPresigned(uploadUrl, file, file.type || 'image/jpeg');
+      setPath(storageKey);
+    } catch (err) {
+      console.error(`upload ${kind} failed`, err);
+      alert(`Upload failed: ${err?.detail || err?.message || 'unknown'}`);
+      setFile(null);
+      setPath(null);
+    } finally {
+      setBusy(false);
+    }
   };
+
+  const handleSubmit = async () => {
+    setMileageError(null);
+    setSubmitting(true);
+    try {
+      await onComplete({
+        comments,
+        mileage: mileageNum,
+        odometerPhotoPath: odometerPath,
+        workPhotoPath: workPath,
+      });
+      onClose();
+    } catch (err) {
+      // onComplete throws nothing today (parent swallows + alerts), but be
+      // defensive in case that changes later. Surface 422 mileage errors
+      // inline so the user can fix without closing the modal.
+      const msg = err?.detail || err?.message || '';
+      if (/mileage/i.test(msg)) setMileageError(msg);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const PhotoTile = ({ file, busy, onPick, captureLabel, hint }) => (
+    <label className="flex items-center gap-3 px-4 py-3 rounded-lg border-2 border-dashed border-navy-700/60 bg-navy-800/20 active:bg-navy-800/60 hover:bg-navy-800/40 cursor-pointer transition-colors min-h-[64px]">
+      <div className="w-10 h-10 rounded-lg bg-accent-blue/15 flex items-center justify-center shrink-0">
+        <Camera size={16} className="text-accent-blue" />
+      </div>
+      <div className="flex-1 text-xs min-w-0">
+        {file ? (
+          <>
+            <div className="text-white font-semibold truncate flex items-center gap-1.5">
+              {busy && <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-3 h-3 border-2 border-accent-blue/40 border-t-accent-blue rounded-full" />}
+              {file.name}
+            </div>
+            <div className="text-navy-400">{(file.size / 1024).toFixed(0)} KB · {busy ? t('workOrders.completeModal.uploading', 'uploading…') : t('workOrders.completeModal.uploaded', '✓ uploaded')}</div>
+          </>
+        ) : (
+          <>
+            <div className="text-white">{captureLabel}</div>
+            <div className="text-navy-400">{hint}</div>
+          </>
+        )}
+      </div>
+      <input
+        type="file" accept="image/*" capture="environment" className="hidden"
+        onChange={(e) => e.target.files?.[0] && onPick(e.target.files[0])}
+      />
+    </label>
+  );
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -359,33 +456,57 @@ function CompleteWorkModal({ wo, onComplete, onClose }) {
           </div>
           <div>
             <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('workOrders.completeModal.mileageLabel', 'Last mileage *')}</label>
-            <input type="number" inputMode="numeric" value={mileage} onChange={(e) => setMileage(e.target.value)}
-              placeholder={t('workOrders.completeModal.mileagePlaceholder', 'e.g. 48290')}
-              className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-green" />
-            <p className="text-[10px] text-navy-500 mt-1">{t('workOrders.completeModal.previousMileageFmt', { mileage: wo.lastMileage?.toLocaleString() || '—', defaultValue: `Previously: ${wo.lastMileage?.toLocaleString() || '—'} mi` })}</p>
+            <input
+              type="number" inputMode="numeric" value={mileage}
+              onChange={(e) => { setMileage(e.target.value); setMileageError(null); }}
+              min={floorMileage ?? 0}
+              placeholder={floorMileage ? `≥ ${Number(floorMileage).toLocaleString()}` : t('workOrders.completeModal.mileagePlaceholder', 'e.g. 48290')}
+              className={`w-full rounded-lg px-3 py-3 text-base bg-navy-800 border text-white placeholder-navy-500 outline-none ${
+                mileageBelowFloor || mileageError ? 'border-accent-red focus:border-accent-red' : 'border-navy-700 focus:border-accent-green'
+              }`}
+            />
+            <p className="text-[10px] text-navy-500 mt-1">
+              {floorMileage != null
+                ? t('workOrders.completeModal.floorMileageFmt', {
+                    mileage: Number(floorMileage).toLocaleString(),
+                    defaultValue: `Must be ≥ ${Number(floorMileage).toLocaleString()} mi (inspection reading).`,
+                  })
+                : t('workOrders.completeModal.previousMileageFmt', {
+                    mileage: '—',
+                    defaultValue: 'No prior reading on file — enter the current odometer.',
+                  })}
+            </p>
+            {mileageBelowFloor && (
+              <p className="text-[11px] text-accent-red mt-1">
+                {t('workOrders.completeModal.mileageBelowFloor',
+                  'Mileage cannot be lower than the previous reading.')}
+              </p>
+            )}
+            {mileageError && (
+              <p className="text-[11px] text-accent-red mt-1">{mileageError}</p>
+            )}
           </div>
           <div>
-            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('workOrders.completeModal.odometerPhotoLabel', 'Odometer photo')}</label>
-            <label className="flex items-center gap-3 px-4 py-3 rounded-lg border-2 border-dashed border-navy-700/60 bg-navy-800/20 active:bg-navy-800/60 hover:bg-navy-800/40 cursor-pointer transition-colors min-h-[64px]">
-              <div className="w-10 h-10 rounded-lg bg-accent-blue/15 flex items-center justify-center shrink-0">
-                <Camera size={16} className="text-accent-blue" />
-              </div>
-              <div className="flex-1 text-xs min-w-0">
-                {odometerPhoto ? (
-                  <>
-                    <div className="text-white font-semibold truncate">{odometerPhoto.name}</div>
-                    <div className="text-navy-400">{(odometerPhoto.size / 1024).toFixed(0)} KB</div>
-                  </>
-                ) : (
-                  <>
-                    <div className="text-white">{t('workOrders.completeModal.captureOdometer', 'Capture odometer photo')}</div>
-                    <div className="text-navy-400">{t('workOrders.completeModal.requiredForAudit', 'Required for audit')}</div>
-                  </>
-                )}
-              </div>
-              <input type="file" accept="image/*" capture="environment" className="hidden"
-                onChange={(e) => e.target.files?.[0] && setOdometerPhoto({ name: e.target.files[0].name, size: e.target.files[0].size })} />
+            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">
+              {t('workOrders.completeModal.odometerPhotoLabel', 'Odometer photo')} <span className="text-accent-red">*</span>
             </label>
+            <PhotoTile
+              file={odometerFile} busy={uploadingOdo}
+              onPick={(f) => handleFilePicked(f, 'odo')}
+              captureLabel={t('workOrders.completeModal.captureOdometer', 'Capture odometer photo')}
+              hint={t('workOrders.completeModal.requiredForAudit', 'Required for audit')}
+            />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">
+              {t('workOrders.completeModal.workPhotoLabel', 'Completed work photo')} <span className="text-accent-red">*</span>
+            </label>
+            <PhotoTile
+              file={workFile} busy={uploadingWork}
+              onPick={(f) => handleFilePicked(f, 'work')}
+              captureLabel={t('workOrders.completeModal.captureWork', 'Capture finished work')}
+              hint={t('workOrders.completeModal.workHint', 'Show the repaired part or final state')}
+            />
           </div>
         </div>
         <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-3 sm:py-4 border-t border-navy-800 bg-navy-900/80">
@@ -1003,18 +1124,27 @@ export default function WorkOrders({ user }) {
     }
   };
 
-  const handleComplete = async ({ comments, mileage }) => {
+  const handleComplete = async ({ comments, mileage, odometerPhotoPath, workPhotoPath }) => {
     const wo = modal.wo;
     setActionInFlight(true);
     try {
-      await woApi.complete(wo.id, { lastMileage: mileage ? Number(mileage) : undefined });
+      await woApi.complete(wo.id, {
+        lastMileage: Number(mileage),
+        odometerPhotoPath: odometerPhotoPath || undefined,
+        workPhotoPath: workPhotoPath || undefined,
+      });
       if (comments?.trim()) {
         try { await woApi.addNote(wo.id, { body: comments, authorRole: 'technician' }); } catch (_) {}
       }
       await applyDetail(wo.id);
     } catch (e) {
       console.error('complete failed', e);
-      alert(e.detail || e.message || 'Failed to complete WO');
+      // Surface backend 422 (e.g. mileage below inspection floor) inline
+      // by re-throwing — the modal's local handler shows it without
+      // closing so the user can correct it.
+      const inlineErr = new Error(e?.detail || e?.message || 'Failed to complete WO');
+      inlineErr.detail = e?.detail;
+      throw inlineErr;
     } finally {
       setActionInFlight(false);
       setModal(null);

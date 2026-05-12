@@ -41,18 +41,23 @@ from app.i18n_errors import E, tr_error
 from app.i18n_helpers import get_request_language
 from app.models.base import utc_now
 from app.models.user import User, UserRole
+from app.models.defect import Defect
+from app.models.inspection import Inspection
 from app.models.work_orders import (
     DefectResolution,
     LineItemBillingType,
     LineItemCategory,
     LineItemStatus,
     NoteAuthorRole,
+    RepairRequestDefect,
     StatusTrackingMode,
     VendorWorkshop,
     WoActivityLogEntityType,
     WorkOrder,
     WorkOrderLineItem,
     WorkOrderNote,
+    WorkOrderPhoto,
+    WorkOrderPhotoStage,
     WorkOrderRo,
     WorkOrderStatus,
 )
@@ -281,7 +286,13 @@ class CancelBody(BaseModel):
 
 
 class CompleteBody(BaseModel):
-    last_mileage: int | None = Field(default=None, ge=0)
+    # V2.0: last_mileage required at completion (Amazon billing audit +
+    # the spec's intent — it's the at-completion odometer reading).
+    # Backend additionally checks it's >= the inspection's odometer
+    # reading so a tech can't accidentally enter a lower number.
+    last_mileage: int = Field(..., ge=0)
+    odometer_photo_path: str | None = Field(default=None, max_length=500)
+    work_photo_path: str | None = Field(default=None, max_length=500)
     model_config = ConfigDict(extra="forbid")
 
 
@@ -366,6 +377,45 @@ async def _load_wo_or_404(
             status.HTTP_404_NOT_FOUND, tr_error(E.WORK_ORDER_NOT_FOUND, lang)
         )
     return wo
+
+
+async def _max_inspection_mileage_for_wo(
+    session: AsyncSession, wo: WorkOrder
+) -> int | None:
+    """Find the highest odometer reading from any inspection that
+    contributed a defect to this WO. Returns None if no inspection has
+    an odometer recorded (e.g. defect came from a driver_report).
+
+    The chain: WO → RepairRequest → repair_request_defects → Defect →
+    Inspection.odometer_miles. We take MAX since a WO can be bundled
+    across multiple inspections / vehicles in theory (rare but valid).
+    """
+    inspection_ids_rows = (
+        await session.execute(
+            select(Defect.inspection_id)
+            .join(
+                RepairRequestDefect,
+                RepairRequestDefect.defect_id == Defect.id,
+            )
+            .where(RepairRequestDefect.repair_request_id == wo.repair_request_id)
+            .where(Defect.inspection_id.is_not(None))
+        )
+    ).all()
+    inspection_ids = [row[0] for row in inspection_ids_rows if row[0] is not None]
+    if not inspection_ids:
+        return None
+    max_row = (
+        await session.execute(
+            select(Inspection.odometer_miles)
+            .where(Inspection.id.in_(inspection_ids))
+            .where(Inspection.odometer_miles.is_not(None))
+            .order_by(Inspection.odometer_miles.desc())
+            .limit(1)
+        )
+    ).first()
+    if max_row is None or max_row[0] is None:
+        return None
+    return int(max_row[0])
 
 
 async def _vendor_workshop_ids_for_user(session: AsyncSession, user: User) -> list[int]:
@@ -766,6 +816,31 @@ async def complete_wo(
             f"WO is {wo.status.value if hasattr(wo.status, 'value') else wo.status}; only in_progress can complete",
         )
 
+    # Mileage sanity: at-completion reading can never be LOWER than the
+    # inspection that surfaced any of the defects (van went FORWARD between
+    # the walkaround and the repair finish; going backwards is a typo or
+    # fraud signal). The check is informational when no inspection
+    # contributed (e.g. driver_report defects).
+    inspection_mileage = await _max_inspection_mileage_for_wo(session, wo)
+    if inspection_mileage is not None and body.last_mileage < inspection_mileage:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            (
+                f"completion mileage {body.last_mileage} cannot be lower than the "
+                f"inspection odometer ({inspection_mileage}). Verify the reading."
+            ),
+        )
+    # Defensive: prior mileage already on the WO (e.g. from a partial
+    # mid-visit reading) is also a floor.
+    if wo.last_mileage is not None and body.last_mileage < wo.last_mileage:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            (
+                f"completion mileage {body.last_mileage} cannot be lower than the "
+                f"previously recorded mileage ({wo.last_mileage})."
+            ),
+        )
+
     prev = wo.status.value if hasattr(wo.status, "value") else str(wo.status)
 
     # Auto-finalize any line items still in non-terminal states before
@@ -813,8 +888,7 @@ async def complete_wo(
 
     wo.status = WorkOrderStatus.COMPLETED
     wo.completed_at = utc_now()
-    if body.last_mileage is not None:
-        wo.last_mileage = body.last_mileage
+    wo.last_mileage = body.last_mileage
     session.add(wo)
     try:
         await session.flush()
@@ -824,6 +898,28 @@ async def complete_wo(
             "Cannot complete: defect_repair line item(s) lack a defect link. "
             "Ensure every defect_repair item is tied to a defect resolution.",
         ) from e
+
+    # Persist the two completion photos (odometer + work-done) when the
+    # caller provided storage paths. The frontend's complete modal
+    # requires both before enabling submit, but we keep them optional
+    # at the API layer so a future "complete without photos" exception
+    # path (e.g. admin override) doesn't have to bypass the route.
+    if body.odometer_photo_path:
+        session.add(WorkOrderPhoto(
+            work_order_id=wo.id,
+            stage=WorkOrderPhotoStage.COMPLETION,
+            storage_path=body.odometer_photo_path,
+            caption="Odometer reading at completion",
+            created_by_id=current.id,
+        ))
+    if body.work_photo_path:
+        session.add(WorkOrderPhoto(
+            work_order_id=wo.id,
+            stage=WorkOrderPhotoStage.COMPLETION,
+            storage_path=body.work_photo_path,
+            caption="Work completed evidence",
+            created_by_id=current.id,
+        ))
 
     await log_status_change(
         session,
