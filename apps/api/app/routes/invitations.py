@@ -163,6 +163,8 @@ async def _serialize(
         org_id=org_id_str,
         org_name=org_name,
         org_type=org_type_v,
+        vendor_repair_types=list(inv.vendor_repair_types or []) or None,
+        vendor_status_tracking_mode=inv.vendor_status_tracking_mode,
         status=inv.status.value if hasattr(inv.status, "value") else inv.status,
         expires_at=inv.expires_at,
         invited_by_id=inv.invited_by_id,
@@ -266,6 +268,19 @@ async def create_invitation(
         org_id=target_org.id if target_org else None,
         org_type=body.org_type,
         org_name=body.org_name,
+        # Vendor workshop bundling (validated to be vendor new-org only in
+        # InvitationCreate). Store as plain strings since the column is
+        # `text[]` / `varchar` — enum value extracted here.
+        vendor_repair_types=(
+            [rt.value if hasattr(rt, "value") else str(rt)
+             for rt in body.vendor_repair_types]
+            if body.vendor_repair_types else None
+        ),
+        vendor_status_tracking_mode=(
+            body.vendor_status_tracking_mode.value
+            if hasattr(body.vendor_status_tracking_mode, "value")
+            else body.vendor_status_tracking_mode
+        ),
         invited_by_id=current.id,
         expires_at=now + timedelta(days=settings.invitation_ttl_days),
     )
@@ -518,6 +533,7 @@ async def accept_invitation(
         )
 
     # Create the org if this is a new-org invite
+    workshop_created = None
     if inv.org_id is None:
         if not (inv.org_name and inv.org_type):
             raise HTTPException(
@@ -530,6 +546,35 @@ async def accept_invitation(
         )
         session.add(org)
         await session.flush()  # need org.id for the user FK
+
+        # Atomic vendor workshop creation — when the invitation carries
+        # repair_types, we attach a VendorWorkshop to the freshly-created
+        # vendor Org in the same transaction so the operator doesn't end
+        # up with an Org-without-workshop that's invisible to the router.
+        #
+        # Validators on InvitationCreate already enforced that these
+        # fields only land on vendor new-org invites, so we don't re-check
+        # org_type here.
+        if inv.vendor_repair_types:
+            from app.models.work_orders import (
+                StatusTrackingMode,
+                VendorWorkshop,
+            )
+            tracking_raw = inv.vendor_status_tracking_mode or "external"
+            try:
+                tracking_mode = StatusTrackingMode(tracking_raw)
+            except ValueError:
+                tracking_mode = StatusTrackingMode.EXTERNAL
+            workshop = VendorWorkshop(
+                name=org.name,
+                organization_id=org.id,
+                status_tracking_mode=tracking_mode,
+                repair_types=list(inv.vendor_repair_types),
+                is_active=True,
+            )
+            session.add(workshop)
+            await session.flush()
+            workshop_created = workshop
     else:
         org = (
             await session.execute(
@@ -583,5 +628,9 @@ async def accept_invitation(
             "id": org.id_str,
             "name": org.name,
             "org_type": org_type_v,
+            # When the invitation also seeded a vendor workshop, surface
+            # the new workshop's id so the welcome screen / accept-response
+            # can deep-link to it without an extra fetch.
+            "vendor_workshop_id": workshop_created.id if workshop_created else None,
         },
     )

@@ -727,6 +727,12 @@ function CreateInvitationModal({ user, onClose, onCreated }) {
     target: canCreateNewOrg ? 'new' : 'own',  // 'new' = new org, 'own' = inviter's own org
     orgType: 'dsp',
     orgName: '',
+    // Vendor workshop bundle (PR 10): when creating a new vendor org,
+    // the admin picks the repair_types the auto-created workshop will
+    // handle, plus the status tracking mode. Backend ignores these on
+    // non-vendor / existing-org invites; we mirror that with `isVendorNew`.
+    vendorRepairTypes: [],                              // ['mechanical', ...]
+    vendorStatusTrackingMode: 'external',               // 'external' | 'internal'
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -744,9 +750,27 @@ function CreateInvitationModal({ user, onClose, onCreated }) {
 
   const update = (k, v) => { setForm({ ...form, [k]: v }); if (error) setError(null); };
 
+  // True when we're inviting a vendor *and* creating their org (so the
+  // backend will accept vendor_repair_types). On existing-org or DSP
+  // invites the workshop fields stay hidden + are stripped at submit time.
+  const isVendorNew = form.target === 'new' && form.orgType === 'vendor';
+
+  const toggleRepairType = (rt) => {
+    setForm((f) => ({
+      ...f,
+      vendorRepairTypes: f.vendorRepairTypes.includes(rt)
+        ? f.vendorRepairTypes.filter((x) => x !== rt)
+        : [...f.vendorRepairTypes, rt],
+    }));
+    if (error) setError(null);
+  };
+
   const valid = form.email.includes('@')
     && form.role
-    && (form.target === 'own' || (form.orgName.trim().length >= 2));
+    && (form.target === 'own' || (form.orgName.trim().length >= 2))
+    // Vendor new-org invites must pick at least one repair_type — keeps
+    // the demo coherent (every workshop has a routing bucket).
+    && (!isVendorNew || form.vendorRepairTypes.length > 0);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -764,6 +788,12 @@ function CreateInvitationModal({ user, onClose, onCreated }) {
     } else {
       payload.orgType = form.orgType;
       payload.orgName = form.orgName.trim();
+      // Bundle the vendor workshop fields ONLY for vendor new-org invites.
+      // (Backend rejects them otherwise via validator.)
+      if (form.orgType === 'vendor') {
+        payload.vendorRepairTypes = form.vendorRepairTypes;
+        payload.vendorStatusTrackingMode = form.vendorStatusTrackingMode;
+      }
     }
 
     try {
@@ -870,6 +900,68 @@ function CreateInvitationModal({ user, onClose, onCreated }) {
                   placeholder={form.orgType === 'dsp' ? t('createInvitationModal.orgNamePlaceholderDsp', 'Sunshine Logistics LLC') : t('createInvitationModal.orgNamePlaceholderVendor', 'Carlos Auto Repair')}
                   className="w-full px-3 py-2.5 rounded-md bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue text-sm" required />
               </Field>
+
+              {/* Vendor workshop bundle — only when org_type=vendor. The
+                  backend auto-creates a VendorWorkshop with these settings
+                  on accept, so the new vendor is immediately routable. */}
+              {isVendorNew && (
+                <>
+                  <Field label={t('createInvitationModal.repairTypesLabel', 'Repair types *')}>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {[
+                        { v: 'mechanical', l: t('createInvitationModal.repairType.mechanical', 'Mechanical') },
+                        { v: 'body',       l: t('createInvitationModal.repairType.body', 'Body') },
+                        { v: 'tires',      l: t('createInvitationModal.repairType.tires', 'Tires') },
+                        { v: 'pm',         l: t('createInvitationModal.repairType.pm', 'PM') },
+                        { v: 'cnmr',       l: t('createInvitationModal.repairType.cnmr', 'CNMR') },
+                        { v: 'detailing',  l: t('createInvitationModal.repairType.detailing', 'Detailing') },
+                        { v: 'netradyne',  l: t('createInvitationModal.repairType.netradyne', 'Netradyne') },
+                      ].map((opt) => {
+                        const checked = form.vendorRepairTypes.includes(opt.v);
+                        return (
+                          <label key={opt.v} className={`flex items-center gap-2 px-2.5 py-2 rounded-md border text-xs cursor-pointer ${
+                            checked ? 'border-accent-blue bg-accent-blue/10 text-accent-blue' : 'border-navy-700 bg-navy-800 text-navy-300'
+                          }`}>
+                            <input type="checkbox" checked={checked}
+                              onChange={() => toggleRepairType(opt.v)}
+                              className="accent-accent-blue cursor-pointer" />
+                            {opt.l}
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <p className="text-[11px] text-navy-400 mt-1.5 leading-snug">
+                      {t('createInvitationModal.repairTypesHint',
+                        'Pick all the work this shop handles. The router uses this to place defects automatically.')}
+                    </p>
+                  </Field>
+
+                  <Field label={t('createInvitationModal.statusTrackingLabel', 'Status tracking mode')}>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      {[
+                        { v: 'external', l: t('createInvitationModal.tracking.external', 'External') },
+                        { v: 'internal', l: t('createInvitationModal.tracking.internal', 'Internal') },
+                      ].map((opt) => (
+                        <label key={opt.v} className={`flex items-center justify-center px-3 py-2.5 rounded-md border cursor-pointer ${
+                          form.vendorStatusTrackingMode === opt.v ? 'border-accent-blue bg-accent-blue/10 text-accent-blue' : 'border-navy-700 bg-navy-800 text-navy-300'
+                        }`}>
+                          <input type="radio" name="vendorStatusTrackingMode" value={opt.v}
+                            checked={form.vendorStatusTrackingMode === opt.v}
+                            onChange={(e) => update('vendorStatusTrackingMode', e.target.value)} className="hidden" />
+                          {opt.l}
+                        </label>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-navy-400 mt-1.5 leading-snug">
+                      {form.vendorStatusTrackingMode === 'external'
+                        ? t('createInvitationModal.trackingHintExternal',
+                            'External: shop syncs status from its own RO Writer (Midas, etc.). Requires an RO# at WO acceptance.')
+                        : t('createInvitationModal.trackingHintInternal',
+                            'Internal: shop manages the WO inside Nova Fora.')}
+                    </p>
+                  </Field>
+                </>
+              )}
             </>
           )}
 

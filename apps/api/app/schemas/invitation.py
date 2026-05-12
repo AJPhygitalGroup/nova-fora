@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, mo
 from app.models.invitation import InvitationStatus
 from app.models.organization import OrgType
 from app.models.user import UserRole
+from app.models.work_orders.enums import RepairType, StatusTrackingMode
 
 
 # ─────────────────────────────────────────────────────────
@@ -35,6 +36,12 @@ class InvitationCreate(BaseModel):
     org_id: Optional[int] = None
     org_type: Optional[OrgType] = None
     org_name: Optional[str] = Field(default=None, max_length=200)
+
+    # ── Vendor workshop bundling (only valid on new-org VENDOR invites) ──
+    # When set, the accept flow creates a VendorWorkshop atomically with
+    # the Org. Skipping these keeps the legacy "create org only" behavior.
+    vendor_repair_types: Optional[list[RepairType]] = None
+    vendor_status_tracking_mode: Optional[StatusTrackingMode] = None
 
     @model_validator(mode="after")
     def _exactly_one_org_path(self) -> "InvitationCreate":
@@ -62,6 +69,26 @@ class InvitationCreate(BaseModel):
                 raise ValueError(
                     f"role '{self.role.value}' is not valid for a Vendor organization"
                 )
+
+        # Vendor workshop fields: only meaningful on new-org vendor invites.
+        # Reject misuse early so the UI can't accidentally orphan a workshop.
+        workshop_set = (
+            self.vendor_repair_types is not None
+            or self.vendor_status_tracking_mode is not None
+        )
+        if workshop_set and not (has_new and self.org_type == OrgType.VENDOR):
+            raise ValueError(
+                "vendor_repair_types / vendor_status_tracking_mode are only "
+                "valid on new-org vendor invites (org_type='vendor' + org_name)"
+            )
+        if (
+            self.vendor_repair_types is not None
+            and len(self.vendor_repair_types) == 0
+        ):
+            raise ValueError(
+                "vendor_repair_types must contain at least one repair_type "
+                "(or omit the field entirely)"
+            )
         return self
 
     model_config = ConfigDict(extra="forbid")
@@ -84,6 +111,8 @@ class InvitationResponse(BaseModel):
     org_id: Optional[str] = None     # DSP-XXXX / V-XXX when set
     org_name: Optional[str] = None
     org_type: Optional[str] = None   # dsp | vendor
+    vendor_repair_types: Optional[list[str]] = None
+    vendor_status_tracking_mode: Optional[str] = None
     status: str
     expires_at: datetime
     invited_by_id: int

@@ -23,6 +23,7 @@ from secrets import token_urlsafe
 
 import sqlalchemy as sa
 from sqlalchemy import Column, ForeignKey, UniqueConstraint
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlmodel import Field, SQLModel
 
 from app.models.base import timestamp_column, utc_now
@@ -99,6 +100,27 @@ class Invitation(SQLModel, table=True):
         ),
     )
     org_name: str | None = Field(default=None, max_length=200)
+
+    # ── Vendor workshop attachment (new-org vendor invites only) ──
+    # When the invitee accepts and we create the vendor Organization, we
+    # also auto-create a VendorWorkshop seeded with these fields. NULL on
+    # all other invite shapes (DSP, existing-org joins, etc.).
+    vendor_repair_types: list[str] | None = Field(
+        default=None,
+        sa_column=Column(
+            "vendor_repair_types",
+            ARRAY(sa.String(length=20)),
+            nullable=True,
+        ),
+    )
+    vendor_status_tracking_mode: str | None = Field(
+        default=None,
+        sa_column=Column(
+            "vendor_status_tracking_mode",
+            sa.String(length=20),
+            nullable=True,
+        ),
+    )
 
     # ── Lifecycle ──
     token: str = Field(default_factory=_new_token, max_length=64, nullable=False, index=True)
