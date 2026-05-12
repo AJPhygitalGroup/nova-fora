@@ -76,6 +76,7 @@
     "shellTitle": "Inspección QC DVIC",
     "shellSubtitleFmt": "Paso {{step}} de 6",
     "closeTitle": "Cerrar",
+    "closeConfirm": "¿Cerrar el wizard de inspección? Se descartará cualquier inspección en progreso.",
     "startInspection": "Iniciar",
     "footerCaption": {
       "step1": "Elige el DSP",

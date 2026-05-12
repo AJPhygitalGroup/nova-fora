@@ -12,7 +12,7 @@
  *        + PhotoUploader inline      uploads to /defects/{FD-id}/photos
  *   4. POST /inspections/{id}/submit                  -> SUBMITTED
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import {
@@ -312,7 +312,15 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
   // created row enriched with catalog labels. We just append to our list —
   // DvicWizard auto-resets back to its section picker so the tech can add
   // the next defect without leaving the screen.
-  const handleDefectCommitted = (created) => {
+  //
+  // STABLE-CALLBACK FIX (2026-05-12): wrap in useCallback so that DvicWizard
+  // (and downstream PhotoGateStep / PhotoUploader) receive a stable function
+  // identity across re-renders. Without this, every render of the parent
+  // produced a new function reference, which historically caused
+  // PhotoUploader's effects to refire and (in some flows) bounced the
+  // inspector all the way back to the DSP picker after a photo upload
+  // (project_inspection_bugs.md, 2026-05-05).
+  const handleDefectCommitted = useCallback((created) => {
     setDefects((prev) => [
       ...prev,
       {
@@ -327,9 +335,9 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
         description: created.description,
       },
     ]);
-  };
+  }, []);
 
-  const handleRemoveDefect = async (defect) => {
+  const handleRemoveDefect = useCallback(async (defect) => {
     if (!confirm(`Remove "${defect.partLabel || defect.part || 'defect'}"?`)) return;
     try {
       await defectsApi.delete(defect.id);
@@ -337,7 +345,34 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
     } catch (err) {
       alert(`Remove failed: ${err?.detail || err?.message || 'unknown'}`);
     }
-  };
+  }, []);
+
+  // Stable handler for the step-5 odometer PhotoUploader. Same rationale as
+  // handleDefectCommitted: keep the function identity stable so PhotoUploader
+  // doesn't see a new `onChanged` ref on every parent render.
+  const handleOdometerPhotoChanged = useCallback((action) => {
+    if (action === 'added') setOdometerPhotoCount((c) => c + 1);
+    else if (action === 'deleted') setOdometerPhotoCount((c) => Math.max(0, c - 1));
+  }, []);
+
+  // Guard the close-X button against an accidental tap that would discard an
+  // in-progress inspection (the historical complaint pattern: "I uploaded my
+  // photo and the wizard reset to the DSP picker"). If the user has anything
+  // they'd lose — a chosen vehicle, a drafted inspection, or any logged
+  // defects — confirm before propagating onClose.
+  const hasUnsavedProgress = !!(
+    vehicle || inspectionId || (defects && defects.length > 0)
+  );
+  const guardedClose = useCallback(() => {
+    if (hasUnsavedProgress) {
+      const ok = window.confirm(t(
+        'createInspection.closeConfirm',
+        'Close the inspection wizard? Any in-progress inspection will be discarded.',
+      ));
+      if (!ok) return;
+    }
+    onClose?.();
+  }, [hasUnsavedProgress, onClose, t]);
 
   // ─── Submit ─────────────────────────────────────────
   const handleSubmit = async () => {
@@ -521,7 +556,7 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
         onComplete={handleSubmit}
         submitting={submitting}
         submitError={submitError}
-        onClose={onClose}
+        onClose={guardedClose}
         onBack={() => setStep(5)}
       />
     );
@@ -531,7 +566,7 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
     <FullScreenShell
       title={t('createInspection.shellTitle')}
       subtitle={t('createInspection.shellSubtitleFmt', { step })}
-      onClose={onClose}
+      onClose={guardedClose}
     >
       {/* Body */}
       <div className="max-w-2xl mx-auto px-4 py-6 pb-32">
@@ -595,10 +630,7 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
             createError={createError}
             onEnsureDraft={ensureDraft}
             odometerPhotoCount={odometerPhotoCount}
-            onOdometerPhotoChanged={(action) => {
-              if (action === 'added') setOdometerPhotoCount((c) => c + 1);
-              else if (action === 'deleted') setOdometerPhotoCount((c) => Math.max(0, c - 1));
-            }}
+            onOdometerPhotoChanged={handleOdometerPhotoChanged}
           />
         )}
 

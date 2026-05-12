@@ -20,7 +20,7 @@
  * wizard receives one flat tree per vehicle_class with all the labels,
  * thresholds, and JSON Schemas it needs to render.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation, Trans } from 'react-i18next';
 import {
@@ -88,6 +88,19 @@ export default function DvicWizard({
   // Photo-gate state
   const [committedDefect, setCommittedDefect] = useState(null);
   const [photoCount, setPhotoCount] = useState(0);
+
+  // Stable handler for PhotoGateStep → PhotoUploader.
+  //
+  // STABLE-CALLBACK FIX (2026-05-12): a previous inline lambda re-created the
+  // callback every render, which (in combination with the array-default-prop
+  // pattern inside PhotoUploader) historically caused photo upload to bounce
+  // the inspector back to the DSP picker. PhotoUploader's effect on
+  // `initialPhotosKey` already neutralizes the prop-identity churn, but
+  // keeping the callback stable is the cheap insurance.
+  const handlePhotoChanged = useCallback((action) => {
+    if (action === 'added') setPhotoCount((c) => c + 1);
+    else if (action === 'deleted') setPhotoCount((c) => Math.max(0, c - 1));
+  }, []);
 
   // Load template — ownership filters branded-only items (DOT/Prime decal)
   useEffect(() => {
@@ -402,10 +415,7 @@ export default function DvicWizard({
               <PhotoGateStep
                 defect={committedDefect}
                 photoCount={photoCount}
-                onPhotoChanged={(action) => {
-                  if (action === 'added') setPhotoCount((c) => c + 1);
-                  else if (action === 'deleted') setPhotoCount((c) => Math.max(0, c - 1));
-                }}
+                onPhotoChanged={handlePhotoChanged}
               />
             </Pane>
           )}
