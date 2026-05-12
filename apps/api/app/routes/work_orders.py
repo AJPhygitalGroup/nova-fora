@@ -767,6 +767,50 @@ async def complete_wo(
         )
 
     prev = wo.status.value if hasattr(wo.status, "value") else str(wo.status)
+
+    # Auto-finalize any line items still in non-terminal states before
+    # flipping the WO to completed. Bug discovered during E2E test:
+    # without this step, line_items stayed in `pending` and the DR sync
+    # left every DR at `pending` too — so a completed WO would show
+    # "unresolved" defects.
+    #
+    # Rule: if the tech says the WO is done, every line item is `done`
+    # *unless* it was explicitly deferred or declined earlier. We only
+    # touch non-terminal items; explicit deferrals/declines stick.
+    pending_lis = list(
+        (
+            await session.execute(
+                select(WorkOrderLineItem).where(
+                    WorkOrderLineItem.work_order_id == wo.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    finalized_count = 0
+    for li in pending_lis:
+        li_status = li.status.value if hasattr(li.status, "value") else str(li.status)
+        if li_status in (
+            LineItemStatus.PENDING.value,
+            LineItemStatus.PENDING_SCOPE_APPROVAL.value,
+            LineItemStatus.PENDING_COST_APPROVAL.value,
+            LineItemStatus.PENDING_VARIANCE_REAPPROVAL.value,
+        ):
+            li.status = LineItemStatus.DONE
+            session.add(li)
+            finalized_count += 1
+            await log_status_change(
+                session,
+                entity_type=WoActivityLogEntityType.LINE_ITEM,
+                entity_id=li.id,
+                from_status=li_status,
+                to_status=LineItemStatus.DONE.value,
+                actor_id=current.id,
+            )
+    if finalized_count:
+        await session.flush()
+
     wo.status = WorkOrderStatus.COMPLETED
     wo.completed_at = utc_now()
     if body.last_mileage is not None:
