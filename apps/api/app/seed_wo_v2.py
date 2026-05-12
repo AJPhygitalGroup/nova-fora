@@ -31,7 +31,7 @@ from sqlmodel import select
 from app.db import AsyncSessionLocal
 from app.models.defect import Defect
 from app.models.organization import OrgType, Organization
-from app.models.user import User, UserRole
+from app.models.user import User, UserRole, UserStatus
 from app.models.vehicle import Vehicle
 from app.models.base import utc_now
 from app.models.work_orders import (
@@ -59,60 +59,70 @@ from app.services.wo_router import route_repair_request
 # Workshop catalog
 # ─────────────────────────────────────────────────────────
 WORKSHOP_SEED = [
+    # One workshop per repair_type so the router can place every kind of
+    # defect somewhere visible. `org_name` is the human Organization.name
+    # the workshop is owned by (created by cmd_seed_demo_vendors); the
+    # workshop seed resolves it to organization_id at insert time.
     {
         "name": "Dulles Midas",
-        "org_key": "dulles_midas",  # ties to the existing demo vendor org
+        "org_name": "Dulles Midas",   # existing demo vendor (cmd_seed)
         "status_tracking_mode": StatusTrackingMode.EXTERNAL,
-        "repair_types": [RepairType.MECHANICAL, RepairType.PM],
+        # Mechanical shop also handles CNMR (Commercial Non-Motor Repair —
+        # stickers, registration, brake-tag, etc.) since it's the only
+        # vendor without a more specific bucket.
+        "repair_types": [RepairType.MECHANICAL, RepairType.PM, RepairType.CNMR],
     },
     {
         "name": "Wheels & Brakes Co",
-        "org_key": None,
+        "org_name": "Wheels & Brakes Co",
         "status_tracking_mode": StatusTrackingMode.INTERNAL,
-        "repair_types": [RepairType.TIRES, RepairType.MECHANICAL],
+        "repair_types": [RepairType.TIRES],
     },
     {
         "name": "Capital Body Shop",
-        "org_key": None,
+        "org_name": "Capital Body Shop",
         "status_tracking_mode": StatusTrackingMode.EXTERNAL,
         "repair_types": [RepairType.BODY],
     },
     {
         "name": "Premium Detail",
-        "org_key": None,
+        "org_name": "Premium Detail",
         "status_tracking_mode": StatusTrackingMode.INTERNAL,
         "repair_types": [RepairType.DETAILING],
+    },
+    {
+        "name": "Netradyne Telematics",
+        "org_name": "Netradyne Telematics",
+        "status_tracking_mode": StatusTrackingMode.EXTERNAL,
+        "repair_types": [RepairType.NETRADYNE],
     },
 ]
 
 
 async def cmd_seed_vendor_workshops() -> None:
-    """UPSERT the 4 demo workshops keyed on name. Reports what changed."""
+    """UPSERT the demo workshops keyed on name. Resolves org_id by name.
+
+    Run `seed-demo-vendors` first to ensure the vendor orgs exist; this
+    seed will leave organization_id NULL on workshops whose org_name
+    hasn't been created yet (and report them as "orphan").
+    """
     async with AsyncSessionLocal() as session:
-        # Map known org keys to ids
         orgs = (await session.execute(select(Organization))).scalars().all()
-        org_by_name: dict[str, Organization] = {o.name.lower(): o for o in orgs}
+        org_id_by_name: dict[str, int] = {o.name: o.id for o in orgs}
 
-        # Helper to resolve a workshop's organization_id from the seed's
-        # org_key. We match by name (lowercased) against existing orgs.
-        org_key_to_id = {
-            "dulles_midas": next(
-                (o.id for o in orgs if o.name == "Dulles Midas"), None
-            ),
-        }
-
-        new_count, updated_count, skipped_count = 0, 0, 0
+        new_count, updated_count, skipped_count, orphan_count = 0, 0, 0, 0
         for spec in WORKSHOP_SEED:
             existing = (
                 await session.execute(
                     select(VendorWorkshop).where(VendorWorkshop.name == spec["name"])
                 )
             ).scalar_one_or_none()
+            target_org_name = spec.get("org_name")
             org_id = (
-                org_key_to_id.get(spec["org_key"])
-                if spec["org_key"] is not None
-                else None
+                org_id_by_name.get(target_org_name) if target_org_name else None
             )
+            if target_org_name and org_id is None:
+                orphan_count += 1
             target_types = [rt.value for rt in spec["repair_types"]]
             if existing is None:
                 w = VendorWorkshop(
@@ -144,11 +154,180 @@ async def cmd_seed_vendor_workshops() -> None:
                 else:
                     skipped_count += 1
         await session.commit()
-        _ = org_by_name  # used implicitly via org_key_to_id; suppress lint
         print(
             f"vendor_workshops: {new_count} new, "
-            f"{updated_count} updated, {skipped_count} unchanged."
+            f"{updated_count} updated, {skipped_count} unchanged, "
+            f"{orphan_count} with missing org (run seed-demo-vendors first)."
         )
+
+
+# ─────────────────────────────────────────────────────────
+# Demo vendor orgs + users — one per repair_type so every routing
+# bucket lands at a workshop owned by a logged-in Nova Fora vendor org.
+# Idempotent: UPSERT by org name + user email.
+# ─────────────────────────────────────────────────────────
+DEMO_VENDOR_PASSWORD = "nova2026!"
+
+DEMO_VENDOR_SEED = [
+    {
+        # Already created by cmd_seed; listed here for visibility only.
+        # The function will SKIP this entry (existence check) but will
+        # still link its workshop in cmd_seed_vendor_workshops.
+        "org_name": "Dulles Midas",
+        "admin": None,  # olger@dullesmidas.com exists from cmd_seed
+        "tech": None,   # david@dullesmidas.com exists from cmd_seed
+    },
+    {
+        "org_name": "Capital Body Shop",
+        "admin": {
+            "email": "mike@capitalbody.com",
+            "full_name": "Mike Chen",
+            "avatar": "MC",
+        },
+        "tech": {
+            "email": "tom@capitalbody.com",
+            "full_name": "Tom Hill",
+            "avatar": "TH",
+        },
+    },
+    {
+        "org_name": "Wheels & Brakes Co",
+        "admin": {
+            "email": "sarah@wheelsbrakes.com",
+            "full_name": "Sarah Johnson",
+            "avatar": "SJ",
+        },
+        "tech": {
+            "email": "anna@wheelsbrakes.com",
+            "full_name": "Anna White",
+            "avatar": "AW",
+        },
+    },
+    {
+        "org_name": "Premium Detail",
+        "admin": {
+            "email": "lisa@premiumdetail.com",
+            "full_name": "Lisa Rodriguez",
+            "avatar": "LR",
+        },
+        "tech": {
+            "email": "james@premiumdetail.com",
+            "full_name": "James Lee",
+            "avatar": "JL",
+        },
+    },
+    {
+        "org_name": "Netradyne Telematics",
+        "admin": {
+            "email": "raymond@netradyne.com",
+            "full_name": "Raymond Parker",
+            "avatar": "RP",
+        },
+        "tech": {
+            "email": "sofia@netradyne.com",
+            "full_name": "Sofia Patel",
+            "avatar": "SP",
+        },
+    },
+]
+
+
+async def cmd_seed_demo_vendors() -> None:
+    """UPSERT vendor orgs + admin/tech users for the WO V2.0 demo flow.
+
+    For each entry in DEMO_VENDOR_SEED:
+      1. Ensure an Organization (org_type=vendor) exists with that name.
+      2. UPSERT a vendor_admin User.
+      3. UPSERT a technician User.
+    Same demo password as the rest of the seed (DEMO_VENDOR_PASSWORD).
+
+    Run `seed-vendor-workshops` after this so the workshops can resolve
+    organization_id by name.
+    """
+    # Imports kept local so a fresh demo install doesn't pay the cost
+    # of importing the auth+hashing chain on every CLI invocation.
+    from app.auth.hashing import hash_password
+    from app.models.organization import OrgType
+
+    async with AsyncSessionLocal() as session:
+        new_orgs, new_users, updated_users, skipped = 0, 0, 0, 0
+
+        for spec in DEMO_VENDOR_SEED:
+            org_name = spec["org_name"]
+
+            # 1. UPSERT Organization
+            org = (
+                await session.execute(
+                    select(Organization).where(Organization.name == org_name)
+                )
+            ).scalar_one_or_none()
+            if org is None:
+                org = Organization(
+                    name=org_name,
+                    org_type=OrgType.VENDOR,
+                    is_active=True,
+                )
+                session.add(org)
+                await session.flush()
+                new_orgs += 1
+            elif org.org_type != OrgType.VENDOR:
+                # Shouldn't happen for our seed names; defensive.
+                print(
+                    f"  WARN: org '{org_name}' exists but is not VENDOR — skipping users."
+                )
+                continue
+
+            # 2-3. UPSERT admin + tech users
+            for role_key, role in (("admin", UserRole.VENDOR_ADMIN),
+                                    ("tech",  UserRole.TECHNICIAN)):
+                u_spec = spec.get(role_key)
+                if u_spec is None:
+                    skipped += 1
+                    continue
+                existing = (
+                    await session.execute(
+                        select(User).where(User.email == u_spec["email"])
+                    )
+                ).scalar_one_or_none()
+                if existing is None:
+                    session.add(
+                        User(
+                            email=u_spec["email"],
+                            full_name=u_spec["full_name"],
+                            password_hash=hash_password(DEMO_VENDOR_PASSWORD),
+                            organization_id=org.id,
+                            role=role,
+                            avatar=u_spec["avatar"],
+                            status=UserStatus.ACTIVE,
+                            language="en",
+                        )
+                    )
+                    new_users += 1
+                else:
+                    # Re-link if the user already exists but isn't tied
+                    # to the right org/role (e.g., re-run after wipe).
+                    changed = False
+                    if existing.organization_id != org.id:
+                        existing.organization_id = org.id
+                        changed = True
+                    if existing.role != role:
+                        existing.role = role
+                        changed = True
+                    if existing.status != UserStatus.ACTIVE:
+                        existing.status = UserStatus.ACTIVE
+                        changed = True
+                    if changed:
+                        session.add(existing)
+                        updated_users += 1
+                    else:
+                        skipped += 1
+
+        await session.commit()
+        print(
+            f"demo_vendors: {new_orgs} new orgs, {new_users} new users, "
+            f"{updated_users} users re-linked, {skipped} unchanged."
+        )
+        print(f"  Demo password for new vendors: {DEMO_VENDOR_PASSWORD}")
 
 
 # ─────────────────────────────────────────────────────────

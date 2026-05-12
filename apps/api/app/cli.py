@@ -10,7 +10,11 @@ Available commands:
                               PDFs. Idempotent UPSERT.
   seed-inspection-rules      Seed inspection_rule + inspection_rule_line.
 
-  seed-vendor-workshops      WO V2.0 — UPSERT 4 demo workshops.
+  seed-demo-vendors          WO V2.0 — UPSERT 4 vendor orgs + 8 users (one
+                              admin + one tech per shop). Run before
+                              seed-vendor-workshops so workshops link.
+  seed-vendor-workshops      WO V2.0 — UPSERT 5 demo workshops (one per
+                              repair_type).
   seed-dsp-settings          WO V2.0 — UPSERT DSP settings (AMR/PM preauth).
   seed-wo-demo               WO V2.0 — approve N defects, bundle, route, accept
                               one. Bootstraps the WO surface with live data.
@@ -663,6 +667,9 @@ def main() -> None:
     elif cmd == "seed-inspection-rules":
         from app.seed_inspection_rules import cmd_seed_inspection_rules
         asyncio.run(cmd_seed_inspection_rules())
+    elif cmd == "seed-demo-vendors":
+        from app.seed_wo_v2 import cmd_seed_demo_vendors
+        asyncio.run(cmd_seed_demo_vendors())
     elif cmd == "seed-vendor-workshops":
         from app.seed_wo_v2 import cmd_seed_vendor_workshops
         asyncio.run(cmd_seed_vendor_workshops())
