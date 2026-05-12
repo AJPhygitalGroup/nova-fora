@@ -74,6 +74,14 @@ function AssignTechnicianModal({ wo, onAssign, onClose }) {
   const [techs, setTechs] = useState([]);
   const [techsLoading, setTechsLoading] = useState(true);
 
+  // External-mode workshops require at least one RO# before the WO can be
+  // accepted (DB trigger enforces). Surface the input here so the operator
+  // doesn't hit a silent 409. Internal-mode skips this entirely.
+  const externalMode = wo._v2?.statusTrackingMode === 'external' || wo.statusTrackingMode === 'external';
+  const hasExistingRo = (wo._v2?.ros?.length || wo.ros?.length || 0) > 0;
+  const roRequired = externalMode && !hasExistingRo;
+  const [roNumber, setRoNumber] = useState('');
+
   // Fetch real technicians of the WO's vendor
   useEffect(() => {
     let alive = true;
@@ -104,9 +112,10 @@ function AssignTechnicianModal({ wo, onAssign, onClose }) {
 
   const handleAssign = async () => {
     if (!tech) return;
+    if (roRequired && !roNumber.trim()) return;
     setSubmitting(true);
     try {
-      await onAssign({ technician: tech, notes });
+      await onAssign({ technician: tech, notes, roNumber: roNumber.trim() || null });
       onClose();
     } catch (e) {
       console.error('assign failed', e);
@@ -184,6 +193,28 @@ function AssignTechnicianModal({ wo, onAssign, onClose }) {
             </div>
           </div>
 
+          {externalMode && (
+            <div>
+              <label className="text-xs font-semibold text-navy-300 mb-1.5 block">
+                {t('workOrders.assignModal.roNumberLabel', 'RO Number')} {roRequired && <span className="text-accent-red">*</span>}
+              </label>
+              <input
+                type="text"
+                value={roNumber}
+                onChange={(e) => setRoNumber(e.target.value)}
+                placeholder={t('workOrders.assignModal.roNumberPlaceholder', 'e.g. RO-2026-8142')}
+                className="w-full rounded-lg px-3 py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue"
+              />
+              <p className="text-[10px] text-navy-500 mt-1">
+                {hasExistingRo
+                  ? t('workOrders.assignModal.roNumberHintExisting',
+                      'External-mode WO. An RO is already attached; add another only if your POS split this visit.')
+                  : t('workOrders.assignModal.roNumberHintRequired',
+                      'External-mode workshop — RO# from your POS (Midas/Auto Integrate/etc.) is required to accept.')}
+              </p>
+            </div>
+          )}
+
           <div>
             <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('workOrders.assignModal.dispatcherNotes', 'Dispatcher notes (optional)')}</label>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
@@ -193,7 +224,7 @@ function AssignTechnicianModal({ wo, onAssign, onClose }) {
         </div>
         <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-3 sm:py-4 border-t border-navy-800 bg-navy-900/80">
           <button onClick={onClose} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">{t('workOrders.assignModal.cancel', 'Cancel')}</button>
-          <button onClick={handleAssign} disabled={!tech || submitting}
+          <button onClick={handleAssign} disabled={!tech || submitting || (roRequired && !roNumber.trim())}
             className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-gradient-to-r from-accent-blue to-accent-purple text-white hover:opacity-90 disabled:opacity-40 cursor-pointer">
             {submitting ? (<><motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full" /> {t('workOrders.assignModal.assigning', 'Assigning…')}</>) : (<><Check size={14} /> {t('workOrders.assignModal.acceptAndAssign', 'Accept & Assign')}</>)}
           </button>
@@ -557,14 +588,20 @@ function LogJobModal({ onClose, onSubmit }) {
 // ============================================================
 // Work Order Card
 // ============================================================
-function WorkOrderCard({ wo, expanded, onToggle, userRole, onAction }) {
+function WorkOrderCard({ wo, expanded, onToggle, userRole, currentUserId, onAction }) {
   const { t } = useTranslation('dashboard');
   const statusConf = STATUS_CONFIG[wo.status];
   const StatusIcon = statusConf.icon;
 
   const isDispatcher = userRole === 'vendor_admin' || userRole === 'site_admin';
   const isTechnician = userRole === 'technician';
-  const isMyWO = wo.assignedTechnician === 'David Torres' && isTechnician;
+  // V2.0: match by numeric tech id (the old hardcoded "David Torres"
+  // string was a V1 demo-data leftover that never matched real users).
+  const woTechId = wo._v2?.assignedTechnicianId ?? wo.assignedTechnicianId;
+  const isMyWO = isTechnician
+    && currentUserId != null
+    && woTechId != null
+    && Number(woTechId) === Number(currentUserId);
 
   return (
     <motion.div layout initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
@@ -825,7 +862,14 @@ export default function WorkOrders({ user }) {
   // Actually for technicians, only show WOs assigned to them
   const myWOs = useMemo(() => {
     if (isTechnician) {
-      return workOrders.filter((wo) => wo.assignedTechnician === user.name);
+      // V2.0: compare numeric tech id (preserved in the adapted shape) —
+      // the user-name lookup we used in V1 only worked because the adapter
+      // resolved IDs from a users cache, which the tech role doesn't have.
+      const techId = user?.id != null ? Number(user.id) : null;
+      return workOrders.filter((wo) => {
+        const woTechId = wo._v2?.assignedTechnicianId ?? wo.assignedTechnicianId;
+        return techId != null && Number(woTechId) === techId;
+      });
     }
     return workOrders;
   }, [workOrders, isTechnician, user]);
@@ -896,10 +940,21 @@ export default function WorkOrders({ user }) {
    *   then accepted → in_progress (POST /start)
    * Each step has its own RBAC + state machine enforced server-side.
    */
-  const handleAssign = async ({ technician, notes }) => {
+  const handleAssign = async ({ technician, notes, roNumber }) => {
     const wo = modal.wo;
     setActionInFlight(true);
     try {
+      // Step 0 (V2.0 external-mode only): attach the RO# from the modal
+      // BEFORE accept — the DB trigger refuses to flip status to accepted
+      // on an external-mode workshop with no RO. Internal-mode skips this.
+      if (roNumber) {
+        try {
+          await woApi.addRo(wo.id, { roNumber, isPrimary: true });
+        } catch (e) {
+          // Non-fatal: maybe the RO already exists. Surface but keep going.
+          console.warn('addRo failed (continuing to accept):', e?.detail || e?.message);
+        }
+      }
       // Step 1: vendor accepts (generates line items + DRs)
       if (wo.status === 'pending') {
         await woApi.accept(wo.id);
@@ -1168,6 +1223,7 @@ export default function WorkOrders({ user }) {
                 }
               }}
               userRole={user?.role}
+              currentUserId={user?.id}
               onAction={handleAction}
             />
           ))}

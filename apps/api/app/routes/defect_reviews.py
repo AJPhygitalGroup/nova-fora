@@ -42,6 +42,28 @@ from app.services.wo_defect_reviews import manual_review
 router = APIRouter(prefix="/defect-reviews", tags=["defect-reviews"])
 
 
+def _parse_defect_id(raw: str | int) -> int:
+    """Accept either 'FD-008' or '8' or 8. Returns int.
+
+    The frontend's V1-shaped defect rows carry `id = "FD-XXX"`; we keep
+    the prefix in responses (id_str convention) but the V2.0 review
+    routes used to insist on pure int path params. This helper lets the
+    UI hit /defect-reviews/defect/FD-008/approve directly.
+    """
+    if isinstance(raw, int):
+        return raw
+    s = str(raw).strip().upper()
+    if s.startswith("FD-"):
+        s = s[3:]
+    try:
+        return int(s)
+    except ValueError as e:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"invalid defect id: {raw!r}. Use int or 'FD-XXX'.",
+        ) from e
+
+
 # ─────────────────────────────────────────────────────
 # Schemas
 # ─────────────────────────────────────────────────────
@@ -193,14 +215,15 @@ async def review_queue(
 )
 async def list_reviews_for_defect(
     request: Request,
-    defect_id: int = Path(..., ge=1),
+    defect_id: str = Path(..., examples=["FD-008", "8"]),
     current: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> DefectReviewListResponse:
     lang = get_request_language(request)
+    did = _parse_defect_id(defect_id)
     # Scope check
     defect = (
-        await session.execute(select(Defect).where(Defect.id == defect_id))
+        await session.execute(select(Defect).where(Defect.id == did))
     ).scalar_one_or_none()
     if defect is None:
         raise HTTPException(
@@ -244,14 +267,15 @@ async def list_reviews_for_defect(
 )
 async def approve_defect(
     request: Request,
-    defect_id: int = Path(..., ge=1),
+    defect_id: str = Path(..., examples=["FD-008", "8"]),
     body: ReviewBody = ReviewBody(),
     current: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> DefectReviewResponse:
     lang = get_request_language(request)
+    did = _parse_defect_id(defect_id)
     defect = (
-        await session.execute(select(Defect).where(Defect.id == defect_id))
+        await session.execute(select(Defect).where(Defect.id == did))
     ).scalar_one_or_none()
     if defect is None:
         raise HTTPException(
@@ -289,14 +313,15 @@ async def approve_defect(
 )
 async def reject_defect(
     request: Request,
-    defect_id: int = Path(..., ge=1),
+    defect_id: str = Path(..., examples=["FD-008", "8"]),
     body: ReviewBody = ReviewBody(),
     current: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> DefectReviewResponse:
     lang = get_request_language(request)
+    did = _parse_defect_id(defect_id)
     defect = (
-        await session.execute(select(Defect).where(Defect.id == defect_id))
+        await session.execute(select(Defect).where(Defect.id == did))
     ).scalar_one_or_none()
     if defect is None:
         raise HTTPException(
