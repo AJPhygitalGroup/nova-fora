@@ -8,7 +8,13 @@ import {
   Truck, Building2, MessageSquare, CircleDashed, Briefcase, PackageCheck, Loader2
 } from 'lucide-react';
 import { WO_DECLINE_REASONS } from '../data/mockData';
-import { workOrders as woApi, directory as dirApi } from '../api/client';
+import {
+  workOrders as woApi,
+  directory as dirApi,
+  vehicles as vehiclesApi,
+  vendorWorkshops as workshopsApi,
+} from '../api/client';
+import { adaptWO } from '../api/woAdapter';
 import Badge from './ui/Badge';
 
 // ============================================================
@@ -37,111 +43,23 @@ const FLAG_CONFIG = {
 // We surface the *first item* fields up to the WO level for the existing UI to
 // render unchanged, plus pass through the items array for richer views.
 // ============================================================
-function mapApiToUi(api) {
-  const firstItem = api.items?.[0];
-  // Notes: backend stores as a single text field with timestamped lines joined
-  // by "\n\n". UI expects an array of strings.
-  const notesArr = api.notes
-    ? api.notes.split(/\n\n+/).map((s) => s.trim()).filter(Boolean)
-    : [];
-  return {
-    // Pass-through
-    id: api.id,
-    dspId: api.dspId,
-    dspName: api.dsp,
-    vendorId: api.vendorId,
-    vendorName: api.vendor,
-    vehicleId: api.vehicleId,
-    fleetId: api.fleetId,
-    plate: api.plate,
-    year: api.year,
-    make: api.make,
-    model: api.model,
-    vin: api.vin,
-    lastMileage: api.lastMileage,
-    status: api.status,
-    flags: api.flags || [],
-    scheduledAt: api.scheduledAt,
-    startedAt: api.startedAt,
-    completedAt: api.completedAt,
-    roNumber: api.roNumber,
-    fmc: api.fmc,
-    partsCost: api.partsCost,
-    laborCost: api.laborCost,
-    totalCost: api.totalCost,
-    declinedReason: api.declineReason,
-    canceledReason: api.cancelReason,
-    photoCount: api.photoCount,
-    itemCount: api.itemCount,
-    items: api.items || [],
-    createdAt: api.createdAt,
-    updatedAt: api.updatedAt,
-    createdBy: api.createdBy,
-    assignedTechnician: api.assignedTechnician,
-    assignedTechnicianId: api.assignedTechnicianId,
-    // Surfaced from first item (legacy UI compat)
-    section: firstItem?.defectSection || null,
-    part: firstItem
-      ? (firstItem.defectPartLabel
-          ? `${firstItem.defectPartIcon || ''} ${firstItem.defectPartLabel}${firstItem.defectPositionLabel ? ` (${firstItem.defectPositionLabel})` : ''}`.trim()
-          : firstItem.defectPart)
-      : null,
-    description: firstItem
-      ? (firstItem.defectTypeLabel
-          ? `${firstItem.defectTypeIcon || ''} ${firstItem.defectTypeLabel}`.trim() +
-            (firstItem.repairNotes ? ` — ${firstItem.repairNotes}` : '')
-          : firstItem.defectDescription)
-      : null,
-    reportedBy: api.createdBy,
-    notes: notesArr,
-  };
+// ─────────────────────────────────────────────────────
+// V2.0 → UI adapter wrappers.
+//
+// The heavy lifting lives in src/api/woAdapter.js — see there for the
+// V2.0 → V1-shape mapping rationale. These wrappers are the tiny layer
+// that injects this component's cached vehicle / workshop / users lookups.
+// ─────────────────────────────────────────────────────
+function buildCtx(vehiclesById, workshopsById, usersById) {
+  return { vehiclesById, workshopsById, usersById };
 }
 
-function mapApiListToUi(apiList) {
-  // The list endpoint returns a lighter shape (no items inline); we keep
-  // a sensible UI mapping using the `summary` field for the part/desc.
-  return apiList.map((api) => {
-    const notesArr = []; // list endpoint doesn't include notes
-    return {
-      id: api.id,
-      dspId: api.dspId,
-      dspName: api.dsp,
-      vendorId: api.vendorId,
-      vendorName: api.vendor,
-      vehicleId: api.vehicleId,
-      fleetId: api.fleetId,
-      plate: api.plate,
-      year: null,
-      make: null,
-      model: null,
-      vin: null,
-      lastMileage: null,
-      status: api.status,
-      flags: api.flags || [],
-      scheduledAt: api.scheduledAt,
-      startedAt: null,
-      completedAt: api.completedAt,
-      roNumber: api.roNumber,
-      fmc: null,
-      partsCost: null,
-      laborCost: null,
-      totalCost: api.totalCost,
-      declinedReason: null,
-      canceledReason: null,
-      photoCount: api.photoCount,
-      itemCount: api.itemCount,
-      items: [],
-      createdAt: api.createdAt,
-      createdBy: api.createdBy,
-      assignedTechnician: api.assignedTechnician,
-      assignedTechnicianId: null,
-      section: null,
-      part: api.summary || `${api.itemCount} defect${api.itemCount === 1 ? '' : 's'}`,
-      description: api.summary,
-      reportedBy: api.createdBy,
-      notes: notesArr,
-    };
-  });
+function mapApiToUi(api, ctx) {
+  return adaptWO(api, ctx);
+}
+
+function mapApiListToUi(apiList, ctx) {
+  return (apiList || []).map((api) => adaptWO(api, ctx));
 }
 
 // ============================================================
@@ -823,12 +741,51 @@ export default function WorkOrders({ user }) {
     || user?.role === 'service_writer'
     || user?.role === 'site_admin';
 
-  // Fetch initial list — backend already role-scopes
+  // Caches for adapter (vehicle/workshop lookups). Loaded once on mount —
+  // the V2.0 WO list endpoint returns int FKs only, so we need these to
+  // render plates, makes/models, workshop names, etc. without N+1.
+  const [vehiclesById, setVehiclesById] = useState({});
+  const [workshopsById, setWorkshopsById] = useState({});
+  const ctx = useMemo(
+    () => buildCtx(vehiclesById, workshopsById, {}),
+    [vehiclesById, workshopsById]
+  );
+
+  // Parse the trailing integer from a prefixed string id ("VAN-0161" → 161,
+  // "VW-003" → 3). The backend exposes prefixed strings for vehicles +
+  // workshops but V2.0 WO references their numeric FKs — we key the lookup
+  // caches on the numeric tail so both sides line up.
+  const numericTail = (idLike) => {
+    if (typeof idLike === 'number') return idLike;
+    if (typeof idLike !== 'string') return null;
+    const m = idLike.match(/(\d+)$/);
+    return m ? Number(m[1]) : null;
+  };
+
+  // Fetch initial list — backend already role-scopes. Pulls vehicles +
+  // workshops in parallel so the adapter has full context on first paint.
   const reload = useCallback(async () => {
     setError(null);
     try {
-      const res = await woApi.list({ perPage: 200 });
-      setWorkOrders(mapApiListToUi(res.items || []));
+      const [res, vehiclesRes, workshopsRes] = await Promise.all([
+        woApi.list({ limit: 200 }),
+        vehiclesApi.list({ perPage: 500 }).catch(() => ({ items: [] })),
+        workshopsApi.list({ includeInactive: true }).catch(() => ({ items: [] })),
+      ]);
+      const vById = Object.fromEntries(
+        (vehiclesRes.items || [])
+          .map((v) => [numericTail(v.id), { ...v, dspName: v.dsp, fleetId: v.fleetId }])
+          .filter(([k]) => k != null)
+      );
+      const wById = Object.fromEntries(
+        (workshopsRes.items || [])
+          .map((w) => [numericTail(w.id), w])
+          .filter(([k]) => k != null)
+      );
+      setVehiclesById(vById);
+      setWorkshopsById(wById);
+      const localCtx = buildCtx(vById, wById, {});
+      setWorkOrders(mapApiListToUi(res.items || [], localCtx));
     } catch (e) {
       console.error('failed to load work orders', e);
       setError(e.detail || e.message || 'Failed to load work orders');
@@ -842,18 +799,18 @@ export default function WorkOrders({ user }) {
     reload();
   }, [reload]);
 
-  // When user expands a card, hydrate with full detail (items + notes + costs)
+  // When user expands a card, hydrate with full detail (line items + notes + ROs)
   const hydrateExpanded = useCallback(async (woId) => {
     try {
       const detail = await woApi.get(woId);
-      const enriched = mapApiToUi(detail);
+      const enriched = mapApiToUi(detail, ctx);
       setWorkOrders((prev) =>
         prev.map((w) => (w.id === woId ? { ...w, ...enriched } : w))
       );
     } catch (e) {
       console.error('hydrate failed', e);
     }
-  }, []);
+  }, [ctx]);
 
   // For technicians, filter to only their WOs; for vendors/site admins, show all
   const visibleWOs = useMemo(() => {
@@ -917,39 +874,45 @@ export default function WorkOrders({ user }) {
   // Action dispatcher
   const handleAction = (type, wo) => setModal({ type, wo });
 
-  // Apply a hydrated WO into the list (used after every mutation)
-  const applyDetail = (apiDetail) => {
-    const ui = mapApiToUi(apiDetail);
-    setWorkOrders((prev) => prev.map((w) => (w.id === ui.id ? { ...w, ...ui } : w)));
+  // Apply a hydrated WO into the list (used after every mutation).
+  // Re-fetches detail since V2.0 endpoints return the WO without the
+  // embedded line_items / ros / notes that the UI needs.
+  const applyDetail = async (apiOrId) => {
+    const id = typeof apiOrId === 'object' && apiOrId !== null ? apiOrId.id : apiOrId;
+    if (!id) return;
+    try {
+      const detail = await woApi.get(id);
+      const ui = mapApiToUi(detail, ctx);
+      setWorkOrders((prev) => prev.map((w) => (w.id === ui.id ? { ...w, ...ui } : w)));
+    } catch (e) {
+      console.error('applyDetail failed', e);
+    }
   };
 
   /**
-   * Accept & Assign flow:
-   *   pending → acknowledged (status), then assign tech, then ack → in_progress.
-   *   Done in 3 calls so each step's RBAC + state-machine is enforced server-side.
+   * Accept & Assign flow (V2.0):
+   *   pending_acceptance → accepted (POST /accept; also generates line items)
+   *   then POST /assign-technician
+   *   then accepted → in_progress (POST /start)
+   * Each step has its own RBAC + state machine enforced server-side.
    */
   const handleAssign = async ({ technician, notes }) => {
     const wo = modal.wo;
     setActionInFlight(true);
     try {
-      // Step 1: pending → acknowledged (vendor accepts)
-      let detail = wo.status === 'pending'
-        ? await woApi.updateStatus(wo.id, {
-            status: 'acknowledged',
-            notesAppend: notes || undefined,
-          })
-        : null;
-
+      // Step 1: vendor accepts (generates line items + DRs)
+      if (wo.status === 'pending') {
+        await woApi.accept(wo.id);
+      }
       // Step 2: assign technician
-      detail = await woApi.assign(wo.id, {
-        technicianId: technician.id,
-        notesAppend: notes || undefined,
-      });
-
-      // Step 3: acknowledged → in_progress (start work)
-      detail = await woApi.updateStatus(detail.id, { status: 'in_progress' });
-
-      applyDetail(detail);
+      await woApi.assignTechnician(wo.id, technician.id);
+      // Step 3: kick off work
+      await woApi.start(wo.id);
+      // Optional dispatcher note
+      if (notes?.trim()) {
+        try { await woApi.addNote(wo.id, { body: notes, authorRole: 'vendor_service_writer' }); } catch (_) {}
+      }
+      await applyDetail(wo.id);
     } catch (e) {
       console.error('assign failed', e);
       alert(e.detail || e.message || 'Failed to assign technician');
@@ -963,13 +926,19 @@ export default function WorkOrders({ user }) {
     const wo = modal.wo;
     setActionInFlight(true);
     try {
-      const reasonText = `${reason.code}: ${reason.label}${notes ? ' — ' + notes : ''}`;
-      const detail = await woApi.updateStatus(wo.id, {
-        status: 'declined',
-        declineReason: reasonText,
-        notesAppend: notes || undefined,
+      // Map V1 numeric reason codes 1-4 → V2.0 decline_reason_codes strings.
+      const codeMap = {
+        1: 'parts_unavailable',
+        2: 'specialty_required',
+        3: 'out_of_warranty',
+        4: 'cost_too_high',
+      };
+      await woApi.decline(wo.id, {
+        reason: notes || reason?.label,
+        declineReasonCode: codeMap[reason?.code] || 'other',
+        reroute: true,
       });
-      applyDetail(detail);
+      await applyDetail(wo.id);
     } catch (e) {
       console.error('decline failed', e);
       alert(e.detail || e.message || 'Failed to decline');
@@ -983,14 +952,11 @@ export default function WorkOrders({ user }) {
     const wo = modal.wo;
     setActionInFlight(true);
     try {
-      const note = mileage
-        ? `Completed @ ${mileage.toLocaleString()} mi: ${comments}`
-        : `Completed: ${comments}`;
-      const detail = await woApi.updateStatus(wo.id, {
-        status: 'completed',
-        notesAppend: note,
-      });
-      applyDetail(detail);
+      await woApi.complete(wo.id, { lastMileage: mileage ? Number(mileage) : undefined });
+      if (comments?.trim()) {
+        try { await woApi.addNote(wo.id, { body: comments, authorRole: 'technician' }); } catch (_) {}
+      }
+      await applyDetail(wo.id);
     } catch (e) {
       console.error('complete failed', e);
       alert(e.detail || e.message || 'Failed to complete WO');
@@ -1000,17 +966,21 @@ export default function WorkOrders({ user }) {
     }
   };
 
-  // Release: un-assign tech (returns to dispatcher pool). State stays in_progress
-  // since our state machine doesn't allow in_progress → acknowledged.
+  // "Release" in V1 meant un-assign tech + return to dispatcher pool.
+  // V2.0 doesn't have a release verb — clear the technician and the
+  // dispatcher can re-assign. Status stays in_progress.
   const handleRelease = async () => {
     const wo = modal.wo;
     setActionInFlight(true);
     try {
-      const detail = await woApi.assign(wo.id, {
-        technicianId: null,
-        notesAppend: `Released by ${user.name} — returned to dispatcher`,
-      });
-      applyDetail(detail);
+      await woApi.assignTechnician(wo.id, null);
+      try {
+        await woApi.addNote(wo.id, {
+          body: `Released by ${user?.name || 'tech'} — returned to dispatcher`,
+          authorRole: 'technician',
+        });
+      } catch (_) {}
+      await applyDetail(wo.id);
     } catch (e) {
       console.error('release failed', e);
       alert(e.detail || e.message || 'Failed to release');
@@ -1020,18 +990,18 @@ export default function WorkOrders({ user }) {
     }
   };
 
-  // Free-text note append — adds a line to the WO notes via the status patch
-  // endpoint with a no-op status (we round-trip the current status).
+  // Free-text note append — V2.0 has a dedicated POST /notes endpoint.
   const addNote = async (woId, note) => {
     if (!note?.trim()) return;
     setActionInFlight(true);
     try {
-      const wo = workOrders.find((w) => w.id === woId);
-      const detail = await woApi.updateStatus(woId, {
-        status: wo.status,
-        notesAppend: note,
-      });
-      applyDetail(detail);
+      const roleByUser =
+        user?.role === 'technician' ? 'technician'
+        : user?.role === 'vendor_admin' || user?.role === 'service_writer' ? 'vendor_service_writer'
+        : user?.role === 'site_admin' ? 'admin'
+        : 'customer';
+      await woApi.addNote(woId, { body: note, authorRole: roleByUser });
+      await applyDetail(woId);
     } catch (e) {
       console.error('add note failed', e);
       alert(e.detail || e.message || 'Failed to add note');
