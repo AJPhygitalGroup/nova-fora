@@ -21,12 +21,22 @@ import Badge from './ui/Badge';
 // Status config
 // ============================================================
 const STATUS_CONFIG = {
-  pending:     { label: 'Pending',     variant: 'gold',   icon: Hourglass,     color: 'text-accent-gold',   bg: 'bg-accent-gold/10',   border: 'border-accent-gold/40' },
-  pending_fmc: { label: 'Pending FMC', variant: 'purple', icon: Briefcase,     color: 'text-accent-purple', bg: 'bg-accent-purple/10', border: 'border-accent-purple/40' },
-  in_progress: { label: 'In Progress', variant: 'blue',   icon: PlayCircle,    color: 'text-accent-blue',   bg: 'bg-accent-blue/10',   border: 'border-accent-blue/40' },
-  completed:   { label: 'Completed',   variant: 'green',  icon: CheckCircle2,  color: 'text-accent-green',  bg: 'bg-accent-green/10',  border: 'border-accent-green/40' },
-  declined:    { label: 'Declined',    variant: 'red',    icon: XCircle,       color: 'text-accent-red',    bg: 'bg-accent-red/10',    border: 'border-accent-red/40' },
-  canceled:    { label: 'Canceled',    variant: 'gray',   icon: CircleDashed,  color: 'text-navy-400',      bg: 'bg-navy-800',         border: 'border-navy-700' },
+  pending:      { label: 'Pending',      variant: 'gold',   icon: Hourglass,    color: 'text-accent-gold',   bg: 'bg-accent-gold/10',   border: 'border-accent-gold/40' },
+  pending_fmc:  { label: 'Pending FMC',  variant: 'purple', icon: Briefcase,    color: 'text-accent-purple', bg: 'bg-accent-purple/10', border: 'border-accent-purple/40' },
+  // V2.0: WO has been accepted by the vendor (was 'acknowledged' in V1).
+  acknowledged: { label: 'Accepted',     variant: 'blue',   icon: Check,        color: 'text-accent-blue',   bg: 'bg-accent-blue/10',   border: 'border-accent-blue/40' },
+  in_progress:  { label: 'In Progress',  variant: 'blue',   icon: PlayCircle,   color: 'text-accent-blue',   bg: 'bg-accent-blue/10',   border: 'border-accent-blue/40' },
+  completed:    { label: 'Completed',    variant: 'green',  icon: CheckCircle2, color: 'text-accent-green',  bg: 'bg-accent-green/10',  border: 'border-accent-green/40' },
+  declined:     { label: 'Declined',     variant: 'red',    icon: XCircle,      color: 'text-accent-red',    bg: 'bg-accent-red/10',    border: 'border-accent-red/40' },
+  canceled:     { label: 'Canceled',     variant: 'gray',   icon: CircleDashed, color: 'text-navy-400',      bg: 'bg-navy-800',         border: 'border-navy-700' },
+};
+
+// Fallback for any status not in STATUS_CONFIG — prevents WorkOrderCard from
+// crashing with `Cannot read properties of undefined (reading 'icon')` when
+// the V2.0 backend introduces a new status the UI hasn't been updated for.
+const STATUS_CONFIG_FALLBACK = {
+  label: 'Unknown', variant: 'gray', icon: CircleDashed,
+  color: 'text-navy-400', bg: 'bg-navy-800', border: 'border-navy-700',
 };
 
 const FLAG_CONFIG = {
@@ -711,7 +721,7 @@ function LogJobModal({ onClose, onSubmit }) {
 // ============================================================
 function WorkOrderCard({ wo, expanded, onToggle, userRole, currentUserId, onAction }) {
   const { t } = useTranslation('dashboard');
-  const statusConf = STATUS_CONFIG[wo.status];
+  const statusConf = STATUS_CONFIG[wo.status] || STATUS_CONFIG_FALLBACK;
   const StatusIcon = statusConf.icon;
 
   const isDispatcher = userRole === 'vendor_admin' || userRole === 'site_admin';
@@ -1137,17 +1147,18 @@ export default function WorkOrders({ user }) {
         try { await woApi.addNote(wo.id, { body: comments, authorRole: 'technician' }); } catch (_) {}
       }
       await applyDetail(wo.id);
+      // Only close on success — leave the modal open on 422 (mileage floor
+      // violation, missing photos, etc.) so the user can correct inline.
+      setModal(null);
     } catch (e) {
       console.error('complete failed', e);
-      // Surface backend 422 (e.g. mileage below inspection floor) inline
-      // by re-throwing — the modal's local handler shows it without
-      // closing so the user can correct it.
+      // Re-throw so the modal's local handler can surface the message
+      // inline (it has its own try/catch around onComplete).
       const inlineErr = new Error(e?.detail || e?.message || 'Failed to complete WO');
       inlineErr.detail = e?.detail;
       throw inlineErr;
     } finally {
       setActionInFlight(false);
-      setModal(null);
     }
   };
 
