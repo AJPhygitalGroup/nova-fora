@@ -12,7 +12,12 @@ import { fleetSnapshotVans } from '../data/mockData';
 import { isDspRole, canInspect, canApproveDefects } from '../lib/permissions';
 import CreateInspectionWizard from './CreateInspectionWizard';
 import LiveInspectionReportCard from './LiveInspectionReportCard';
-import { inspections as inspectionsApi, vehicles as vehiclesApi, defects as defectsApi } from '../api/client';
+import {
+  inspections as inspectionsApi,
+  vehicles as vehiclesApi,
+  defects as defectsApi,
+  defectReviews as defectReviewsApi,
+} from '../api/client';
 
 const tierConfig = {
   1: { label: 'Tier 1', range: '1–25 defects', cash: '$1', bucks: '$1', color: '#3b82f6', bg: 'bg-accent-blue/10', border: 'border-accent-blue/30', pending: 1 },
@@ -2763,21 +2768,22 @@ export default function RealDVIC({ user }) {
   const notInspected = 7;
   const newToApprove = 2;
 
-  // Defects awaiting DSP approval — fetched from /defects (DSP-scoped server-
-  // side). V2.2 doesn't have a workflow `status` column yet (per spec §2 it
-  // lives in a future `defect_status` table), so for now "pending approval"
-  // means EVERY defect in the DSP's fleet. Once the status table lands we'll
-  // add a `status=pending` filter.
+  // Defects awaiting DSP approval — fetched from /defect-reviews/queue
+  // (DSP-scoped server-side). The queue is exactly the set of defects with
+  // no review row yet — the canonical "needs DSP decision" cohort under
+  // V2.0. Older code path read /defects total which counted every defect
+  // in the fleet (including approved/rejected/repaired), inflating the
+  // home dashboard tile.
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
   useEffect(() => {
     let cancelled = false;
-    defectsApi
-      .list({ perPage: 1 })
+    defectReviewsApi
+      .queue({ limit: 200 })
       .then((res) => {
         if (cancelled) return;
-        setPendingApprovalCount(res.total ?? 0);
+        setPendingApprovalCount(res.total ?? (res.items?.length ?? 0));
       })
-      .catch((err) => console.warn('defects count failed', err));
+      .catch((err) => console.warn('pending-review count failed', err));
     return () => { cancelled = true; };
     // refetch when a new defect lands via SSE (totalDefectsToday changes)
     // or after the inspection wizard closes.

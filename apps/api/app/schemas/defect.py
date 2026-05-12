@@ -78,6 +78,16 @@ class DefectV2Response(BaseModel):
     classification: str | None = None    # Sev1/Sev2/Sev3/ULC/Advisory
     group: str | None = None             # AMR/Body/CMR/CNMR/PM/Tires/Detailing/Netradyne
 
+    # V2.0 derived lifecycle status — V1 had defect.status as a column, V2.0
+    # composes it from defect_reviews + repair_request + work_order state so
+    # the frontend can keep its single-status badge. Possible values:
+    #   pending_review — no review row yet (DSP must approve/reject)
+    #   rejected       — latest review is rejected
+    #   approved       — approved, not yet routed to a workshop
+    #   scheduled      — approved, WO exists and is not completed
+    #   repaired       — approved, WO is completed
+    review_status: str = "pending_review"
+
     reported_by_id: int
     reported_by: str | None = None
     reported_at: datetime
@@ -97,6 +107,7 @@ class DefectV2Response(BaseModel):
         org=None,
         classification: str | None = None,
         group: str | None = None,
+        review_status: str = "pending_review",
     ) -> "DefectV2Response":
         return cls(
             id=d.id_str,
@@ -119,6 +130,7 @@ class DefectV2Response(BaseModel):
             notes=d.notes,
             classification=classification,
             group=group,
+            review_status=review_status,
             reported_by_id=d.reported_by_id,
             reported_by=reporter.full_name if reporter else None,
             reported_at=d.reported_at,

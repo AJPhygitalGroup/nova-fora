@@ -328,10 +328,17 @@ function DeclineModal({ wo, onDecline, onClose }) {
 function CompleteWorkModal({ wo, onComplete, onClose }) {
   const { t } = useTranslation('dashboard');
   const [comments, setComments] = useState('');
-  // Floor: previously-recorded mileage on the WO (set during inspection
-  // or earlier mid-visit reading). Backend also re-validates against the
-  // inspection's odometer reading and rejects with 422 if violated.
-  const floorMileage = wo._v2?.lastMileage ?? wo.lastMileage ?? null;
+  // Floor: prefer the explicit inspection_mileage_floor surfaced by the
+  // backend (computed from WO → RR → defects → Inspection.odometer_miles).
+  // Falls back to any earlier mid-visit reading the WO already carries.
+  // Backend re-validates and returns 422 if the submitted mileage drops
+  // below this floor — the local check is just a friendlier pre-flight.
+  const floorMileage =
+    wo._v2?.inspectionMileageFloor
+    ?? wo.inspectionMileageFloor
+    ?? wo._v2?.lastMileage
+    ?? wo.lastMileage
+    ?? null;
   const [mileage, setMileage] = useState('');
   const [odometerFile, setOdometerFile] = useState(null);
   const [odometerPath, setOdometerPath] = useState(null);

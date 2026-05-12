@@ -16,13 +16,24 @@ import {
 // ─────────────────────────────────────────────────────
 
 // Map API workflow status to the display label the existing component renders.
+//
+// V1 keys (pending/acknowledged/sent_to_vendor/scheduled/converted_to_wo/
+// dismissed) are kept for backward compatibility with any cached payloads;
+// V2.0 emits the new `review_status` set instead (pending_review/approved/
+// scheduled/repaired/rejected).
 const STATUS_TO_LABEL = {
-  pending: 'Logged',
-  acknowledged: 'Repair Ordered',
-  sent_to_vendor: 'Scheduled',
-  scheduled: 'Scheduled',
-  converted_to_wo: 'Scheduled',
-  dismissed: 'Rejected',
+  // V1 (legacy) — kept so a mid-flight switch doesn't blank badges
+  pending:          'Logged',
+  acknowledged:     'Repair Ordered',
+  sent_to_vendor:   'Scheduled',
+  scheduled:        'Scheduled',
+  converted_to_wo:  'Scheduled',
+  dismissed:        'Rejected',
+  // V2.0 review_status
+  pending_review:   'Logged',
+  approved:         'Repair Ordered',
+  repaired:         'Repaired',
+  rejected:         'Rejected',
 };
 
 // Format the structured details object into a 1-line legible string.
@@ -69,13 +80,19 @@ function fromApiDefect(d) {
     // Legacy single-line fallback (kept for backward-compat with table rendering)
     desc: line2 || d.description || '',
     category: d.category || d.section || '—',
-    status: STATUS_TO_LABEL[d.status] || d.status,
+    // V2.0 returns reviewStatus instead of status; fall back to V1 status
+    // if it ever sneaks through (e.g. legacy seeded rows).
+    status: STATUS_TO_LABEL[d.reviewStatus]
+      || STATUS_TO_LABEL[d.status]
+      || d.reviewStatus
+      || d.status
+      || 'Logged',
     da: d.reportedBy || '—',
     photo: (d.photoCount || 0) > 0,
     photoCount: d.photoCount || 0,
     isV2,
     // Raw fields for any debug / advanced UI
-    _rawStatus: d.status,
+    _rawStatus: d.reviewStatus || d.status,
     _fleetId: d.fleetId,
   };
 }

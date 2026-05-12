@@ -43,6 +43,8 @@ from app.models.base import utc_now
 from app.models.user import User, UserRole
 from app.models.defect import Defect
 from app.models.inspection import Inspection
+from app.models.organization import Organization
+from app.models.vehicle import Vehicle
 from app.models.work_orders import (
     DefectResolution,
     LineItemBillingType,
@@ -112,8 +114,32 @@ class WorkOrderResponse(BaseModel):
     marked_stale_at: datetime | None = None
     created_by_id: int | None = None
 
+    # Denormalized display fields — populated server-side via JOINs so
+    # vendor_admin / technician scopes (which don't have access to the full
+    # vehicles / organizations / inspections endpoints) can render proper
+    # labels without the empty "Customer DSP" placeholder. All optional so
+    # callers that build a response purely from the WO row still work.
+    dsp_name: str | None = None
+    vehicle_fleet_id: str | None = None
+    vehicle_plate: str | None = None
+    vehicle_id_str: str | None = None
+    workshop_name: str | None = None
+    assigned_technician_name: str | None = None
+    inspection_mileage_floor: int | None = None  # min odometer at completion
+
     @classmethod
-    def from_model(cls, wo: WorkOrder) -> "WorkOrderResponse":
+    def from_model(
+        cls,
+        wo: WorkOrder,
+        *,
+        dsp_name: str | None = None,
+        vehicle_fleet_id: str | None = None,
+        vehicle_plate: str | None = None,
+        vehicle_id_str: str | None = None,
+        workshop_name: str | None = None,
+        assigned_technician_name: str | None = None,
+        inspection_mileage_floor: int | None = None,
+    ) -> "WorkOrderResponse":
         return cls(
             id=wo.id_str,
             repair_request_id=wo.repair_request_id,
@@ -142,6 +168,13 @@ class WorkOrderResponse(BaseModel):
             declined_at=wo.declined_at,
             marked_stale_at=wo.marked_stale_at,
             created_by_id=wo.created_by_id,
+            dsp_name=dsp_name,
+            vehicle_fleet_id=vehicle_fleet_id,
+            vehicle_plate=vehicle_plate,
+            vehicle_id_str=vehicle_id_str,
+            workshop_name=workshop_name,
+            assigned_technician_name=assigned_technician_name,
+            inspection_mileage_floor=inspection_mileage_floor,
         )
 
 
@@ -418,6 +451,64 @@ async def _max_inspection_mileage_for_wo(
     return int(max_row[0])
 
 
+async def _resolve_display_fields(
+    session: AsyncSession, wo: WorkOrder
+) -> dict:
+    """Resolve denormalized display labels for a single WO.
+
+    Returns the kwargs that `WorkOrderResponse.from_model` accepts:
+      dsp_name, vehicle_fleet_id, vehicle_plate, vehicle_id_str,
+      workshop_name, assigned_technician_name, inspection_mileage_floor.
+
+    Vendor / tech-scoped callers don't have permission to list every DSP,
+    vehicle, and inspection separately — surfacing the labels alongside
+    each WO row keeps the UI single-fetch and avoids the empty
+    "Customer DSP" placeholder.
+    """
+    out: dict = {}
+    veh = (
+        await session.execute(select(Vehicle).where(Vehicle.id == wo.vehicle_id))
+    ).scalar_one_or_none()
+    if veh is not None:
+        out["vehicle_fleet_id"] = veh.fleet_id
+        out["vehicle_plate"] = veh.plate
+        out["vehicle_id_str"] = veh.id_str
+    org = (
+        await session.execute(
+            select(Organization).where(Organization.id == wo.dsp_id)
+        )
+    ).scalar_one_or_none()
+    if org is not None:
+        out["dsp_name"] = org.name
+    ws = (
+        await session.execute(
+            select(VendorWorkshop).where(VendorWorkshop.id == wo.vendor_workshop_id)
+        )
+    ).scalar_one_or_none()
+    if ws is not None:
+        out["workshop_name"] = ws.name
+    if wo.assigned_technician_id is not None:
+        tech = (
+            await session.execute(
+                select(User).where(User.id == wo.assigned_technician_id)
+            )
+        ).scalar_one_or_none()
+        if tech is not None:
+            out["assigned_technician_name"] = tech.full_name
+    out["inspection_mileage_floor"] = await _max_inspection_mileage_for_wo(
+        session, wo
+    )
+    return out
+
+
+async def _build_wo_response(
+    session: AsyncSession, wo: WorkOrder
+) -> WorkOrderResponse:
+    """Single-row WO response with all display fields resolved."""
+    display = await _resolve_display_fields(session, wo)
+    return WorkOrderResponse.from_model(wo, **display)
+
+
 async def _vendor_workshop_ids_for_user(session: AsyncSession, user: User) -> list[int]:
     if user.role not in (UserRole.VENDOR_ADMIN, UserRole.TECHNICIAN):
         return []
@@ -543,7 +634,7 @@ async def list_work_orders(
 
     stmt = stmt.order_by(WorkOrder.created_at.desc()).limit(limit)
     rows = list((await session.execute(stmt)).scalars().all())
-    items = [WorkOrderResponse.from_model(w) for w in rows]
+    items = [await _build_wo_response(session, w) for w in rows]
     return WorkOrderListResponse(items=items, total=len(items))
 
 
@@ -610,7 +701,7 @@ async def get_work_order(
         .all()
     )
 
-    base = WorkOrderResponse.from_model(wo)
+    base = await _build_wo_response(session, wo)
     return WorkOrderDetailResponse(
         **base.model_dump(),
         line_items=[LineItemResponse.from_model(li) for li in line_items],
@@ -677,7 +768,7 @@ async def accept_wo(
     )
     await session.commit()
     await session.refresh(wo)
-    return WorkOrderResponse.from_model(wo)
+    return await _build_wo_response(session, wo)
 
 
 @router.post(
@@ -743,7 +834,7 @@ async def decline_wo(
 
     await session.commit()
     await session.refresh(wo)
-    return WorkOrderResponse.from_model(wo)
+    return await _build_wo_response(session, wo)
 
 
 @router.post(
@@ -786,7 +877,7 @@ async def start_wo(
     )
     await session.commit()
     await session.refresh(wo)
-    return WorkOrderResponse.from_model(wo)
+    return await _build_wo_response(session, wo)
 
 
 @router.post(
@@ -933,7 +1024,7 @@ async def complete_wo(
     await sync_all_drs_for_wo(session, work_order_id=wo.id, actor_id=current.id)
     await session.commit()
     await session.refresh(wo)
-    return WorkOrderResponse.from_model(wo)
+    return await _build_wo_response(session, wo)
 
 
 @router.post(
@@ -962,7 +1053,7 @@ async def cancel_wo(
         WorkOrderStatus.CANCELLED,
         WorkOrderStatus.DECLINED,
     ):
-        return WorkOrderResponse.from_model(wo)
+        return await _build_wo_response(session, wo)
 
     prev = wo.status.value if hasattr(wo.status, "value") else str(wo.status)
     wo.status = WorkOrderStatus.CANCELLED
@@ -979,7 +1070,7 @@ async def cancel_wo(
     )
     await session.commit()
     await session.refresh(wo)
-    return WorkOrderResponse.from_model(wo)
+    return await _build_wo_response(session, wo)
 
 
 @router.post(
@@ -1015,7 +1106,7 @@ async def assign_technician(
     )
     await session.commit()
     await session.refresh(wo)
-    return WorkOrderResponse.from_model(wo)
+    return await _build_wo_response(session, wo)
 
 
 # ─────────────────────────────────────────────────────

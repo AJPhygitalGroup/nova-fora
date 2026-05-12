@@ -116,11 +116,18 @@ export function adaptWO(wo, ctx = {}) {
     status: STATUS_V2_TO_V1[wo.status] || wo.status,
     flags,
 
-    // Parties / vehicle (resolved from caches when present)
+    // Parties / vehicle.
+    // V2.0 backend now returns denormalized labels on the WO row (dspName,
+    // vehicleFleetId, vehiclePlate, vehicleIdStr, workshopName, etc.) so
+    // vendor / tech scopes don't need access to the full vehicles + dsp
+    // lists. Fall back to the cache lookups (admin views), then to ID
+    // prefixes so a never-resolved value still renders something.
     dspId:     vehicle ? dspPrefixedId(vehicle.dspId) : dspPrefixedId(wo.dspId),
-    dspName:   vehicle?.dspName || 'Customer DSP',
-    vehicleId: vehicle ? vehiclePrefixedId(vehicle) : `VAN-${wo.vehicleId}`,
-    plate:     vehicle?.plate || '—',
+    dspName:   wo.dspName || vehicle?.dspName || 'Customer DSP',
+    vehicleId: wo.vehicleIdStr
+      || (vehicle ? vehiclePrefixedId(vehicle) : `VAN-${wo.vehicleId}`),
+    plate:     wo.vehiclePlate || vehicle?.plate || '—',
+    fleetId:   wo.vehicleFleetId || vehicle?.fleetId || null,
     year:      vehicle?.year  || '',
     make:      vehicle?.make  || '',
     model:     vehicle?.model || '',
@@ -130,7 +137,7 @@ export function adaptWO(wo, ctx = {}) {
     vendorId:   workshop?.organizationId
       ? `V-${String(workshop.organizationId).padStart(3, '0')}`
       : null,
-    vendorName: workshop?.name || null,
+    vendorName: wo.workshopName || workshop?.name || null,
     statusTrackingMode: wo.statusTrackingMode || null,
 
     // Work description (from line items)
@@ -139,7 +146,10 @@ export function adaptWO(wo, ctx = {}) {
     description: description || (firstLi?.description || ''),
 
     // People
-    assignedTechnician: tech?.fullName || tech?.name || null,
+    assignedTechnician: wo.assignedTechnicianName
+      || tech?.fullName
+      || tech?.name
+      || null,
     reportedBy: null,  // would need the underlying defect; deferred
 
     // Mileage + commercial

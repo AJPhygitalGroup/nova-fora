@@ -42,6 +42,12 @@ from app.models.organization import Organization
 from app.models.photo import Photo
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
+from app.models.work_orders import (
+    DefectReview,
+    RepairRequest,
+    RepairRequestDefect,
+    WorkOrder,
+)
 from app.schemas.defect import (
     DefectV2Create,
     DefectV2ListResponse,
@@ -120,6 +126,69 @@ async def _derive_class_and_group(
     )
 
 
+async def _derive_review_status(
+    session: AsyncSession, defect_id: int
+) -> str:
+    """Compose a V1-shaped lifecycle status from V2.0 tables.
+
+    V1 stored `defect.status` as a column. V2.0 spreads the lifecycle
+    across defect_reviews (approve/reject), repair_request_defects
+    (bundling), and work_orders (status). The frontend's single-badge
+    UI is preserved by collapsing those back into one string:
+
+      pending_review  no review row yet
+      rejected        latest review rejected
+      approved        approved, no WO created
+      scheduled       approved, WO exists and not completed
+      repaired        approved, WO completed
+
+    Reads at most 3 small queries; defect lists call this per row, so it
+    is kept cheap (latest-only ORDER BY id DESC LIMIT 1, no JOIN chain).
+    """
+    latest_review = (
+        await session.execute(
+            select(DefectReview)
+            .where(DefectReview.defect_id == defect_id)
+            .order_by(DefectReview.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if latest_review is None:
+        return "pending_review"
+    decision = (
+        latest_review.decision.value
+        if hasattr(latest_review.decision, "value")
+        else str(latest_review.decision)
+    )
+    if decision == "rejected":
+        return "rejected"
+    # Approved — check downstream WO state via RR linkage
+    rr_id = (
+        await session.execute(
+            select(RepairRequestDefect.repair_request_id)
+            .where(RepairRequestDefect.defect_id == defect_id)
+        )
+    ).scalar_one_or_none()
+    if rr_id is None:
+        return "approved"
+    # Pick the most recent WO for this RR — multiple are possible if a
+    # workshop declined and the router placed it again.
+    wo = (
+        await session.execute(
+            select(WorkOrder)
+            .where(WorkOrder.repair_request_id == rr_id)
+            .order_by(WorkOrder.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if wo is None:
+        return "approved"
+    wo_status = wo.status.value if hasattr(wo.status, "value") else str(wo.status)
+    if wo_status == "completed":
+        return "repaired"
+    return "scheduled"
+
+
 async def _build_response(
     session: AsyncSession,
     defect: Defect,
@@ -135,6 +204,7 @@ async def _build_response(
         if defect.inspection_id is not None
         else None
     )
+    review_status = await _derive_review_status(session, defect.id)
     return DefectV2Response.from_defect(
         defect,
         vehicle=vehicle,
@@ -143,6 +213,7 @@ async def _build_response(
         org=org,
         classification=classification,
         group=group,
+        review_status=review_status,
     )
 
 
