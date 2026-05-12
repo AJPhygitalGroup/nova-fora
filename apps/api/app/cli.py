@@ -1,17 +1,26 @@
 """Internal CLI commands. Run with: python -m app.cli <command>
 
 Available commands:
-  seed                   Seed orgs + users (idempotent).
-  seed-vehicles          Seed 8 Safety First LLC vehicles.
-  seed-defect-catalog    Seed V2.2 catalog: part_group_default,
-                          defect_part_system, defect_rule, defect_applicability
-                          (idempotent UPSERT).
-  seed-dvic-template     Seed dvic_template_item rows from the Amazon DVIC
-                          PDFs (Cargo + DOT). Idempotent UPSERT keyed by
-                          (vehicle_class, section, part_category, rule_id, position).
+  seed                       Seed orgs + users (idempotent).
+  seed-vehicles              Seed 8 Safety First LLC vehicles.
+  seed-defect-catalog        Seed V2.2 catalog: part_group_default,
+                              defect_part_system, defect_rule, defect_applicability
+                              (idempotent UPSERT).
+  seed-dvic-template         Seed dvic_template_item rows from the Amazon DVIC
+                              PDFs. Idempotent UPSERT.
+  seed-inspection-rules      Seed inspection_rule + inspection_rule_line.
+
+  seed-vendor-workshops      WO V2.0 — UPSERT 4 demo workshops.
+  seed-dsp-settings          WO V2.0 — UPSERT DSP settings (AMR/PM preauth).
+  seed-wo-demo               WO V2.0 — approve N defects, bundle, route, accept
+                              one. Bootstraps the WO surface with live data.
+  bundle-route-cron          WO V2.0 — cron driver: scan ready RRs and route
+                              them. Designed for a 1-min schedule.
+
   create-service-user <email> <full_name> <org_id> <role>
-                         Create a new user with a generated password.
-  reset-password <email> <new_password>   Admin override for lost passwords.
+                             Create a new user with a generated password.
+  reset-password <email> <new_password>
+                             Admin override for lost passwords.
 """
 import asyncio
 import sys
@@ -654,6 +663,19 @@ def main() -> None:
     elif cmd == "seed-inspection-rules":
         from app.seed_inspection_rules import cmd_seed_inspection_rules
         asyncio.run(cmd_seed_inspection_rules())
+    elif cmd == "seed-vendor-workshops":
+        from app.seed_wo_v2 import cmd_seed_vendor_workshops
+        asyncio.run(cmd_seed_vendor_workshops())
+    elif cmd == "seed-dsp-settings":
+        from app.seed_wo_v2 import cmd_seed_dsp_settings
+        asyncio.run(cmd_seed_dsp_settings())
+    elif cmd == "seed-wo-demo":
+        from app.seed_wo_v2 import cmd_seed_wo_demo
+        max_n = int(sys.argv[2]) if len(sys.argv) >= 3 else 3
+        asyncio.run(cmd_seed_wo_demo(max_defects=max_n))
+    elif cmd == "bundle-route-cron":
+        from app.seed_wo_v2 import cmd_bundle_route_cron
+        asyncio.run(cmd_bundle_route_cron())
     elif cmd == "create-service-user":
         if len(sys.argv) != 6:
             print(
