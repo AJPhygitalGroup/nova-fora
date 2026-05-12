@@ -8,7 +8,7 @@ import {
   Wrench, Flame, FileText, ClipboardList, Zap, Info, Loader2
 } from 'lucide-react';
 import { fleetSnapshotVans, fleetSnapshotDefectDetails, availableVendors, SECTION_TO_SERVICES } from '../data/mockData';
-import { workOrders as woApi, directory as dirApi } from '../api/client';
+import { directory as dirApi, defectReviews } from '../api/client';
 import { isDspRole } from '../lib/permissions';
 import Badge from './ui/Badge';
 
@@ -692,21 +692,46 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
 
     setSubmitting(true);
     try {
-      const flags = isRush ? ['rush_order'] : [];
-      const noteParts = [];
-      if (preferredDate) noteParts.push(`Preferred date: ${preferredDate}`);
-      if (extraNotes) noteParts.push(extraNotes);
-      const notes = noteParts.length ? noteParts.join(' — ') : null;
+      // V2.0 flow: the "Create WO" modal is now a defect SCOPE APPROVAL
+      // step. The DSP doesn't pick a vendor; the router does it server-side
+      // based on `vendor_workshops.repair_types`. We approve every
+      // defect_id; the bundler attaches them to (or spawns) one or more
+      // RepairRequests; the router places each RR with a workshop.
+      //
+      // The vendor / preferred_date / notes form fields are kept in the UI
+      // for continuity but are no longer routed into the backend. They
+      // could move to a "scheduling note" in v2.x; for now we surface them
+      // in the `reason` field on each defect_review row for audit visibility.
+      const reasonParts = ['Approved via Create WO dialog'];
+      if (vendor?.name) reasonParts.push(`preferred vendor: ${vendor.name}`);
+      if (preferredDate) reasonParts.push(`preferred date: ${preferredDate}`);
+      if (isRush) reasonParts.push('rush');
+      if (extraNotes) reasonParts.push(extraNotes);
+      const reason = reasonParts.join(' — ');
 
-      const created = await woApi.create({
-        vendorId: vendor.id,
-        items: itemIds.map((id) => ({ defectId: id })),
-        flags,
-        notes,
-      });
-      setCreatedWoId(created.id);
+      const results = await Promise.allSettled(
+        itemIds.map((id) => defectReviews.approve(id, { reason }))
+      );
+      const failed = results
+        .map((r, i) => (r.status === 'rejected' ? itemIds[i] : null))
+        .filter(Boolean);
+      if (failed.length === itemIds.length) {
+        throw new Error(
+          `Failed to approve all defects (${failed.join(', ')}). ` +
+          'Check the review queue or try again.'
+        );
+      }
+      // Mark success even if some defects partially failed — the user can
+      // re-trigger from the Defects tab.
+      const pendingMarker = bulkMode
+        ? `Approved ${itemIds.length - failed.length}/${itemIds.length} defects`
+        : 'Approved';
+      setCreatedWoId(pendingMarker);
       onCreate?.({
-        id: created.id,
+        // V2.0 doesn't have an immediate WO id — the WO is created
+        // async (after bundling window + routing). Caller treats this
+        // as a "submitted" event.
+        id: pendingMarker,
         van,
         section,
         part,
@@ -718,12 +743,13 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
         bulk: bulkMode,
         defectIds: itemIds,
         createdBy: user?.name,
-        apiResponse: created,
+        approvedCount: itemIds.length - failed.length,
+        failedIds: failed,
       });
       setSuccess(true);
     } catch (err) {
-      console.error('create WO failed', err);
-      setSubmitError(err.detail || err.message || 'Failed to create work order');
+      console.error('approve defects failed', err);
+      setSubmitError(err.detail || err.message || 'Failed to approve');
     } finally {
       setSubmitting(false);
     }

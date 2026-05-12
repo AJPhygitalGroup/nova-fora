@@ -4,7 +4,12 @@ import { AlertTriangle, RefreshCw, X, Camera } from 'lucide-react';
 import { TodaysDefectsTable } from './RealDVIC';
 import { CreateWorkOrderModal } from './FleetSnapshot';
 import PhotoUploader from './ui/PhotoUploader';
-import { defects as defectsApi, vehicles as vehiclesApi, APIError } from '../api/client';
+import {
+  defects as defectsApi,
+  defectReviews,
+  vehicles as vehiclesApi,
+  APIError,
+} from '../api/client';
 
 // ─────────────────────────────────────────────────────
 // Transform API defect -> shape expected by TodaysDefectsTable
@@ -145,9 +150,13 @@ export default function Defects({ user }) {
     return Array.from(names).map((name) => ({ id: name, name }));
   }, [displayDefects]);
 
+  // V2.0 review flow — the V1 manual WO-creation modal was replaced by a
+  // one-click approve/reject that writes a `defect_reviews` row and lets
+  // the bundler + router pick it up server-side. The DSP no longer picks
+  // a vendor manually; the router does it from `vendor_workshops.repair_types`.
   const handleReject = async (d) => {
     try {
-      await defectsApi.updateStatus(d.id, 'dismissed');
+      await defectReviews.reject(d.id, { reason: 'Rejected via Defects view' });
       await reload();
     } catch (err) {
       alert(`Reject failed: ${err?.detail || err?.message || 'unknown'}`);
@@ -155,34 +164,28 @@ export default function Defects({ user }) {
   };
 
   const handleCreateWO = async (d) => {
-    // Pre-fill the modal with the vehicle the defect belongs to — no search needed.
-    const matchingVan = modalVans.find((v) => v.id === d.vanInternalId);
-    setCreateWOContext({
-      van: matchingVan || null,
-      defect: {
-        section: d.category || '',
-        part: d.category || '',
-        description: d.desc,
-      },
-      defectId: d.id,
-    });
-    // ACK the defect in the backend so the persistent status shows 'Repair Ordered'
+    // V2.0: "Create WO" is shorthand for "approve the defect scope". The
+    // backend writes a defect_reviews row + fires the bundler synchronously,
+    // which creates (or attaches to) an OPEN RR. The router places the RR
+    // with a workshop on its own cadence (cron / bundle-route-cron).
     try {
-      await defectsApi.updateStatus(d.id, 'acknowledged');
-      // Reload so the row shows the new status when the modal closes
-      reload();
+      await defectReviews.approve(d.id, {
+        reason: 'Approved via Defects view',
+      });
+      await reload();
     } catch (err) {
-      console.warn('ACK failed, modal still open:', err);
+      alert(`Approve failed: ${err?.detail || err?.message || 'unknown'}`);
     }
   };
 
-  // Bulk reject: dismiss N defects in parallel. No same-vehicle constraint
-  // (rejecting is per-defect; cross-van is fine). Failures are surfaced via
-  // a single alert listing the IDs that didn't update.
+  // Bulk reject: parallel `defect_reviews.reject` calls. No same-vehicle
+  // constraint — rejection is per-defect.
   const handleBulkReject = async (selected) => {
     if (!selected || selected.length === 0) return;
     const results = await Promise.allSettled(
-      selected.map((d) => defectsApi.updateStatus(d.id, 'dismissed'))
+      selected.map((d) =>
+        defectReviews.reject(d.id, { reason: 'Bulk-rejected via Defects view' })
+      )
     );
     const failed = selected
       .map((d, i) => (results[i].status === 'rejected' ? d.id : null))
@@ -193,25 +196,24 @@ export default function Defects({ user }) {
     reload();
   };
 
-  // Bulk convert: caller passes display-defect rows (already filtered to a
-  // single vehicle by the table). We resolve the matching van + ACK all
-  // defects in parallel, then open the modal in bulk mode.
+  // Bulk approve: parallel `defect_reviews.approve` calls. Each approval
+  // independently fires the bundler — sibling approvals for the same
+  // (vehicle, repair_type) naturally bundle into one RR thanks to the
+  // bundling window.
   const handleBulkCreateWO = async (selected) => {
     if (!selected || selected.length === 0) return;
-    const vanInternalId = selected[0].vanInternalId;
-    const matchingVan = modalVans.find((v) => v.id === vanInternalId);
-    setCreateWOContext({
-      van: matchingVan || null,
-      defect: null,
-      defectId: null,
-      defectIds: selected.map((d) => d.id),
-      defects: selected,
-    });
-    // ACK all selected defects in parallel — fire & forget, modal stays open
-    // even if some fail.
-    Promise.allSettled(
-      selected.map((d) => defectsApi.updateStatus(d.id, 'acknowledged'))
-    ).then(() => reload());
+    const results = await Promise.allSettled(
+      selected.map((d) =>
+        defectReviews.approve(d.id, { reason: 'Bulk-approved via Defects view' })
+      )
+    );
+    const failed = selected
+      .map((d, i) => (results[i].status === 'rejected' ? d.id : null))
+      .filter(Boolean);
+    if (failed.length > 0) {
+      alert(`Failed to approve ${failed.length} defect${failed.length === 1 ? '' : 's'}: ${failed.join(', ')}`);
+    }
+    reload();
   };
 
   const handleViewPhotos = async (d) => {
