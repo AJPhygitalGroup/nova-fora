@@ -179,7 +179,7 @@ export function adaptWO(wo, ctx = {}) {
     completedAt:  wo.completedAt,
     cancelledAt:  wo.cancelledAt,
     declinedAt:   wo.declinedAt,
-    scheduledAt:  null,  // V2.0 has no schedule slot
+    // scheduledAt is populated below from the new V2.0 column.
 
     // Reasons
     declinedReason:    wo.declinedReason,
@@ -203,6 +203,13 @@ export function adaptWO(wo, ctx = {}) {
     // Surfaced as-is so the vendor card can render the defect grid + photos.
     defects: wo.defects || [],
     ros,
+
+    // Scheduling + DSP response (PR: scheduled repairs)
+    scheduledAt:   wo.scheduledAt   || null,
+    repairBucket:  wo.repairBucket  || null,    // 'overnight' | 'shop'
+    dspResponse:   wo.dspResponse   || null,    // 'confirmed' | 'not_available'
+    dspResponseAt: wo.dspResponseAt || null,
+    keyLocation:   wo.keyLocation   || null,
 
     // Escape hatch: full raw V2.0 row for any caller that needs it
     _v2: wo,

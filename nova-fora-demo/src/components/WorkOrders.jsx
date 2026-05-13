@@ -84,6 +84,22 @@ function AssignTechnicianModal({ wo, onAssign, onClose }) {
   const [techs, setTechs] = useState([]);
   const [techsLoading, setTechsLoading] = useState(true);
 
+  // Scheduled slot + bucket (defaults to "tonight 22:00, overnight" for the
+  // common Amazon DSP rhythm of pulling vans after the route). The DSP
+  // home "Scheduled Repairs" card filters by scheduled_at within 36h, so
+  // anything the vendor picks here that lands inside that window shows up
+  // in the DSP's queue immediately.
+  const defaultScheduledAt = () => {
+    const d = new Date();
+    d.setHours(22, 0, 0, 0);
+    if (d.getTime() < Date.now()) d.setDate(d.getDate() + 1);
+    // Format to the YYYY-MM-DDTHH:MM expected by <input type="datetime-local">
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  const [scheduledAt, setScheduledAt] = useState(defaultScheduledAt);
+  const [repairBucket, setRepairBucket] = useState('overnight');
+
   // External-mode workshops require at least one RO# before the WO can be
   // accepted (DB trigger enforces). Surface the input here so the operator
   // doesn't hit a silent 409. Internal-mode skips this entirely.
@@ -125,7 +141,17 @@ function AssignTechnicianModal({ wo, onAssign, onClose }) {
     if (roRequired && !roNumber.trim()) return;
     setSubmitting(true);
     try {
-      await onAssign({ technician: tech, notes, roNumber: roNumber.trim() || null });
+      // datetime-local fields come in as "YYYY-MM-DDTHH:MM" (no timezone).
+      // The browser interprets that as local time; we convert via Date
+      // so the backend gets a real UTC ISO string.
+      const scheduledIso = scheduledAt ? new Date(scheduledAt).toISOString() : null;
+      await onAssign({
+        technician: tech,
+        notes,
+        roNumber: roNumber.trim() || null,
+        scheduledAt: scheduledIso,
+        repairBucket,
+      });
       onClose();
     } catch (e) {
       console.error('assign failed', e);
@@ -224,6 +250,51 @@ function AssignTechnicianModal({ wo, onAssign, onClose }) {
               </p>
             </div>
           )}
+
+          {/* Scheduled slot + bucket — drives the DSP-side "Scheduled
+              Repairs" home card (filters to scheduled_at within 36h).
+              Default is 22:00 tonight overnight, matching the typical
+              Amazon DSP "pull-after-route" rhythm. */}
+          <div>
+            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">
+              {t('workOrders.assignModal.scheduledAtLabel', 'Scheduled start')}
+            </label>
+            <input
+              type="datetime-local"
+              value={scheduledAt}
+              onChange={(e) => setScheduledAt(e.target.value)}
+              className="w-full rounded-lg px-3 py-2.5 text-base sm:text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue"
+            />
+            <p className="text-[10px] text-navy-500 mt-1">
+              {t('workOrders.assignModal.scheduledAtHint',
+                "Slots in the next 36h show up on the DSP's 'Scheduled Repairs' card for confirmation.")}
+            </p>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">
+              {t('workOrders.assignModal.repairBucketLabel', 'Repair bucket')}
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { value: 'overnight', label: t('workOrders.assignModal.bucketOvernight', 'Overnight'), hint: t('workOrders.assignModal.bucketOvernightHint', 'Back before dispatch') },
+                { value: 'shop',      label: t('workOrders.assignModal.bucketShop', 'Shop'),           hint: t('workOrders.assignModal.bucketShopHint', 'Held longer') },
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setRepairBucket(opt.value)}
+                  className={`px-3 py-2.5 rounded-lg border text-left transition-colors ${
+                    repairBucket === opt.value
+                      ? 'bg-accent-blue/10 border-accent-blue text-white'
+                      : 'bg-navy-800 border-navy-700 text-navy-300 hover:border-navy-600'
+                  }`}>
+                  <div className="text-xs font-semibold">{opt.label}</div>
+                  <div className="text-[10px] text-navy-400">{opt.hint}</div>
+                </button>
+              ))}
+            </div>
+          </div>
 
           <div>
             <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('workOrders.assignModal.dispatcherNotes', 'Dispatcher notes (optional)')}</label>
@@ -1253,7 +1324,7 @@ export default function WorkOrders({ user }) {
    *   then accepted → in_progress (POST /start)
    * Each step has its own RBAC + state machine enforced server-side.
    */
-  const handleAssign = async ({ technician, notes, roNumber }) => {
+  const handleAssign = async ({ technician, notes, roNumber, scheduledAt, repairBucket }) => {
     const wo = modal.wo;
     setActionInFlight(true);
     try {
@@ -1272,8 +1343,14 @@ export default function WorkOrders({ user }) {
       if (wo.status === 'pending') {
         await woApi.accept(wo.id);
       }
-      // Step 2: assign technician
-      await woApi.assignTechnician(wo.id, technician.id);
+      // Step 2: assign technician + pin the scheduled slot + bucket.
+      // Backend's /assign-technician now accepts scheduledAt + repairBucket
+      // in the same call so we don't need a separate /schedule round-trip.
+      await woApi.assignTechnician(wo.id, {
+        technicianId: technician.id,
+        scheduledAt: scheduledAt || null,
+        repairBucket: repairBucket || null,
+      });
       // Step 3: kick off work
       await woApi.start(wo.id);
       // Optional dispatcher note

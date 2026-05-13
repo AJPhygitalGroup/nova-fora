@@ -28,10 +28,12 @@ from app.models.work_orders.defect_review import (
 )
 from app.models.work_orders.dsp_setting import DspSetting
 from app.models.work_orders.enums import (
+    DspWoResponse,
     LineItemBillingType,
     LineItemCategory,
     LineItemStatus,
     NoteAuthorRole,
+    RepairBucket,
     RepairRequestStatus,
     RepairType,
     StatusTrackingMode,
@@ -58,10 +60,12 @@ __all__ = [
     "DefectResolutionStatus",
     "DefectReviewDecision",
     "DefectReviewDecisionMethod",
+    "DspWoResponse",
     "LineItemBillingType",
     "LineItemCategory",
     "LineItemStatus",
     "NoteAuthorRole",
+    "RepairBucket",
     "RepairRequestStatus",
     "RepairType",
     "StatusTrackingMode",

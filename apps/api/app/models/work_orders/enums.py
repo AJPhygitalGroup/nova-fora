@@ -132,3 +132,27 @@ class NoteAuthorRole(str, Enum):
     TECHNICIAN = "technician"
     ADMIN = "admin"
     SYSTEM = "system"
+
+
+class RepairBucket(str, Enum):
+    """work_orders.repair_bucket — VARCHAR(20).
+
+    Vendor's classification when scheduling: overnight (van returns before
+    dispatch) vs shop (held longer than one dispatch cycle). Drives the
+    DSP-side "Scheduled Repairs" card grouping.
+    """
+
+    OVERNIGHT = "overnight"
+    SHOP = "shop"
+
+
+class DspWoResponse(str, Enum):
+    """work_orders.dsp_response — VARCHAR(20).
+
+    DSP's response to a scheduled WO. NULL = no decision yet. Confirmed
+    means the van will be at the agreed location at scheduled_at;
+    not_available flags a scheduling conflict the vendor needs to handle.
+    """
+
+    CONFIRMED = "confirmed"
+    NOT_AVAILABLE = "not_available"

@@ -127,6 +127,13 @@ class WorkOrderResponse(BaseModel):
     assigned_technician_name: str | None = None
     inspection_mileage_floor: int | None = None  # min odometer at completion
 
+    # Scheduling + DSP response (PR: scheduled repairs)
+    scheduled_at: datetime | None = None
+    repair_bucket: str | None = None       # 'overnight' | 'shop'
+    dsp_response: str | None = None        # 'confirmed' | 'not_available'
+    dsp_response_at: datetime | None = None
+    key_location: str | None = None
+
     @classmethod
     def from_model(
         cls,
@@ -175,6 +182,17 @@ class WorkOrderResponse(BaseModel):
             workshop_name=workshop_name,
             assigned_technician_name=assigned_technician_name,
             inspection_mileage_floor=inspection_mileage_floor,
+            scheduled_at=wo.scheduled_at,
+            repair_bucket=(
+                wo.repair_bucket.value if hasattr(wo.repair_bucket, "value")
+                else (str(wo.repair_bucket) if wo.repair_bucket else None)
+            ),
+            dsp_response=(
+                wo.dsp_response.value if hasattr(wo.dsp_response, "value")
+                else (str(wo.dsp_response) if wo.dsp_response else None)
+            ),
+            dsp_response_at=wo.dsp_response_at,
+            key_location=wo.key_location,
         )
 
 
@@ -369,6 +387,33 @@ class AssignTechBody(BaseModel):
         default=None,
         description="Set to None to clear assignment.",
     )
+    # When the vendor assigns a tech they typically pin the slot at the
+    # same time. Both optional — the vendor can also schedule later via
+    # POST /work-orders/{id}/schedule.
+    scheduled_at: datetime | None = Field(default=None)
+    repair_bucket: Literal["overnight", "shop"] | None = Field(default=None)
+    model_config = ConfigDict(extra="forbid")
+
+
+class ScheduleBody(BaseModel):
+    """POST /work-orders/{id}/schedule — vendor pins the repair slot."""
+
+    scheduled_at: datetime | None = Field(
+        default=None,
+        description="When the vendor expects to start. NULL clears the slot.",
+    )
+    repair_bucket: Literal["overnight", "shop"] | None = Field(
+        default=None,
+        description="overnight | shop. NULL clears the classification.",
+    )
+    model_config = ConfigDict(extra="forbid")
+
+
+class DspResponseBody(BaseModel):
+    """POST /work-orders/{id}/dsp-response — DSP confirms/flags the slot."""
+
+    response: Literal["confirmed", "not_available"] = Field(...)
+    key_location: str | None = Field(default=None, max_length=80)
     model_config = ConfigDict(extra="forbid")
 
 
@@ -636,6 +681,12 @@ async def list_work_orders(
     vendor_workshop_id: int | None = Query(default=None),
     vehicle_id: int | None = Query(default=None),
     assigned_to_me: bool = Query(default=False),
+    scheduled_within_hours: int | None = Query(
+        default=None, ge=1, le=720,
+        description="If set, only return WOs whose scheduled_at falls within "
+                    "the next N hours from now. Drives the DSP-side "
+                    "'Scheduled Repairs' home card (typically 36).",
+    ),
     limit: int = Query(default=100, ge=1, le=500),
     current: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
@@ -672,8 +723,25 @@ async def list_work_orders(
         # filters above already restrict the visible WOs; an out-of-scope
         # vehicle_id just yields an empty list rather than leaking data.
         stmt = stmt.where(WorkOrder.vehicle_id == vehicle_id)
+    if scheduled_within_hours is not None:
+        # Pre-accept WOs aren't yet "scheduled"; only include WOs that
+        # the vendor has actually pinned a slot for. Exclude cancelled +
+        # declined so the DSP card doesn't show abandoned rows.
+        from datetime import timedelta
+        horizon = utc_now() + timedelta(hours=scheduled_within_hours)
+        stmt = (
+            stmt
+            .where(WorkOrder.scheduled_at.is_not(None))
+            .where(WorkOrder.scheduled_at <= horizon)
+            .where(WorkOrder.status.notin_(["cancelled", "declined", "completed"]))
+        )
 
-    stmt = stmt.order_by(WorkOrder.created_at.desc()).limit(limit)
+    # Scheduled-list callers want chronological order (earliest first); the
+    # default WO list view stays newest-first.
+    if scheduled_within_hours is not None:
+        stmt = stmt.order_by(WorkOrder.scheduled_at.asc()).limit(limit)
+    else:
+        stmt = stmt.order_by(WorkOrder.created_at.desc()).limit(limit)
     rows = list((await session.execute(stmt)).scalars().all())
     items = [await _build_wo_response(session, w) for w in rows]
     return WorkOrderListResponse(items=items, total=len(items))
@@ -1212,6 +1280,21 @@ async def assign_technician(
         lang=lang,
     )
     wo.assigned_technician_id = body.technician_id
+    # Scheduling — vendor typically pins the slot at the same time they
+    # assign a tech. Both fields are optional; setting them here mirrors
+    # the dedicated /schedule endpoint below so the UI doesn't need two
+    # round-trips. Setting either resets `dsp_response` to NULL because
+    # the previous confirmation no longer applies to a new slot.
+    schedule_changed = False
+    if body.scheduled_at is not None:
+        wo.scheduled_at = body.scheduled_at
+        schedule_changed = True
+    if body.repair_bucket is not None:
+        wo.repair_bucket = body.repair_bucket
+        schedule_changed = True
+    if schedule_changed:
+        wo.dsp_response = None
+        wo.dsp_response_at = None
     session.add(wo)
     await log_event(
         session,
@@ -1219,7 +1302,123 @@ async def assign_technician(
         entity_id=wo.id,
         action="technician_assigned",
         actor_id=current.id,
-        details={"technician_id": body.technician_id},
+        details={
+            "technician_id": body.technician_id,
+            "scheduled_at": body.scheduled_at.isoformat() if body.scheduled_at else None,
+            "repair_bucket": body.repair_bucket,
+        },
+    )
+    await session.commit()
+    await session.refresh(wo)
+    return await _build_wo_response(session, wo)
+
+
+# ─────────────────────────────────────────────────────
+# Scheduling — vendor pins a slot + bucket
+# ─────────────────────────────────────────────────────
+@router.post(
+    "/{wo_id}/schedule",
+    response_model=WorkOrderResponse,
+    summary="Vendor / service_writer pins scheduled_at + repair_bucket",
+)
+async def schedule_wo(
+    body: ScheduleBody,
+    request: Request,
+    wo_id: str = Path(..., examples=["WO-00001"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> WorkOrderResponse:
+    """Pin (or clear) the scheduled slot + bucket after the fact.
+
+    Anyone on the vendor side (admin, service_writer, technician) can
+    update the slot — the shop manager often re-buckets between
+    overnight and shop depending on parts availability mid-day.
+    Resetting either field clears `dsp_response` so the DSP re-confirms.
+    """
+    lang = get_request_language(request)
+    wo = await _load_wo_or_404(session, _parse_wo_id(wo_id), lang)
+    await _ensure_can_act(
+        session,
+        wo=wo,
+        user=current,
+        allowed_roles=(
+            UserRole.SITE_ADMIN,
+            UserRole.VENDOR_ADMIN,
+            UserRole.TECHNICIAN,
+        ),
+        lang=lang,
+    )
+    wo.scheduled_at = body.scheduled_at
+    wo.repair_bucket = body.repair_bucket
+    # Any reschedule invalidates the prior DSP response. The DSP card
+    # surfaces it as "Awaiting your response" again.
+    wo.dsp_response = None
+    wo.dsp_response_at = None
+    session.add(wo)
+    await log_event(
+        session,
+        entity_type=WoActivityLogEntityType.WORK_ORDER,
+        entity_id=wo.id,
+        action="scheduled",
+        actor_id=current.id,
+        details={
+            "scheduled_at": body.scheduled_at.isoformat() if body.scheduled_at else None,
+            "repair_bucket": body.repair_bucket,
+        },
+    )
+    await session.commit()
+    await session.refresh(wo)
+    return await _build_wo_response(session, wo)
+
+
+# ─────────────────────────────────────────────────────
+# DSP response — confirm / mark not_available
+# ─────────────────────────────────────────────────────
+@router.post(
+    "/{wo_id}/dsp-response",
+    response_model=WorkOrderResponse,
+    summary="DSP confirms the scheduled slot or flags a conflict",
+)
+async def dsp_response_wo(
+    body: DspResponseBody,
+    request: Request,
+    wo_id: str = Path(..., examples=["WO-00001"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> WorkOrderResponse:
+    """DSP-owner side: 'confirmed' (van will be at the spot) or
+    'not_available' (scheduling conflict; vendor reschedules).
+
+    Cancellation is a separate action (POST /cancel) because it ends the
+    WO lifecycle rather than mutating the proposed slot.
+    """
+    lang = get_request_language(request)
+    wo = await _load_wo_or_404(session, _parse_wo_id(wo_id), lang)
+    if current.role != UserRole.SITE_ADMIN:
+        if current.role != UserRole.DSP_OWNER or wo.dsp_id != current.organization_id:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                tr_error(E.NOT_YOUR_WORK_ORDER, lang),
+            )
+    if wo.scheduled_at is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Cannot respond: this WO has not been scheduled yet.",
+        )
+    wo.dsp_response = body.response
+    wo.dsp_response_at = utc_now()
+    if body.key_location is not None:
+        wo.key_location = body.key_location.strip() or None
+    session.add(wo)
+    await log_event(
+        session,
+        entity_type=WoActivityLogEntityType.WORK_ORDER,
+        entity_id=wo.id,
+        action=f"dsp_response_{body.response}",
+        actor_id=current.id,
+        details={
+            "key_location": wo.key_location,
+        },
     )
     await session.commit()
     await session.refresh(wo)

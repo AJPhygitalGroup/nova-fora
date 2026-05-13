@@ -803,6 +803,7 @@ export const workOrders = {
       vendorWorkshopId: 'vendor_workshop_id',
       assignedToMe: 'assigned_to_me',
       vehicleId: 'vehicle_id',
+      scheduledWithinHours: 'scheduled_within_hours',
     };
     for (const [k, v] of Object.entries(params)) {
       if (v === undefined || v === null || v === '') continue;
@@ -865,16 +866,49 @@ export const workOrders = {
 
   /**
    * POST /work-orders/{id}/assign-technician
-   * body: { technicianId | null }  (null clears the assignment)
+   * body: { technicianId | null,
+   *         scheduledAt?: ISO string,
+   *         repairBucket?: 'overnight' | 'shop' }
+   * Setting scheduledAt or repairBucket inline lets the vendor pin the
+   * slot at the same time they assign — the same effect as calling
+   * `schedule()` separately afterwards.
    */
-  assignTechnician(id, technicianId) {
+  assignTechnician(id, body) {
+    // Back-compat: callers used to pass just the technicianId scalar.
+    const payload = (typeof body === 'object' && body !== null && !Array.isArray(body))
+      ? body
+      : { technicianId: body };
     return apiFetch(
       `/work-orders/${encodeURIComponent(id)}/assign-technician`,
       {
         method: 'POST',
-        body: JSON.stringify({ technician_id: technicianId }),
+        body: JSON.stringify(camelToSnake(payload)),
       }
     );
+  },
+
+  /**
+   * POST /work-orders/{id}/schedule — vendor pins (or clears) the slot.
+   * body: { scheduledAt?: ISO | null, repairBucket?: 'overnight' | 'shop' | null }
+   * Resetting either field clears `dspResponse` server-side so the DSP
+   * re-confirms.
+   */
+  schedule(id, body = {}) {
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/schedule`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /**
+   * POST /work-orders/{id}/dsp-response — DSP confirms / flags slot.
+   * body: { response: 'confirmed' | 'not_available', keyLocation?: string }
+   */
+  dspResponse(id, body) {
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/dsp-response`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
   },
 
   // ── Line items (sub-resource) ─────────────────────

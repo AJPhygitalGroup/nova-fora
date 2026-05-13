@@ -29,7 +29,12 @@ from sqlalchemy import Column
 from sqlmodel import Field, SQLModel
 
 from app.models.base import timestamp_column, utc_now
-from app.models.work_orders.enums import StatusTrackingMode, WorkOrderStatus
+from app.models.work_orders.enums import (
+    DspWoResponse,
+    RepairBucket,
+    StatusTrackingMode,
+    WorkOrderStatus,
+)
 
 
 class WorkOrder(SQLModel, table=True):
@@ -143,6 +148,62 @@ class WorkOrder(SQLModel, table=True):
     marked_stale_at: datetime | None = Field(
         default=None,
         sa_column=Column("marked_stale_at", sa.DateTime(timezone=True), nullable=True),
+    )
+
+    # ───────── Scheduling (vendor service-writer / shop manager) ────────
+    # When the vendor agrees a slot with the DSP, this fixes the time and
+    # bucket (overnight vs shop). NULL = not yet scheduled. Both written
+    # in tandem on `POST /work-orders/{id}/schedule` or the assign call.
+    scheduled_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(
+            "scheduled_at", sa.DateTime(timezone=True), nullable=True, index=True,
+        ),
+        description="When the vendor expects to start the repair. Drives the "
+                    "DSP-side 'Scheduled Repairs' card (filters within 36h).",
+    )
+    repair_bucket: RepairBucket | None = Field(
+        default=None,
+        sa_column=Column(
+            "repair_bucket",
+            sa.Enum(
+                RepairBucket,
+                native_enum=False,
+                length=20,
+                values_callable=lambda e: [m.value for m in e],
+            ),
+            nullable=True,
+            index=True,
+        ),
+        description="overnight (returned before dispatch) | shop (held longer).",
+    )
+
+    # ───────── DSP response (after vendor schedules) ─────────────────────
+    # Lets the DSP confirm the van will be at the agreed pickup spot, or
+    # flag a conflict. Cancellation is still its own status transition —
+    # this is just the agree/disagree on the proposed slot.
+    dsp_response: DspWoResponse | None = Field(
+        default=None,
+        sa_column=Column(
+            "dsp_response",
+            sa.Enum(
+                DspWoResponse,
+                native_enum=False,
+                length=20,
+                values_callable=lambda e: [m.value for m in e],
+            ),
+            nullable=True,
+        ),
+    )
+    dsp_response_at: datetime | None = Field(
+        default=None,
+        sa_column=Column("dsp_response_at", sa.DateTime(timezone=True), nullable=True),
+    )
+    key_location: str | None = Field(
+        default=None,
+        max_length=80,
+        description="Free-text spot the vendor will find keys (e.g. "
+                    "'mailbox 4', 'sleeve on cage'). Set by DSP on confirm.",
     )
 
     created_by_id: int | None = Field(

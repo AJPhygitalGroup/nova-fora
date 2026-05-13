@@ -18,6 +18,7 @@ import {
   vehicles as vehiclesApi,
   defects as defectsApi,
   defectReviews as defectReviewsApi,
+  workOrders as workOrdersApi,
 } from '../api/client';
 
 const tierConfig = {
@@ -130,24 +131,59 @@ const cardDetails = {
 const DSP_RESPONSE_OPTIONS = ['Confirmed', 'Vehicle not available', 'Cancel'];
 const KEY_LOCATION_OPTIONS = ['Cup holder', 'Fuel compartment', 'Other'];
 
-function ScheduledRepairItem({ item }) {
+function ScheduledRepairItem({ item, onChanged }) {
   const { t } = useTranslation('dashboard');
-  const [dspResponse, setDspResponse] = useState('');
-  const [keyLocation, setKeyLocation] = useState('');
-  const [otherText, setOtherText] = useState('');
+  // Persisted state lives on the WO row. Local copies let the UI update
+  // optimistically while the API call is in flight; on failure we revert.
+  const [dspResponse, setDspResponse] = useState(item.dspResponse || '');
+  const [keyLocation, setKeyLocation] = useState(item.keyLocation || '');
+  const [busy, setBusy] = useState(false);
+  const [errorMsg, setErrorMsg] = useState(null);
 
-  const responseColor = dspResponse === 'Confirmed' ? 'border-accent-green/40 text-accent-green bg-accent-green/5'
-    : dspResponse === 'Vehicle not available' ? 'border-accent-gold/40 text-accent-gold bg-accent-gold/5'
-    : dspResponse === 'Cancel' ? 'border-accent-red/40 text-accent-red bg-accent-red/5'
-    : 'border-navy-700 text-navy-200 bg-navy-800';
+  const callResponse = async (response, opts = {}) => {
+    if (!item.woId || busy) return;
+    setBusy(true);
+    setErrorMsg(null);
+    const prevResp = dspResponse;
+    setDspResponse(response);
+    try {
+      await workOrdersApi.dspResponse(item.woId, {
+        response,
+        keyLocation: opts.keyLocation ?? keyLocation ?? null,
+      });
+      onChanged?.();
+    } catch (err) {
+      setDspResponse(prevResp);
+      setErrorMsg(err?.detail || err?.message || 'Failed to update');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const callCancel = async () => {
+    if (!item.woId || busy) return;
+    if (!window.confirm(t('scheduledRepair.confirmCancel',
+      'Cancel this WO? The vendor and tech will be notified and the slot is released.'))) return;
+    setBusy(true);
+    setErrorMsg(null);
+    try {
+      await workOrdersApi.cancel(item.woId, { reason: 'Cancelled by DSP from Scheduled Repairs card' });
+      onChanged?.();
+    } catch (err) {
+      setErrorMsg(err?.detail || err?.message || 'Cancel failed');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div className="bg-navy-800/40 border border-navy-700/40 rounded-xl p-4 space-y-3">
       {/* Header row */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-sm font-semibold text-white">{item.fleetId}</span><Badge variant="gray">{item.vendor}</Badge>
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <span className="text-sm font-semibold text-white">{item.fleetId}</span>
+            <Badge variant="gray">{item.vendor}</Badge>
+            {item.woId && <span className="text-[10px] font-mono text-navy-500">{item.woId}</span>}
           </div>
           <div className="flex items-center gap-1.5 text-xs text-navy-300">
             <Clock size={12} className="text-accent-blue" />
@@ -163,60 +199,98 @@ function ScheduledRepairItem({ item }) {
         <div className="text-sm text-white">{item.defect}</div>
       </div>
 
-      {/* Controls grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {/* DSP Response */}
-        <div>
-          <label className="block text-[10px] uppercase tracking-wide text-navy-500 mb-1">{t('scheduledRepair.dspResponseLabel', 'DSP Response')}</label>
-          <select
-            value={dspResponse}
-            onChange={(e) => setDspResponse(e.target.value)}
-            className={`w-full rounded-lg px-3 py-2 text-sm border outline-none cursor-pointer transition-colors ${responseColor}`}
-          >
-            <option value="">{t('scheduledRepair.selectResponse', 'Select response…')}</option>
-            {DSP_RESPONSE_OPTIONS.map((opt) => (
-              <option key={opt} value={opt}>{t(`scheduledRepair.dspResponseOption.${opt}`, opt)}</option>
-            ))}
-          </select>
+      {/* Already-decided state — show the badge + a "Change" affordance */}
+      {dspResponse === 'confirmed' ? (
+        <div className="rounded-lg bg-accent-green/10 border border-accent-green/30 px-3 py-2 text-xs">
+          <div className="flex items-center gap-2 text-accent-green font-semibold">
+            <Check size={12} /> {t('scheduledRepair.confirmedBadge', 'Confirmed — keys: ')}
+            <span className="text-white font-normal truncate">{keyLocation || '—'}</span>
+          </div>
+          <button
+            onClick={() => { setDspResponse(''); setErrorMsg(null); }}
+            className="mt-1 text-[11px] text-navy-300 underline hover:text-white"
+            disabled={busy}>
+            {t('scheduledRepair.changeResponse', 'Change response')}
+          </button>
         </div>
-
-        {/* Key Location */}
-        <div>
-          <label className="block text-[10px] uppercase tracking-wide text-navy-500 mb-1">{t('scheduledRepair.keyLocationLabel', 'Key Location')}</label>
-          <select
-            value={keyLocation}
-            onChange={(e) => setKeyLocation(e.target.value)}
-            className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-navy-200 outline-none focus:border-accent-blue cursor-pointer"
-          >
-            <option value="">{t('scheduledRepair.selectLocation', 'Select location…')}</option>
-            {KEY_LOCATION_OPTIONS.map((opt) => (
-              <option key={opt} value={opt}>{t(`scheduledRepair.keyLocationOption.${opt}`, opt)}</option>
-            ))}
-          </select>
+      ) : dspResponse === 'not_available' ? (
+        <div className="rounded-lg bg-accent-gold/10 border border-accent-gold/30 px-3 py-2 text-xs">
+          <div className="flex items-center gap-2 text-accent-gold font-semibold">
+            <AlertTriangle size={12} /> {t('scheduledRepair.notAvailableBadge', 'Vehicle not available — vendor will reschedule')}
+          </div>
+          <button
+            onClick={() => { setDspResponse(''); setErrorMsg(null); }}
+            className="mt-1 text-[11px] text-navy-300 underline hover:text-white"
+            disabled={busy}>
+            {t('scheduledRepair.changeResponse', 'Change response')}
+          </button>
         </div>
-      </div>
+      ) : (
+        <>
+          {/* Key location picker — required before confirming so the
+              vendor knows where to find the keys at pickup time. */}
+          <div>
+            <label className="block text-[10px] uppercase tracking-wide text-navy-500 mb-1">
+              {t('scheduledRepair.keyLocationLabel', 'Key Location')}
+            </label>
+            <select
+              value={keyLocation}
+              onChange={(e) => setKeyLocation(e.target.value)}
+              disabled={busy}
+              className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-navy-200 outline-none focus:border-accent-blue cursor-pointer">
+              <option value="">{t('scheduledRepair.selectLocation', 'Select location…')}</option>
+              {KEY_LOCATION_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>{t(`scheduledRepair.keyLocationOption.${opt}`, opt)}</option>
+              ))}
+            </select>
+          </div>
+          <AnimatePresence>
+            {keyLocation === 'Other' && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="overflow-hidden">
+                <input
+                  type="text"
+                  value={keyLocation === 'Other' ? '' : keyLocation}
+                  onChange={(e) => setKeyLocation(e.target.value)}
+                  placeholder={t('scheduledRepair.keyLocationPlaceholder',
+                    'e.g. Glove box, driver seat pocket…')}
+                  className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue"
+                  autoFocus
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-      {/* Other description */}
-      <AnimatePresence>
-        {keyLocation === 'Other' && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            className="overflow-hidden"
-          >
-            <label className="block text-[10px] uppercase tracking-wide text-navy-500 mb-1">{t('scheduledRepair.describeKeyLocation', 'Describe key location')}</label>
-            <input
-              type="text"
-              value={otherText}
-              onChange={(e) => setOtherText(e.target.value)}
-              placeholder={t('scheduledRepair.keyLocationPlaceholder', 'e.g. Glove box, driver seat pocket…')}
-              className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue"
-              autoFocus
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
+          {/* Action buttons — call the backend on click. */}
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <button
+              onClick={() => callResponse('confirmed')}
+              disabled={busy || !keyLocation}
+              className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-accent-green text-white text-xs font-semibold hover:opacity-90 disabled:opacity-40 cursor-pointer">
+              <Check size={12} /> {t('scheduledRepair.confirm', 'Confirm')}
+            </button>
+            <button
+              onClick={() => callResponse('not_available')}
+              disabled={busy}
+              className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-accent-gold/15 border border-accent-gold/40 text-accent-gold text-xs font-semibold hover:bg-accent-gold/25 disabled:opacity-40 cursor-pointer">
+              <AlertTriangle size={12} /> {t('scheduledRepair.notAvailable', 'Not available')}
+            </button>
+            <button
+              onClick={callCancel}
+              disabled={busy}
+              className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-accent-red/15 border border-accent-red/40 text-accent-red text-xs font-semibold hover:bg-accent-red/25 disabled:opacity-40 cursor-pointer">
+              <X size={12} /> {t('scheduledRepair.cancelWo', 'Cancel WO')}
+            </button>
+          </div>
+        </>
+      )}
+
+      {errorMsg && (
+        <div className="text-[11px] text-accent-red">{errorMsg}</div>
+      )}
     </div>
   );
 }
@@ -654,7 +728,7 @@ function ImmediateDetailRenderer({ items, onApprove, onReject }) {
 }
 
 // ============ Scheduled Repairs — split into Overnight + Shop buckets ============
-function ScheduledRepairsGrouped({ items }) {
+function ScheduledRepairsGrouped({ items, onChanged }) {
   const overnight = items.filter((i) => i.repairBucket === 'overnight' || i.status === 'Rush Order');
   const shop = items.filter((i) => !(i.repairBucket === 'overnight' || i.status === 'Rush Order'));
 
@@ -671,7 +745,7 @@ function ScheduledRepairsGrouped({ items }) {
             <p className="text-[11px] text-navy-300 ml-5">Repair expected to be completed before dispatch time</p>
           </div>
           <div className="space-y-3">
-            {overnight.map((it) => <ScheduledRepairItem key={it.fleetId} item={it} />)}
+            {overnight.map((it) => <ScheduledRepairItem key={it.woId || it.fleetId} item={it} onChanged={onChanged} />)}
           </div>
         </section>
       )}
@@ -686,7 +760,7 @@ function ScheduledRepairsGrouped({ items }) {
             <p className="text-[11px] text-navy-300 ml-5">Repair not likely to be completed before dispatch time</p>
           </div>
           <div className="space-y-3">
-            {shop.map((it) => <ScheduledRepairItem key={it.fleetId} item={it} />)}
+            {shop.map((it) => <ScheduledRepairItem key={it.woId || it.fleetId} item={it} onChanged={onChanged} />)}
           </div>
         </section>
       )}
@@ -696,7 +770,7 @@ function ScheduledRepairsGrouped({ items }) {
 
 function CardDetailModal({
   cardKey, onClose, onOpenVehicleReport, onOrderFlexFleet,
-  liveInspected, liveDefects, pendingReviewQueue, onQueueChanged,
+  liveInspected, liveDefects, pendingReviewQueue, scheduledWoQueue, onQueueChanged,
 }) {
   const { t } = useTranslation('dashboard');
   // Vendor picker overlay state for the Immediate-Action approve flow.
@@ -750,6 +824,47 @@ function CardDetailModal({
           })
         : t('cardDetail.summary.immediateEmpty', 'No defects pending approval'),
       items,
+    };
+  }
+  // Override the 'scheduled' card with live work-orders data — same
+  // pattern as 'immediate'. Each scheduled item carries the WO id so the
+  // DSP's response/cancel buttons hit the right endpoint server-side.
+  if (cardKey === 'scheduled' && Array.isArray(scheduledWoQueue)) {
+    const fmtSlot = (iso) => {
+      if (!iso) return '';
+      const d = new Date(iso);
+      return d.toLocaleString([], {
+        weekday: 'short', month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+      });
+    };
+    const items = scheduledWoQueue.map((wo) => ({
+      // The shape `ScheduledRepairItem` reads. The renderer treats
+      // `repairBucket` ('overnight' | 'shop') to bucket the row.
+      woId: wo.id,                           // 'WO-00042'
+      fleetId: wo.vehicleFleetId ? `VAN-${wo.vehicleFleetId}` : wo.vehicleIdStr,
+      vendor: wo.workshopName || '—',
+      scheduledAt: fmtSlot(wo.scheduledAt),
+      defect: wo.defects?.[0]
+        ? `${wo.defects[0].part} — ${(wo.defects[0].defectType || '').replace(/_/g, ' ')}`
+        : '—',
+      status: wo.isRush ? 'Rush Order' : 'Scheduled',
+      repairBucket: wo.repairBucket || 'shop',
+      dspResponse: wo.dspResponse || null,   // 'confirmed' | 'not_available' | null
+      keyLocation: wo.keyLocation || null,
+    }));
+    const overnight = items.filter((i) => i.repairBucket === 'overnight').length;
+    const shop = items.filter((i) => i.repairBucket === 'shop').length;
+    data = {
+      ...data,
+      summary: items.length
+        ? t('cardDetail.summary.scheduledFmt', {
+            overnight,
+            shop,
+            defaultValue: `${overnight} overnight · ${shop} shop`,
+          })
+        : t('cardDetail.summary.scheduledEmpty', 'No WOs scheduled in the next 36h'),
+      scheduledItems: items,
     };
   }
   // Override the 'reported' card with live /defects/v2 data when present.
@@ -901,7 +1016,10 @@ function CardDetailModal({
               }}
             />
           ) : data.scheduledItems ? (
-            <ScheduledRepairsGrouped items={data.scheduledItems} />
+            <ScheduledRepairsGrouped
+              items={data.scheduledItems}
+              onChanged={onQueueChanged}
+            />
           ) : data.groups ? (
             data.groups.map((g) => (
               <div key={g.heading}>
@@ -2900,7 +3018,9 @@ export default function RealDVIC({ user }) {
   // v2 spec has no urgency / rush concept yet — keep the slot for future use.
   const rushOrders = 0;
   const allDefects = [...newDefects];
-  const scheduledTonight = allDefects.filter((d) => d.status === 'Rush Order' || d.status === 'Scheduled').length;
+  // The Scheduled Repairs metric used to count items from this mock array;
+  // it now reads `scheduledWoQueue.length` (real WOs with scheduled_at in
+  // the next 36h). Kept as an empty derived value for any legacy reference.
   const notInspected = 7;
   const newToApprove = 2;
 
@@ -2915,6 +3035,10 @@ export default function RealDVIC({ user }) {
   // render real defect cards (each with the underlying defectId so its
   // Approve/Reject buttons hit defectReviews.approve / .reject directly).
   const [pendingReviewQueue, setPendingReviewQueue] = useState([]);
+  // Scheduled-WOs queue for the "Scheduled Repairs" home card. Same idea:
+  // bump the refresh tick from inside the modal whenever the DSP commits
+  // a response so the count + list update without a full page reload.
+  const [scheduledWoQueue, setScheduledWoQueue] = useState([]);
   // A bumpable tick: anything that needs the queue refreshed (e.g. after a
   // defect was approved from the modal) increments this so the effect refires.
   const [queueRefreshTick, setQueueRefreshTick] = useState(0);
@@ -2928,6 +3052,16 @@ export default function RealDVIC({ user }) {
         setPendingReviewQueue(res.items || []);
       })
       .catch((err) => console.warn('pending-review queue failed', err));
+    // Scheduled WOs in the next 36h — drives the "Scheduled Repairs" card.
+    // Backend filters out cancelled / declined / completed so the count
+    // matches what the DSP actually needs to respond to.
+    workOrdersApi
+      .list({ scheduledWithinHours: 36, limit: 100 })
+      .then((res) => {
+        if (cancelled) return;
+        setScheduledWoQueue(res.items || []);
+      })
+      .catch((err) => console.warn('scheduled WO queue failed', err));
     return () => { cancelled = true; };
     // refetch when a new defect lands via SSE (totalDefectsToday changes)
     // or after the inspection wizard closes — or any time something in the
@@ -3097,7 +3231,7 @@ export default function RealDVIC({ user }) {
               <MetricCard
                 icon={AlertTriangle}
                 label={t('realDvic.metrics.scheduledRepairs', 'Scheduled Repairs')}
-                value={scheduledTonight}
+                value={scheduledWoQueue.length}
                 color="accent-red"
                 delay={0.15}
               />
@@ -3299,6 +3433,7 @@ export default function RealDVIC({ user }) {
             liveInspected={todayInspected}
             liveDefects={liveDefects}
             pendingReviewQueue={pendingReviewQueue}
+            scheduledWoQueue={scheduledWoQueue}
             onQueueChanged={() => setQueueRefreshTick((n) => n + 1)}
             onOrderFlexFleet={isDspHome ? () => { setOpenCard(null); setShowFlexFleet(true); } : null}
             onOpenVehicleReport={(van) => {
