@@ -26,7 +26,12 @@ import {
 } from '../api/client';
 import { canApproveDefects } from '../lib/permissions';
 
-export default function LiveInspectionReportCard({ inspection, user, onClose, onCreateWO }) {
+// `onCreateWO` was the V1 hook the parent used to open the standalone
+// CreateWorkOrderModal after the DSP clicked Approve. In V2.0 approval
+// routes inline (defectReviews.approve handles bundling + routing), so
+// the prop is no longer needed. Kept in the props rest spread so legacy
+// callers passing it don't throw an unused-arg lint error.
+export default function LiveInspectionReportCard({ inspection, user, onClose }) {
   const { t } = useTranslation('wizard');
   const [detail, setDetail] = useState(null);
   const [inspectionPhotos, setInspectionPhotos] = useState([]);
@@ -87,10 +92,18 @@ export default function LiveInspectionReportCard({ inspection, user, onClose, on
     return groups;
   }, [defects]);
 
+  // V2.0: defect lifecycle moved out of defects.status into the
+  // defect_reviews + repair_request/work_order pipeline. We now call
+  // defectReviews.reject / .approve instead of the V1 PATCH /defects/{id}.
+  // The approve response carries the routing destination so the user sees
+  // exactly which vendor the WO was sent to.
   const handleReject = async (defect) => {
     setActions((a) => ({ ...a, [defect.id]: 'rejected' }));
     try {
-      await defectsApi.updateStatus(defect.id, 'dismissed');
+      const { defectReviews } = await import('../api/client');
+      await defectReviews.reject(defect.id, {
+        reason: 'Rejected via inspection report card',
+      });
     } catch (err) {
       setActions((a) => {
         const c = { ...a };
@@ -104,30 +117,26 @@ export default function LiveInspectionReportCard({ inspection, user, onClose, on
   const handleApprove = async (defect) => {
     setActions((a) => ({ ...a, [defect.id]: 'approved' }));
     try {
-      // Mark acknowledged in the backend so the defect status persists
-      await defectsApi.updateStatus(defect.id, 'acknowledged');
+      const { defectReviews } = await import('../api/client');
+      const res = await defectReviews.approve(defect.id, {
+        reason: 'Approved via inspection report card',
+      });
+      // Tell the DSP exactly where the WO went — the backend's inline
+      // router populates routedWorkshopName + routedWorkOrderId on success.
+      if (res?.routedWorkshopName) {
+        alert(`✓ ${res.routedWorkOrderId || 'Work order'} routed to ${res.routedWorkshopName}`);
+      } else {
+        alert("Defect approved — no eligible vendor workshop found for this repair type yet. It's queued for routing.");
+      }
     } catch (err) {
-      // Non-fatal — still open the WO modal so the DSP makes progress
-      console.warn('ACK failed:', err);
+      // Roll back optimistic state so the buttons re-appear.
+      setActions((a) => {
+        const c = { ...a };
+        delete c[defect.id];
+        return c;
+      });
+      alert(`Approve failed: ${err?.detail || err?.message || 'unknown'}`);
     }
-    // Open Create Work Order modal pre-filled
-    onCreateWO?.({
-      van: {
-        id: detail.vehicleId,
-        fleetId: detail.fleetId,
-        plate: detail.plate || '',
-        mileage: detail.odometerMiles || 0,
-        model: '',
-        year: 0,
-        make: '',
-      },
-      defect: {
-        section: defect.section,
-        part: defect.part,
-        description: defect.description,
-      },
-      defectId: defect.id,
-    });
   };
 
   // ─── Photo carousel for inspection-level photos ────
@@ -230,9 +239,20 @@ export default function LiveInspectionReportCard({ inspection, user, onClose, on
                   {section}
                 </div>
                 {items.map((d) => {
+                  // V2.0: defects no longer carry their own `status` column —
+                  // the lifecycle is derived from defect_reviews + RR/WO state
+                  // and surfaced as `reviewStatus` on the API response
+                  // (pending_review | rejected | approved | scheduled |
+                  // repaired). Map those values into the V1-shaped local
+                  // `action` enum so DefectRow's rendering stays unchanged.
+                  // `d.status` is the legacy fallback for any payload that
+                  // still ships the old column.
+                  const reviewStatus = d.reviewStatus || d.status;
                   const action = actions[d.id]
-                    || (d.status === 'dismissed' ? 'rejected'
-                        : d.status === 'acknowledged' || d.status === 'sent_to_vendor' || d.status === 'scheduled' || d.status === 'converted_to_wo' ? 'approved'
+                    || (reviewStatus === 'rejected' || reviewStatus === 'dismissed' ? 'rejected'
+                        : ['approved', 'scheduled', 'repaired',
+                           'acknowledged', 'sent_to_vendor',
+                           'converted_to_wo'].includes(reviewStatus) ? 'approved'
                         : null);
                   const photos = photosByDefect[d.id] || [];
                   return (
