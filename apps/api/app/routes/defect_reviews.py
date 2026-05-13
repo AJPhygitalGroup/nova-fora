@@ -29,6 +29,7 @@ from app.auth.dependencies import get_current_user
 from app.db import get_session
 from app.i18n_errors import E, tr_error
 from app.i18n_helpers import get_request_language
+from app.models.base import utc_now
 from app.models.defect import Defect
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
@@ -328,22 +329,16 @@ async def approve_defect(
         reviewer_id=current.id,
         reason=body.reason,
     )
-    # Hand the approved defect to the bundler immediately.
+    # Hand the approved defect to the bundler immediately. The bundler
+    # groups by (vehicle, repair_type) — that's the right granularity
+    # when two defects share a repair_type. We extend it below with a
+    # second-tier "fold same-workshop WOs" pass so that, e.g., a horn
+    # defect (mechanical) and an inspection-sticker defect (cnmr) on the
+    # same van — both routing to Dulles Midas — end up on ONE WO instead
+    # of two separate ones at the same vendor.
     rr = await consider_defect_for_bundling(
         session, defect_id=defect.id, actor_id=current.id
     )
-    # ROUTING (2026-05-13): historically the router only ran via cron after
-    # the dsp_settings.bundling_window_minutes elapsed. That made the demo
-    # feel broken — the DSP would approve a defect and nothing would appear
-    # at the vendor until the next cron tick. We now route inline: if the RR
-    # the bundler returned is still OPEN and has no live WorkOrder yet, fire
-    # the router right here so the WO lands at the right vendor instantly
-    # (based on repair_type → vendor_workshops.repair_types match).
-    #
-    # Bundling still works for sibling approvals: the router does NOT change
-    # `rr.status`, so a second approval within the window still finds the
-    # same OPEN RR via the bundler. The `not _rr_has_live_wo` guard below
-    # then skips re-routing if a WO already exists for that RR.
     routed_wo_id: int | None = None
     routed_workshop_id: int | None = None
     if rr is not None and rr.status == RepairRequestStatus.OPEN:
@@ -355,20 +350,90 @@ async def approve_defect(
                 .limit(1)
             )
         ).scalar_one_or_none()
-        if existing_wo is None:
-            new_wo = await route_repair_request(
-                session, repair_request_id=rr.id, actor_id=current.id
-            )
-            if new_wo is not None:
-                routed_wo_id = new_wo.id
-                routed_workshop_id = new_wo.vendor_workshop_id
-        else:
+        if existing_wo is not None:
             # Sibling bundling case — the new defect joined an RR that
             # already has a WO. Surface that WO so the UI can still tell
             # the DSP "your defect was added to WO-12345 at Capital Body
             # Shop" instead of leaving them in the dark.
             routed_wo_id = existing_wo.id
             routed_workshop_id = existing_wo.vendor_workshop_id
+        else:
+            # No WO on this RR yet → resolve the destination workshop
+            # before routing. If the same van already has a pre-accept
+            # WO at that workshop (from a sibling defect of a DIFFERENT
+            # repair_type that routes to the same vendor — e.g. horn +
+            # inspection_sticker both at Dulles Midas), MERGE: move this
+            # defect onto the existing RR and drop the empty new RR. The
+            # vendor then sees one WO covering both defects.
+            from app.models.work_orders import RepairRequest as _RR, RepairRequestDefect as _RRD
+            from app.services.wo_router import _find_eligible_workshops
+
+            rr_type_value = (
+                rr.repair_type.value if hasattr(rr.repair_type, "value")
+                else str(rr.repair_type)
+            )
+            eligible = await _find_eligible_workshops(session, rr_type_value)
+            target_workshop_id = eligible[0].id if eligible else None
+
+            sibling_wo = None
+            if target_workshop_id is not None:
+                # Same vehicle + same destination workshop + pre-accept state
+                # (still mutable — once accepted/in_progress, vendor has
+                # already started scoping the work and we shouldn't merge).
+                sibling_wo = (
+                    await session.execute(
+                        select(WorkOrder)
+                        .where(WorkOrder.vehicle_id == rr.vehicle_id)
+                        .where(WorkOrder.vendor_workshop_id == target_workshop_id)
+                        .where(WorkOrder.status == "pending_acceptance")
+                        .where(WorkOrder.repair_request_id != rr.id)
+                        .order_by(WorkOrder.created_at.desc())
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+
+            if sibling_wo is not None:
+                # Move the defect from the freshly-created RR onto the
+                # sibling RR, then clean up the empty RR. Only update the
+                # rrd row's repair_request_id — keeps the defect's audit
+                # trail intact.
+                await session.execute(
+                    _RRD.__table__.update()
+                    .where(_RRD.repair_request_id == rr.id)
+                    .where(_RRD.defect_id == defect.id)
+                    .values(repair_request_id=sibling_wo.repair_request_id)
+                )
+                # If the original RR is now empty, mark it cancelled so the
+                # bundler doesn't pick it up again on the next approve
+                # (otherwise a sibling same-repair_type defect could attach
+                # to the empty RR and end up routed as a new WO, defeating
+                # the merge). CANCELLED here means "merged into another
+                # RR" — we don't have a dedicated MERGED status yet.
+                remaining = (
+                    await session.execute(
+                        select(_RRD).where(_RRD.repair_request_id == rr.id).limit(1)
+                    )
+                ).scalar_one_or_none()
+                if remaining is None:
+                    orig_rr = (
+                        await session.execute(
+                            select(_RR).where(_RR.id == rr.id)
+                        )
+                    ).scalar_one_or_none()
+                    if orig_rr is not None:
+                        orig_rr.status = RepairRequestStatus.CANCELLED
+                        orig_rr.updated_at = utc_now()
+                        session.add(orig_rr)
+                routed_wo_id = sibling_wo.id
+                routed_workshop_id = sibling_wo.vendor_workshop_id
+            else:
+                # No same-workshop WO to merge into — route normally.
+                new_wo = await route_repair_request(
+                    session, repair_request_id=rr.id, actor_id=current.id
+                )
+                if new_wo is not None:
+                    routed_wo_id = new_wo.id
+                    routed_workshop_id = new_wo.vendor_workshop_id
 
     # Resolve workshop label for the response so the frontend doesn't need
     # a second round-trip just to render "Routed to <vendor>".
