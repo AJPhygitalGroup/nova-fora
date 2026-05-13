@@ -295,11 +295,46 @@ class NoteResp(BaseModel):
         )
 
 
+class WoDefectResp(BaseModel):
+    """Defect + reporter + photos in the WO detail payload.
+
+    Shipped as part of WorkOrderDetailResponse so the vendor's WO card can
+    render "what was reported" without a second round-trip to /defects
+    and /defects/{id}/photos. Photos carry presigned GET urls (1h TTL).
+    """
+
+    id: str                    # FD-XXX
+    part: str
+    defect_type: str
+    position: str | None = None
+    source: str
+    reported_at: datetime
+    reported_by: str | None = None     # user.full_name
+    notes: str | None = None
+    photos: list[dict] = Field(default_factory=list)
+    # [{ id, category, url, content_type, size_bytes, width, height,
+    #    uploaded_by, uploaded_at }] — flat dicts so we don't have to
+    # cross-import PhotoResponse into this schema.
+
+
 class WorkOrderDetailResponse(WorkOrderResponse):
     line_items: list[LineItemResponse] = Field(default_factory=list)
     defect_resolutions: list[DefectResolutionResp] = Field(default_factory=list)
     ros: list[WorkOrderRoResp] = Field(default_factory=list)
     notes: list[NoteResp] = Field(default_factory=list)
+    # The defects this WO covers (via WO → RR → repair_request_defects →
+    # defect). Each carries its photos so the vendor sees the field
+    # evidence the inspector captured.
+    defects: list[WoDefectResp] = Field(default_factory=list)
+    # Vehicle context lifted from the joined Vehicle row so the WO card
+    # can render Year / Make / Model / VIN / FMC / last_known_mileage
+    # without a second /vehicles/{id} call.
+    vehicle_year: int | None = None
+    vehicle_make: str | None = None
+    vehicle_model: str | None = None
+    vehicle_vin: str | None = None
+    vehicle_fmc: str | None = None
+    vehicle_mileage: int | None = None
 
 
 # Action bodies
@@ -707,6 +742,75 @@ async def get_work_order(
         .all()
     )
 
+    # Pull every defect attached to this WO's RR plus the reporter user
+    # and the defect's photos. The vendor's card shows the inspector-side
+    # evidence (description + reporter + photo grid) before they accept.
+    from app.models.photo import Photo
+    from app.storage.s3 import generate_download_url
+
+    defect_rows = list(
+        (
+            await session.execute(
+                select(Defect, User)
+                .join(RepairRequestDefect, RepairRequestDefect.defect_id == Defect.id)
+                .outerjoin(User, User.id == Defect.reported_by_id)
+                .where(RepairRequestDefect.repair_request_id == wo.repair_request_id)
+                .order_by(Defect.reported_at.asc())
+            )
+        )
+        .all()
+    )
+    defect_ids = [d.id for d, _u in defect_rows]
+    photos_by_defect: dict[int, list[Photo]] = {did: [] for did in defect_ids}
+    if defect_ids:
+        photo_rows = list(
+            (
+                await session.execute(
+                    select(Photo)
+                    .where(Photo.defect_id.in_(defect_ids))
+                    .where(Photo.is_deleted.is_(False))
+                    .order_by(Photo.uploaded_at.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for p in photo_rows:
+            photos_by_defect.setdefault(p.defect_id, []).append(p)
+
+    defects_payload: list[WoDefectResp] = []
+    for d, reporter in defect_rows:
+        ph_list = photos_by_defect.get(d.id, [])
+        defects_payload.append(WoDefectResp(
+            id=d.id_str,
+            part=(d.part.value if hasattr(d.part, "value") else str(d.part)),
+            defect_type=(d.defect_type.value if hasattr(d.defect_type, "value") else str(d.defect_type)),
+            position=(d.position.value if hasattr(d.position, "value") else d.position),
+            source=(d.source.value if hasattr(d.source, "value") else str(d.source)),
+            reported_at=d.reported_at,
+            reported_by=reporter.full_name if reporter else None,
+            notes=d.notes,
+            photos=[
+                {
+                    "id": p.id_str,
+                    "category": p.category.value if hasattr(p.category, "value") else str(p.category),
+                    "url": generate_download_url(p.storage_key),
+                    "content_type": p.content_type,
+                    "size_bytes": p.size_bytes,
+                    "width": p.width,
+                    "height": p.height,
+                    "uploaded_at": p.uploaded_at.isoformat(),
+                }
+                for p in ph_list
+            ],
+        ))
+
+    # Vehicle context — same Vehicle row the WO already joins for the
+    # display fields, just lift the extra columns the card needs.
+    veh = (
+        await session.execute(select(Vehicle).where(Vehicle.id == wo.vehicle_id))
+    ).scalar_one_or_none()
+
     base = await _build_wo_response(session, wo)
     return WorkOrderDetailResponse(
         **base.model_dump(),
@@ -714,6 +818,13 @@ async def get_work_order(
         defect_resolutions=[DefectResolutionResp.from_model(dr) for dr in drs],
         ros=[WorkOrderRoResp.from_model(r) for r in ros],
         notes=[NoteResp.from_model(n) for n in notes],
+        defects=defects_payload,
+        vehicle_year=veh.year if veh else None,
+        vehicle_make=veh.make if veh else None,
+        vehicle_model=veh.model if veh else None,
+        vehicle_vin=veh.vin if veh else None,
+        vehicle_fmc=veh.fmc if veh else None,
+        vehicle_mileage=veh.mileage if veh else None,
     )
 
 

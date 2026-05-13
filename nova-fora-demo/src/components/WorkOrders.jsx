@@ -802,9 +802,80 @@ function WorkOrderCard({ wo, expanded, onToggle, userRole, currentUserId, onActi
                 <div className="text-sm text-white">{wo.description}</div>
               </div>
 
+              {/* Defects + photos — populated by the V2.0 detail endpoint
+                  (WO → RR → repair_request_defects → defect). Renders only
+                  when there's at least one defect on the response; legacy
+                  WOs without the new payload fall through cleanly. */}
+              {Array.isArray(wo.defects) && wo.defects.length > 0 && (
+                <div className="space-y-2">
+                  <div className="text-[10px] text-navy-400 uppercase tracking-wide flex items-center gap-1.5">
+                    <AlertTriangle size={10} className="text-accent-orange" />
+                    {t('workOrders.card.defectsCountFmt', { count: wo.defects.length, defaultValue: `Reported defects (${wo.defects.length})` })}
+                  </div>
+                  {wo.defects.map((d) => (
+                    <div key={d.id} className="rounded-lg bg-navy-800/40 border border-navy-700/40 p-3 space-y-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-semibold text-white">
+                          {d.part}{d.position ? ` (${d.position})` : ''}
+                        </span>
+                        <span className="text-xs text-navy-400">·</span>
+                        <span className="text-xs text-navy-200">
+                          {(d.defectType || '').replace(/_/g, ' ')}
+                        </span>
+                        <span className="ml-auto text-[10px] font-mono text-navy-500">{d.id}</span>
+                      </div>
+                      <div className="text-[11px] text-navy-400">
+                        {d.reportedBy
+                          ? t('workOrders.card.defectReportedFmt', {
+                              who: d.reportedBy,
+                              when: new Date(d.reportedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+                              defaultValue: `Reported by ${d.reportedBy} · ${new Date(d.reportedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`,
+                            })
+                          : new Date(d.reportedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                      {d.notes && (
+                        <div className="text-[11px] text-navy-300 italic">"{d.notes}"</div>
+                      )}
+                      {Array.isArray(d.photos) && d.photos.length > 0 && (
+                        <div className="flex gap-1.5 flex-wrap">
+                          {d.photos.map((p) => (
+                            <a
+                              key={p.id}
+                              href={p.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block w-16 h-16 rounded-md overflow-hidden border border-navy-700 hover:border-accent-blue/60 transition-colors"
+                              title={t('workOrders.card.openFullPhoto', 'Open full-size photo')}
+                            >
+                              <img src={p.url} alt="" className="w-full h-full object-cover" loading="lazy" />
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {/* WO details grid */}
               <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
-                <Field label={t('workOrders.card.roNumber', 'RO Number')} value={wo.roNumber} mono />
+                {/* RO Number: editable inline when (a) the vendor side is
+                    viewing a pending WO with no RO attached yet and (b) the
+                    workshop is external-mode (the case that ACTUALLY needs
+                    an RO before accept). Otherwise read-only. Saves on blur
+                    via the parent's onAction('add-ro', ...) hook. */}
+                {wo.status === 'pending'
+                  && isDispatcher
+                  && (wo._v2?.statusTrackingMode === 'external' || wo.statusTrackingMode === 'external')
+                  && (!wo.ros || wo.ros.length === 0)
+                  ? (
+                    <InlineRoField
+                      onSave={(value) => onAction('add-ro', { wo, roNumber: value })}
+                    />
+                  )
+                  : (
+                    <Field label={t('workOrders.card.roNumber', 'RO Number')} value={wo.roNumber} mono />
+                  )}
                 <Field label={t('workOrders.card.reportedBy', 'Reported by')} value={wo.reportedBy} />
                 <Field label={t('workOrders.card.lastMileage', 'Last mileage')} value={wo.lastMileage ? `${wo.lastMileage.toLocaleString()} ${t('workOrders.milesShort', 'mi')}` : '—'} />
                 <Field label={t('workOrders.card.fmc', 'FMC')} value={wo.fmc} />
@@ -886,6 +957,56 @@ function Field({ label, value, mono, small, warn }) {
     <div>
       <div className="text-[10px] text-navy-500 uppercase tracking-wide">{label}</div>
       <div className={`${small ? 'text-[11px]' : 'text-xs'} ${mono ? 'font-mono' : ''} ${warn ? 'text-accent-orange' : 'text-white'} truncate`}>{value || '—'}</div>
+    </div>
+  );
+}
+
+/**
+ * InlineRoField — editable RO Number for vendor side of a pending external-mode
+ * WO. The card normally renders Field (read-only "RO Number: N/A") but for
+ * the narrow vendor + pending + external + no-RO case we let the user paste
+ * the number straight from their POS without going through the Accept &
+ * Assign modal.
+ *
+ * Commits via `onSave(value)` which the parent wires to a POST
+ * /work-orders/{id}/ros call (woApi.addRo). Save fires on blur OR Enter.
+ */
+function InlineRoField({ onSave }) {
+  const { t } = useTranslation('dashboard');
+  const [value, setValue] = useState('');
+  const [saving, setSaving] = useState(false);
+  const commit = async () => {
+    const trimmed = value.trim();
+    if (!trimmed || saving) return;
+    setSaving(true);
+    try {
+      await onSave(trimmed);
+      // Parent reloads the WO on success — the field flips to read-only on
+      // the next render because `wo.ros.length > 0`.
+    } catch {
+      // alert already handled by parent
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div onClick={(e) => e.stopPropagation()}>
+      <div className="text-[10px] text-navy-500 uppercase tracking-wide flex items-center gap-1">
+        {t('workOrders.card.roNumber', 'RO Number')}
+        <span className="text-accent-red">*</span>
+      </div>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        }}
+        disabled={saving}
+        placeholder={t('workOrders.card.roNumberPlaceholder', 'RO-2026-…')}
+        className="w-full bg-navy-800/60 border border-navy-700/60 rounded px-2 py-1 text-xs font-mono text-white placeholder-navy-500 outline-none focus:border-accent-blue disabled:opacity-50"
+      />
     </div>
   );
 }
@@ -1053,8 +1174,22 @@ export default function WorkOrders({ user }) {
     setStatusFilters(statusFilters.includes(status) ? statusFilters.filter((s) => s !== status) : [...statusFilters, status]);
   };
 
-  // Action dispatcher
-  const handleAction = (type, wo) => setModal({ type, wo });
+  // Action dispatcher. Most actions just open a modal; a few (currently
+  // just 'add-ro' from the inline RO field on the card) hit the API
+  // directly and refresh.
+  const handleAction = async (type, payload) => {
+    if (type === 'add-ro') {
+      const { wo, roNumber } = payload;
+      try {
+        await woApi.addRo(wo.id, { roNumber, isPrimary: true });
+        await applyDetail(wo.id);
+      } catch (err) {
+        alert(`Couldn't add RO: ${err?.detail || err?.message || 'unknown'}`);
+      }
+      return;
+    }
+    setModal({ type, wo: payload });
+  };
 
   // Apply a hydrated WO into the list (used after every mutation).
   // Re-fetches detail since V2.0 endpoints return the WO without the

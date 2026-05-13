@@ -128,10 +128,13 @@ export function adaptWO(wo, ctx = {}) {
       || (vehicle ? vehiclePrefixedId(vehicle) : `VAN-${wo.vehicleId}`),
     plate:     wo.vehiclePlate || vehicle?.plate || '—',
     fleetId:   wo.vehicleFleetId || vehicle?.fleetId || null,
-    year:      vehicle?.year  || '',
-    make:      vehicle?.make  || '',
-    model:     vehicle?.model || '',
-    vin:       vehicle?.vin   || '',
+    // Prefer the denorm fields the detail endpoint now ships (vehicleYear,
+    // vehicleMake, etc.) so the vendor-side WO card renders the right
+    // year/make/model/VIN/FMC/mileage without a second /vehicles call.
+    year:      wo.vehicleYear  ?? vehicle?.year  ?? '',
+    make:      wo.vehicleMake  ||  vehicle?.make  || '',
+    model:     wo.vehicleModel ||  vehicle?.model || '',
+    vin:       wo.vehicleVin   ||  vehicle?.vin   || '',
 
     // Vendor / workshop
     vendorId:   workshop?.organizationId
@@ -150,16 +153,23 @@ export function adaptWO(wo, ctx = {}) {
       || tech?.fullName
       || tech?.name
       || null,
-    reportedBy: null,  // would need the underlying defect; deferred
+    // Pulled from the first defect's reported_by on the detail response —
+    // good enough for the "who reported this" slot on the vendor card.
+    // For multi-defect WOs we surface the FULL list in `defects` below.
+    reportedBy: wo.defects?.[0]?.reportedBy || null,
 
     // Mileage + commercial
-    lastMileage: wo.lastMileage ?? null,
+    // On a freshly-created WO, lastMileage is null (no tech reading yet).
+    // Fall back to the vehicle's last-known odometer so the vendor sees
+    // something reasonable in the "Last Mileage" slot before they Start.
+    lastMileage: wo.lastMileage ?? wo.vehicleMileage ?? null,
     partsCost:   null,   // moved to line_items in V2.0
     laborCost:   null,   // moved to line_items in V2.0
 
     // RO + FMC
     roNumber: primaryRo?.roNumber || 'N/A',
-    fmc:      null,      // V2.0 doesn't track FMC on the WO
+    // FMC denormed onto the WO detail response from the vehicle row.
+    fmc:      wo.vehicleFmc || null,
 
     // Timestamps
     createdAt:    wo.createdAt,
@@ -188,6 +198,10 @@ export function adaptWO(wo, ctx = {}) {
     vendorWorkshopId: wo.vendorWorkshopId,
     lineItems,
     defectResolutions: wo.defectResolutions || [],
+    // Each row: { id, part, defectType, position, source, reportedAt,
+    //             reportedBy, notes, photos: [{ id, url, ... }] }
+    // Surfaced as-is so the vendor card can render the defect grid + photos.
+    defects: wo.defects || [],
     ros,
 
     // Escape hatch: full raw V2.0 row for any caller that needs it
