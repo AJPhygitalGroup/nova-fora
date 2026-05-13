@@ -338,6 +338,12 @@ async def cmd_seed_dvic_template() -> None:
                         requires_branding=requires_branding,
                         is_active=True,
                     ))
+                    # Per-row flush so any duplicate spec further down in the
+                    # CARGO_ROWS / DOT_ROWS / BOX_TRUCK_ROWS lists takes the
+                    # UPDATE branch on the SELECT above instead of queueing a
+                    # second INSERT that collides on
+                    # uq_dvic_template_class_sec_cat_rule_pos.
+                    await session.flush()
                     new_count += 1
                 else:
                     existing.description = description

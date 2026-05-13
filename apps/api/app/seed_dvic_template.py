@@ -73,7 +73,12 @@ CARGO_ROWS: list[DvicRow] = [
      "Headlight LOW BEAM is not working — driver side", 30, True),
     (S.FRONT_SIDE, "Lights and light covers", P.HEADLIGHT, T.NOT_WORKING, Pos.PASSENGER_SIDE,
      "Headlight LOW BEAM is not working — passenger side", 40, True),
-    (S.FRONT_SIDE, "Lights and light covers", P.HEADLIGHT, T.COVER_CRACKED, None,
+    # The HIGH BEAM row was originally written with T.COVER_CRACKED — clearly a
+    # copy-paste from the row below. The defect_type is NOT_WORKING per the
+    # description; without this fix the row collides with the COVER_CRACKED
+    # row a few lines down on (vehicle_class, section, part_category, rule_id,
+    # position).
+    (S.FRONT_SIDE, "Lights and light covers", P.HEADLIGHT, T.NOT_WORKING, None,
      "Headlight HIGH BEAM is not working", 50, True),
     (S.FRONT_SIDE, "Lights and light covers", P.HAZARD_LIGHT, T.NOT_WORKING, None,
      "Hazard light is not working", 60, True),
