@@ -686,10 +686,11 @@ RULES: list[RuleSpec] = [
      [], False, True, {}, {},
      "Netradyne camera hanging or disconnected from bracket.", G.NETRADYNE),
 
-    # Tail light cover cracked + position picker (PDF says back side, but covers
-    # are on each rear corner)
-    (P.TAIL_LIGHT, T.CRACKED, ALL_CLASSES, C.SEV3,
-     LEFT_RIGHT, True, False, {}, {}, None, None),
+    # NOTE: (P.TAIL_LIGHT, T.CRACKED, ALL_CLASSES, …) was duplicated here —
+    # the earlier "lights" block already lists this exact spec. The second
+    # entry caused a UniqueViolationError on defect_applicability_rule_class_uq
+    # when seeding a fresh DB (both passes queued INSERTs for the same
+    # (rule_id, vehicle_class) pairs without a flush between them).
 
     # Box Truck additions (NOVABODY/core insert_box_truck_dvic_template.py)
     (P.LOW_AIR_WARNING, T.ON_OR_FLASHING, DOT_ONLY, C.SEV2,

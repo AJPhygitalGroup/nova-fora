@@ -400,6 +400,12 @@ async def cmd_seed_defect_catalog() -> None:
                 session.add(
                     PartGroupDefault(part=part, group=group, rationale=rationale)
                 )
+                # Per-row flush so a duplicate entry in PART_GROUP_DEFAULTS
+                # doesn't trip the primary-key UNIQUE constraint at the
+                # batched INSERT (the second iteration's SELECT-before-add
+                # would otherwise see an empty table and queue a second
+                # insert for the same `part` value).
+                await session.flush()
                 pgd_new += 1
             else:
                 row.group = group
@@ -426,6 +432,10 @@ async def cmd_seed_defect_catalog() -> None:
                         is_primary=is_primary, display_group=display_group,
                     )
                 )
+                # Same per-row flush rationale as in part_group_default —
+                # any future duplicate (part, system) pair in the seed list
+                # would otherwise collide on the table's PK at batch time.
+                await session.flush()
                 ps_new += 1
             else:
                 row.is_primary = is_primary
@@ -514,6 +524,13 @@ async def cmd_seed_defect_catalog() -> None:
                             needs_review=app_dict["needs_review"],
                         )
                     )
+                    # Flush per row so a downstream duplicate spec in the
+                    # RULES list (e.g. two specs sharing (part, defect_type)
+                    # but written separately for ICE vs EV schemas) finds
+                    # the just-inserted applicability row on its SELECT and
+                    # takes the UPDATE branch instead of queueing a second
+                    # INSERT that collides on defect_applicability_rule_class_uq.
+                    await session.flush()
                     app_new += 1
                 else:
                     existing.valid_positions = app_dict["valid_positions"]
