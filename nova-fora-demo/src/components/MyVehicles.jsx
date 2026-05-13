@@ -1151,34 +1151,55 @@ function LocationBadge({ v, canEditLocation, onChange }) {
 
 function VehicleTable({ vans, isVendor, canEdit, onRowClick, onCopy, copiedId, onLocationChange }) {
   const { t } = useTranslation('fleet');
+  // Tighter row layout (2026-05-12): the Amazon Logistics spreadsheet ships
+  // verbose model strings like "2020 Ford Stripped Chassis 4X2 Chassis
+  // 178.2-228.2 in. WB" that blew the table out into a horizontal scroller
+  // on any normal-sized screen. We now:
+  //   - cap the make/model cell at ~200px and truncate (full string on
+  //     hover via the title attr),
+  //   - move year onto a small caption line above the make so the column
+  //     reads "2020 / Ford Stripped Chassis…" in two lines,
+  //   - drop the unit suffix on mileage (the column header already says
+  //     "Mileage"), and tighten cell padding from px-4 → px-3.
+  // `table-fixed` would force equal-width cells; we keep `auto` and rely on
+  // the truncate + max-width on the model cell to do the work.
   return (
     <table className="w-full">
       <thead>
         <tr className="border-b border-navy-800 bg-navy-950/40">
-          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">{t('myVehicles.table.fleetId', 'Fleet ID')}</th>
-          {isVendor && <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">DSP</th>}
-          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">{t('myVehicles.table.yearMakeModel', 'Year / Make / Model')}</th>
-          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">VIN</th>
-          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">{t('myVehicles.table.plate', 'Plate')}</th>
-          <th className="text-right text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">{t('myVehicles.table.mileage', 'Mileage')}</th>
-          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">{t('myVehicles.table.class', 'Class')}</th>
-          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">FMC</th>
-          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">{t('myVehicles.table.status', 'Status')}</th>
-          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">{t('myVehicles.table.location', 'Location')}</th>
-          <th className="text-right text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-4 py-3">{t('myVehicles.table.actions', 'Actions')}</th>
+          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-3 py-3">{t('myVehicles.table.fleetId', 'Fleet ID')}</th>
+          {isVendor && <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-3 py-3">DSP</th>}
+          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-3 py-3">{t('myVehicles.table.vehicle', 'Vehicle')}</th>
+          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-3 py-3">VIN</th>
+          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-3 py-3">{t('myVehicles.table.plate', 'Plate')}</th>
+          <th className="text-right text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-3 py-3">{t('myVehicles.table.mileage', 'Mileage')}</th>
+          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-3 py-3">{t('myVehicles.table.class', 'Class')}</th>
+          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-3 py-3">FMC</th>
+          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-3 py-3">{t('myVehicles.table.status', 'Status')}</th>
+          <th className="text-left text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-3 py-3">{t('myVehicles.table.location', 'Location')}</th>
+          <th className="text-right text-[10px] uppercase tracking-wide text-navy-400 font-semibold px-3 py-3">{t('myVehicles.table.actions', 'Actions')}</th>
         </tr>
       </thead>
       <tbody>
         {vans.map((v) => (
           <tr key={v.fleetId} onClick={() => onRowClick(v)}
             className="border-b border-navy-800/60 last:border-b-0 hover:bg-navy-800/40 cursor-pointer transition-colors">
-            <td className="px-4 py-3 text-sm font-semibold text-white">{v.fleetId}</td>
-            {isVendor && <td className="px-4 py-3 text-sm text-navy-200">{v.dsp}</td>}
-            <td className="px-4 py-3 text-sm text-white whitespace-nowrap">{v.year} {v.make} <span className="text-navy-400">{v.model}</span></td>
-            <td className="px-4 py-3 text-xs font-mono text-navy-300">{v.vin}</td>
-            <td className="px-4 py-3 text-sm text-white whitespace-nowrap">{v.plate}</td>
-            <td className="px-4 py-3 text-sm text-white text-right whitespace-nowrap font-mono">{v.mileage?.toLocaleString() || '—'} {t('myVehicles.milesShort', 'mi')}</td>
-            <td className="px-4 py-3 whitespace-nowrap">
+            <td className="px-3 py-3 text-sm font-semibold text-white">{v.fleetId}</td>
+            {isVendor && <td className="px-3 py-3 text-sm text-navy-200">{v.dsp}</td>}
+            <td
+              className="px-3 py-3 text-sm text-white max-w-[200px]"
+              title={`${v.year || ''} ${v.make || ''} ${v.model || ''}`.trim()}
+            >
+              <div className="text-[10px] text-navy-400 leading-tight">{v.year}</div>
+              <div className="truncate leading-tight">
+                {v.make}
+                {v.model ? <span className="text-navy-400"> {v.model}</span> : null}
+              </div>
+            </td>
+            <td className="px-3 py-3 text-xs font-mono text-navy-300">{v.vin}</td>
+            <td className="px-3 py-3 text-sm text-white whitespace-nowrap">{v.plate}</td>
+            <td className="px-3 py-3 text-sm text-white text-right whitespace-nowrap font-mono">{v.mileage?.toLocaleString() || '—'}</td>
+            <td className="px-3 py-3 whitespace-nowrap">
               <Badge variant="gold">
                 {VEHICLE_TYPE_LABEL[v.vehicleClass] || v.vehicleClass}
               </Badge>
@@ -1188,18 +1209,18 @@ function VehicleTable({ vans, isVendor, canEdit, onRowClick, onCopy, copiedId, o
                 </span>
               )}
             </td>
-            <td className="px-4 py-3 text-sm text-navy-300">{v.fmc}</td>
-            <td className="px-4 py-3">
+            <td className="px-3 py-3 text-sm text-navy-300">{v.fmc}</td>
+            <td className="px-3 py-3">
               {v.defectCount === 0 ? (
                 <Badge variant="green"><CheckCircle2 size={9} className="inline mr-0.5" /> {t('myVehicles.cleanBadge', 'Clean')}</Badge>
               ) : (
                 <Badge variant="gold">{t('myVehicles.defectsBadgeFmt', { count: v.defectCount, defaultValue: `${v.defectCount} ${v.defectCount === 1 ? 'defect' : 'defects'}` })}</Badge>
               )}
             </td>
-            <td className="px-4 py-3">
+            <td className="px-3 py-3">
               <LocationBadge v={v} canEditLocation={canEdit && !isVendor} onChange={onLocationChange} />
             </td>
-            <td className="px-4 py-3 text-right">
+            <td className="px-3 py-3 text-right">
               <div className="flex items-center justify-end gap-1">
                 <button
                   onClick={(e) => { e.stopPropagation(); onCopy(v); }}
