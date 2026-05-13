@@ -136,7 +136,28 @@ function ScheduledRepairItem({ item, onChanged }) {
   // Persisted state lives on the WO row. Local copies let the UI update
   // optimistically while the API call is in flight; on failure we revert.
   const [dspResponse, setDspResponse] = useState(item.dspResponse || '');
-  const [keyLocation, setKeyLocation] = useState(item.keyLocation || '');
+  // The dropdown's *selection* (the literal value the picker shows: one of
+  // KEY_LOCATION_OPTIONS or '' for the placeholder). When the inspector
+  // picks 'Other', a free-text field appears and stores its value in
+  // `keyLocationCustom`. The effective string sent to the API is whichever
+  // of the two is meaningful — see `effectiveKeyLocation` below.
+  //
+  // Earlier version reused a single `keyLocation` state for both, which
+  // meant typing in the "Other" input immediately stomped the dropdown
+  // selection ("Other" → "a") and the AnimatePresence block hiding the
+  // input on `keyLocation !== 'Other'` made it disappear after the first
+  // keystroke. Splitting them keeps the input mounted while the user types.
+  const initialKey = item.keyLocation || '';
+  const isInitialKnown = KEY_LOCATION_OPTIONS.includes(initialKey);
+  const [keyLocationSelect, setKeyLocationSelect] = useState(
+    initialKey === '' ? '' : (isInitialKnown ? initialKey : 'Other')
+  );
+  const [keyLocationCustom, setKeyLocationCustom] = useState(
+    isInitialKnown ? '' : initialKey
+  );
+  const effectiveKeyLocation = keyLocationSelect === 'Other'
+    ? keyLocationCustom.trim()
+    : keyLocationSelect;
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
 
@@ -149,7 +170,7 @@ function ScheduledRepairItem({ item, onChanged }) {
     try {
       await workOrdersApi.dspResponse(item.woId, {
         response,
-        keyLocation: opts.keyLocation ?? keyLocation ?? null,
+        keyLocation: opts.keyLocation ?? effectiveKeyLocation ?? null,
       });
       onChanged?.();
     } catch (err) {
@@ -204,7 +225,9 @@ function ScheduledRepairItem({ item, onChanged }) {
         <div className="rounded-lg bg-accent-green/10 border border-accent-green/30 px-3 py-2 text-xs">
           <div className="flex items-center gap-2 text-accent-green font-semibold">
             <Check size={12} /> {t('scheduledRepair.confirmedBadge', 'Confirmed — keys: ')}
-            <span className="text-white font-normal truncate">{keyLocation || '—'}</span>
+            <span className="text-white font-normal truncate">
+              {item.keyLocation || effectiveKeyLocation || '—'}
+            </span>
           </div>
           <button
             onClick={() => { setDspResponse(''); setErrorMsg(null); }}
@@ -234,8 +257,8 @@ function ScheduledRepairItem({ item, onChanged }) {
               {t('scheduledRepair.keyLocationLabel', 'Key Location')}
             </label>
             <select
-              value={keyLocation}
-              onChange={(e) => setKeyLocation(e.target.value)}
+              value={keyLocationSelect}
+              onChange={(e) => setKeyLocationSelect(e.target.value)}
               disabled={busy}
               className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-navy-200 outline-none focus:border-accent-blue cursor-pointer">
               <option value="">{t('scheduledRepair.selectLocation', 'Select location…')}</option>
@@ -245,7 +268,7 @@ function ScheduledRepairItem({ item, onChanged }) {
             </select>
           </div>
           <AnimatePresence>
-            {keyLocation === 'Other' && (
+            {keyLocationSelect === 'Other' && (
               <motion.div
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: 'auto' }}
@@ -253,8 +276,8 @@ function ScheduledRepairItem({ item, onChanged }) {
                 className="overflow-hidden">
                 <input
                   type="text"
-                  value={keyLocation === 'Other' ? '' : keyLocation}
-                  onChange={(e) => setKeyLocation(e.target.value)}
+                  value={keyLocationCustom}
+                  onChange={(e) => setKeyLocationCustom(e.target.value)}
                   placeholder={t('scheduledRepair.keyLocationPlaceholder',
                     'e.g. Glove box, driver seat pocket…')}
                   className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue"
@@ -268,7 +291,7 @@ function ScheduledRepairItem({ item, onChanged }) {
           <div className="flex flex-wrap items-center gap-2 pt-1">
             <button
               onClick={() => callResponse('confirmed')}
-              disabled={busy || !keyLocation}
+              disabled={busy || !effectiveKeyLocation}
               className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-accent-green text-white text-xs font-semibold hover:opacity-90 disabled:opacity-40 cursor-pointer">
               <Check size={12} /> {t('scheduledRepair.confirm', 'Confirm')}
             </button>
