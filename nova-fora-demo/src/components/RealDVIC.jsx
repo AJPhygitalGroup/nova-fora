@@ -523,13 +523,32 @@ function ImmediateDetailRenderer({ items, onApprove, onReject }) {
   // Local state tracks which items were approved or rejected in this session
   const [actions, setActions] = useState({}); // { [label]: 'approved' | 'rejected' }
 
-  const handleApprove = (it) => {
-    setActions({ ...actions, [it.label]: 'approved' });
-    onApprove?.(it);
+  // Optimistic update — flip to approved/rejected immediately, then roll back
+  // if the parent's async handler throws. The parent's onApprove/onReject
+  // now wraps the V2.0 defectReviews API and re-throws on failure.
+  const handleApprove = async (it) => {
+    setActions((a) => ({ ...a, [it.label]: 'approved' }));
+    try {
+      await onApprove?.(it);
+    } catch {
+      setActions((a) => {
+        const c = { ...a };
+        delete c[it.label];
+        return c;
+      });
+    }
   };
-  const handleReject = (it) => {
-    setActions({ ...actions, [it.label]: 'rejected' });
-    onReject?.(it);
+  const handleReject = async (it) => {
+    setActions((a) => ({ ...a, [it.label]: 'rejected' }));
+    try {
+      await onReject?.(it);
+    } catch {
+      setActions((a) => {
+        const c = { ...a };
+        delete c[it.label];
+        return c;
+      });
+    }
   };
 
   const pending = items.filter((it) => !actions[it.label]);
@@ -674,13 +693,47 @@ function ScheduledRepairsGrouped({ items }) {
   );
 }
 
-function CardDetailModal({ cardKey, onClose, onOpenVehicleReport, onApproveDefect, onOrderFlexFleet, liveInspected, liveDefects }) {
+function CardDetailModal({
+  cardKey, onClose, onOpenVehicleReport, onOrderFlexFleet,
+  liveInspected, liveDefects, pendingReviewQueue, onQueueChanged,
+}) {
   const { t } = useTranslation('dashboard');
   if (!cardKey) return null;
   let data = cardDetails[cardKey];
   // Override the static English title with a localized one (the mock summary
   // stays as fallback only — both 'reported' and 'inspected' override it below).
   data = { ...data, title: t(`cardDetail.title.${cardKey}`, data.title) };
+  // Override the 'immediate' card with the live /defect-reviews/queue payload
+  // when available. Each item carries the real `defectId` so the renderer's
+  // Approve/Reject buttons can hit defectReviews.approve / .reject directly.
+  // Fallback to the static mock items if the queue hasn't loaded (e.g. when
+  // the user opens the card before the parent's fetch completes).
+  if (cardKey === 'immediate' && Array.isArray(pendingReviewQueue)) {
+    const items = pendingReviewQueue.map((q) => ({
+      // The label is the prefixed van id ("VAN-0042"); keeping it as a string
+      // so the existing renderer's mock-data lookups still work for any rows
+      // that fall back to the static list.
+      label: `VAN-${String(q.vehicleId).padStart(4, '0')}`,
+      title: `${q.part}${q.position ? ` (${q.position})` : ''} — ${(q.defectType || '').replace(/_/g, ' ')}`,
+      meta: `Reported ${new Date(q.reportedAt).toLocaleString([], {
+        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+      })} · ${Math.round(q.hoursPending)}h pending`,
+      section: q.source === 'inspection' ? 'Inspection' : 'Off-inspection',
+      part: q.part,
+      // Real backend defect id — used by the V2.0 approve / reject calls.
+      defectId: q.id,
+    }));
+    data = {
+      ...data,
+      summary: items.length
+        ? t('cardDetail.summary.immediateFmt', {
+            count: items.length,
+            defaultValue: `${items.length} ${items.length === 1 ? 'defect' : 'defects'} awaiting your approval`,
+          })
+        : t('cardDetail.summary.immediateEmpty', 'No defects pending approval'),
+      items,
+    };
+  }
   // Override the 'reported' card with live /defects/v2 data when present.
   // Map the v2 wire shape (camelCased) into the modal's flat item shape.
   if (cardKey === 'reported' && Array.isArray(liveDefects)) {
@@ -800,7 +853,40 @@ function CardDetailModal({ cardKey, onClose, onOpenVehicleReport, onApproveDefec
           {cardKey === 'inspected' ? (
             <InspectedDetailRenderer data={data} onOpenVehicleReport={onOpenVehicleReport} />
           ) : cardKey === 'immediate' ? (
-            <ImmediateDetailRenderer items={data.items} onApprove={onApproveDefect} />
+            <ImmediateDetailRenderer
+              items={data.items}
+              onApprove={async (it) => {
+                // Items sourced from the live queue carry the real defectId;
+                // mock-fallback rows don't, so skip silently if missing.
+                if (!it.defectId) return;
+                const { defectReviews } = await import('../api/client');
+                try {
+                  const res = await defectReviews.approve(it.defectId, {
+                    reason: 'Approved via Immediate Action panel',
+                  });
+                  if (res?.routedWorkshopName) {
+                    alert(`✓ ${res.routedWorkOrderId || 'Work order'} routed to ${res.routedWorkshopName}`);
+                  }
+                  onQueueChanged?.();
+                } catch (err) {
+                  alert(`Approve failed: ${err?.detail || err?.message || 'unknown'}`);
+                  throw err;  // let the renderer roll back optimistic state
+                }
+              }}
+              onReject={async (it) => {
+                if (!it.defectId) return;
+                const { defectReviews } = await import('../api/client');
+                try {
+                  await defectReviews.reject(it.defectId, {
+                    reason: 'Rejected via Immediate Action panel',
+                  });
+                  onQueueChanged?.();
+                } catch (err) {
+                  alert(`Reject failed: ${err?.detail || err?.message || 'unknown'}`);
+                  throw err;
+                }
+              }}
+            />
           ) : data.scheduledItems ? (
             <ScheduledRepairsGrouped items={data.scheduledItems} />
           ) : data.groups ? (
@@ -2775,6 +2861,13 @@ export default function RealDVIC({ user }) {
   // in the fleet (including approved/rejected/repaired), inflating the
   // home dashboard tile.
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
+  // Hold the full queue payload so the "Immediate Action Required" modal can
+  // render real defect cards (each with the underlying defectId so its
+  // Approve/Reject buttons hit defectReviews.approve / .reject directly).
+  const [pendingReviewQueue, setPendingReviewQueue] = useState([]);
+  // A bumpable tick: anything that needs the queue refreshed (e.g. after a
+  // defect was approved from the modal) increments this so the effect refires.
+  const [queueRefreshTick, setQueueRefreshTick] = useState(0);
   useEffect(() => {
     let cancelled = false;
     defectReviewsApi
@@ -2782,13 +2875,15 @@ export default function RealDVIC({ user }) {
       .then((res) => {
         if (cancelled) return;
         setPendingApprovalCount(res.total ?? (res.items?.length ?? 0));
+        setPendingReviewQueue(res.items || []);
       })
-      .catch((err) => console.warn('pending-review count failed', err));
+      .catch((err) => console.warn('pending-review queue failed', err));
     return () => { cancelled = true; };
     // refetch when a new defect lands via SSE (totalDefectsToday changes)
-    // or after the inspection wizard closes.
+    // or after the inspection wizard closes — or any time something in the
+    // modal flagged the queue as stale via setQueueRefreshTick.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [totalDefectsToday, wizardJustClosed]);
+  }, [totalDefectsToday, wizardJustClosed, queueRefreshTick]);
   // Repairs still waiting for DSP feedback (thumbs up/down) on the vendor's work
   const repairsPendingFeedback = repairedDefectsCount;
   // Next inspection date auto-computed from the org's inspection frequency
@@ -3153,6 +3248,8 @@ export default function RealDVIC({ user }) {
             onClose={() => setOpenCard(null)}
             liveInspected={todayInspected}
             liveDefects={liveDefects}
+            pendingReviewQueue={pendingReviewQueue}
+            onQueueChanged={() => setQueueRefreshTick((n) => n + 1)}
             onOrderFlexFleet={isDspHome ? () => { setOpenCard(null); setShowFlexFleet(true); } : null}
             onOpenVehicleReport={(van) => {
               // Close the Vans Inspected modal first, then pop the appropriate
@@ -3164,20 +3261,6 @@ export default function RealDVIC({ user }) {
               } else {
                 setVehicleReportVan({ ...van, ...(vanUpdates[van.id] || {}) });
               }
-            }}
-            onApproveDefect={(item) => {
-              // Close the Immediate modal and open the Create WO modal pre-filled with
-              // the defect info so the DSP can choose a vendor and send it off.
-              setOpenCard(null);
-              const fleetVan = fleetSnapshotVans.find((fv) => fv.id === item.label);
-              setCreateWOContext({
-                van: fleetVan || null,
-                defect: {
-                  section: item.section || '',
-                  part: item.part || '',
-                  description: item.title || '',
-                },
-              });
             }}
           />
         )}
