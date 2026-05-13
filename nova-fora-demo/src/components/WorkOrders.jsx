@@ -893,8 +893,25 @@ function WorkOrderCard({ wo, expanded, onToggle, userRole, currentUserId, onActi
               </span>
             )}
             {wo.scheduledAt && (
-              <span className="flex items-center gap-1 text-accent-blue">
-                <Clock size={10} /> {wo.scheduledAt}
+              <span className={`flex items-center gap-1 ${
+                wo.dspResponse === 'confirmed' ? 'text-accent-green'
+                  : wo.dspResponse === 'not_available' ? 'text-accent-gold'
+                  : 'text-accent-blue'
+              }`}>
+                <Clock size={10} />
+                {new Date(wo.scheduledAt).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                {wo.dspResponse === 'confirmed' && wo.keyLocation && (
+                  <span className="text-navy-300">
+                    {' '}· {t('workOrders.card.keysShort', 'Keys:')}{' '}
+                    <span className="text-white">{wo.keyLocation}</span>
+                  </span>
+                )}
+                {wo.dspResponse === 'confirmed' && !wo.keyLocation && (
+                  <Check size={10} className="ml-0.5" />
+                )}
+                {wo.dspResponse === 'not_available' && (
+                  <AlertTriangle size={10} className="ml-0.5" />
+                )}
               </span>
             )}
           </div>
@@ -907,6 +924,65 @@ function WorkOrderCard({ wo, expanded, onToggle, userRole, currentUserId, onActi
         {expanded && (
           <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden border-t border-navy-800">
             <div className="px-4 py-4 space-y-4">
+              {/* Scheduling + DSP-confirmation banner. Shown first when
+                  the DSP has actually responded — that's the cue the
+                  service writer / tech needs to plan the pickup. Three
+                  states:
+                    confirmed       — green, shows where the keys are
+                    not_available  — gold, vendor needs to reschedule
+                    null + slot    — blue, "awaiting DSP confirmation"
+                  No banner at all when scheduled_at is still NULL. */}
+              {wo.scheduledAt && wo.dspResponse === 'confirmed' && (
+                <div className="rounded-lg bg-accent-green/10 border border-accent-green/30 px-3 py-2.5 flex items-start gap-2.5">
+                  <CheckCircle2 size={14} className="text-accent-green shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0 text-xs">
+                    <div className="text-accent-green font-semibold mb-0.5">
+                      {t('workOrders.card.dspConfirmed', 'DSP confirmed pickup')}
+                    </div>
+                    <div className="text-navy-200">
+                      {t('workOrders.card.keyLocationLabel', 'Keys at:')}{' '}
+                      <span className="text-white font-semibold">{wo.keyLocation || '—'}</span>
+                    </div>
+                    <div className="text-[11px] text-navy-400 mt-0.5">
+                      {new Date(wo.scheduledAt).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      {wo.repairBucket && (
+                        <> · <span className="uppercase tracking-wide">{wo.repairBucket}</span></>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {wo.scheduledAt && wo.dspResponse === 'not_available' && (
+                <div className="rounded-lg bg-accent-gold/10 border border-accent-gold/30 px-3 py-2.5 flex items-start gap-2.5">
+                  <AlertTriangle size={14} className="text-accent-gold shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0 text-xs">
+                    <div className="text-accent-gold font-semibold mb-0.5">
+                      {t('workOrders.card.dspNotAvailable', 'DSP flagged van as not available')}
+                    </div>
+                    <div className="text-navy-300">
+                      {t('workOrders.card.rescheduleHint',
+                        'Reschedule for a different slot — the DSP can\'t deliver the van at the proposed time.')}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {wo.scheduledAt && !wo.dspResponse && (
+                <div className="rounded-lg bg-accent-blue/5 border border-accent-blue/30 px-3 py-2.5 flex items-start gap-2.5">
+                  <Hourglass size={14} className="text-accent-blue shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0 text-xs">
+                    <div className="text-accent-blue font-semibold mb-0.5">
+                      {t('workOrders.card.awaitingDspConfirm', 'Awaiting DSP confirmation')}
+                    </div>
+                    <div className="text-navy-300">
+                      {new Date(wo.scheduledAt).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      {wo.repairBucket && (
+                        <> · <span className="uppercase tracking-wide">{wo.repairBucket}</span></>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Description */}
               <div className="rounded-lg bg-navy-800/40 border border-navy-700/40 p-3">
                 <div className="text-[10px] text-navy-400 uppercase tracking-wide mb-1">{t('workOrders.card.defectDescription', 'Defect description')}</div>
