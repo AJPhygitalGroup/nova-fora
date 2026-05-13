@@ -374,7 +374,17 @@ function CompleteWorkModal({ wo, onComplete, onClose }) {
     const setBusy = kind === 'odo' ? setUploadingOdo : setUploadingWork;
     const setFile = kind === 'odo' ? setOdometerFile : setWorkFile;
     const setPath = kind === 'odo' ? setOdometerPath : setWorkPath;
-    setFile({ name: file.name, size: file.size });
+    // Generate a local blob URL for the thumbnail so the tech sees what
+    // they just snapped without waiting for the round-trip to MinIO. The
+    // URL is revoked when the file slot is cleared (handled below) and
+    // when the modal unmounts (effect at the top of the component).
+    const previous = kind === 'odo' ? odometerFile : workFile;
+    if (previous?.preview) URL.revokeObjectURL(previous.preview);
+    let preview = null;
+    if (file.type && file.type.startsWith('image/')) {
+      try { preview = URL.createObjectURL(file); } catch { preview = null; }
+    }
+    setFile({ name: file.name, size: file.size, preview });
     setBusy(true);
     try {
       const { uploads } = await import('../api/client');
@@ -389,12 +399,23 @@ function CompleteWorkModal({ wo, onComplete, onClose }) {
     } catch (err) {
       console.error(`upload ${kind} failed`, err);
       alert(`Upload failed: ${err?.detail || err?.message || 'unknown'}`);
+      if (preview) URL.revokeObjectURL(preview);
       setFile(null);
       setPath(null);
     } finally {
       setBusy(false);
     }
   };
+
+  // Revoke any in-flight blob URLs when the modal unmounts so we don't
+  // leak the preview's underlying File reference past the dialog's life.
+  useEffect(() => {
+    return () => {
+      if (odometerFile?.preview) URL.revokeObjectURL(odometerFile.preview);
+      if (workFile?.preview) URL.revokeObjectURL(workFile.preview);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSubmit = async () => {
     setMileageError(null);
@@ -420,16 +441,35 @@ function CompleteWorkModal({ wo, onComplete, onClose }) {
 
   const PhotoTile = ({ file, busy, onPick, captureLabel, hint }) => (
     <label className="flex items-center gap-3 px-4 py-3 rounded-lg border-2 border-dashed border-navy-700/60 bg-navy-800/20 active:bg-navy-800/60 hover:bg-navy-800/40 cursor-pointer transition-colors min-h-[64px]">
-      <div className="w-10 h-10 rounded-lg bg-accent-blue/15 flex items-center justify-center shrink-0">
-        <Camera size={16} className="text-accent-blue" />
-      </div>
+      {/* Thumbnail when there's a local preview; camera icon otherwise.
+          The blob URL is created/revoked in handleFilePicked above so the
+          preview survives any re-render while the modal is open. */}
+      {file?.preview ? (
+        <div className="w-12 h-12 rounded-lg overflow-hidden border border-navy-600 shrink-0 relative">
+          <img
+            src={file.preview}
+            alt=""
+            className={`w-full h-full object-cover ${busy ? 'opacity-60' : ''}`}
+          />
+          {busy && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+              <motion.div
+                animate={{ rotate: 360 }}
+                transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full"
+              />
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="w-12 h-12 rounded-lg bg-accent-blue/15 flex items-center justify-center shrink-0">
+          <Camera size={16} className="text-accent-blue" />
+        </div>
+      )}
       <div className="flex-1 text-xs min-w-0">
         {file ? (
           <>
-            <div className="text-white font-semibold truncate flex items-center gap-1.5">
-              {busy && <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-3 h-3 border-2 border-accent-blue/40 border-t-accent-blue rounded-full" />}
-              {file.name}
-            </div>
+            <div className="text-white font-semibold truncate">{file.name}</div>
             <div className="text-navy-400">{(file.size / 1024).toFixed(0)} KB · {busy ? t('workOrders.completeModal.uploading', 'uploading…') : t('workOrders.completeModal.uploaded', '✓ uploaded')}</div>
           </>
         ) : (
