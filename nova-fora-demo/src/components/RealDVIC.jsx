@@ -2878,12 +2878,15 @@ export default function RealDVIC({ user }) {
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
               onClick={() => setOpenCard('reported')}
               className="relative bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl p-5 hover:border-navy-600/60 transition-all cursor-pointer h-full flex flex-col">
-              {/* V1 had a "+" button here that opened CreateWorkOrderModal with
-                  no source defect — that path is dead in V2.0 (WOs are now
-                  derived from approved defects via the bundler+router). The
-                  button was removed so users go through the Defects tab to
-                  approve a defect, which auto-routes to the right vendor
-                  based on its repair_type. */}
+              <div className="flex items-start justify-end mb-3">
+                <button
+                  onClick={(e) => { e.stopPropagation(); setCreateWOContext({ van: null, defect: null }); }}
+                  className="w-9 h-9 rounded-full bg-accent-blue/15 border border-accent-blue/40 text-accent-blue hover:bg-accent-blue/25 transition-colors cursor-pointer flex items-center justify-center"
+                  title={t('realDvic.metrics.createWOTitle', 'Create work order (no inspection required)')}
+                >
+                  <Plus size={18} />
+                </button>
+              </div>
               <div className="text-center">
                 <div className="text-2xl font-bold text-white mb-1">{totalDefectsToday}</div>
                 <div className="text-sm text-navy-400">{t('realDvic.metrics.reportedToday', 'DSP-reported defects today')}</div>

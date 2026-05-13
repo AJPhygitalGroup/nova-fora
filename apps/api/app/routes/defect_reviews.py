@@ -36,6 +36,7 @@ from app.models.work_orders import (
     DefectReview,
     DefectReviewDecision,
     RepairRequestStatus,
+    VendorWorkshop,
     WorkOrder,
 )
 from app.services.wo_bundler import consider_defect_for_bundling
@@ -79,9 +80,24 @@ class DefectReviewResponse(BaseModel):
     reviewed_at: datetime
     reason: str | None = None
     created_at: datetime
+    # Populated when this approval triggered the inline router. Lets the
+    # UI surface a "Routed to <vendor>" toast instead of leaving the DSP
+    # wondering where the WO went.
+    routed_workshop_id: int | None = None
+    routed_workshop_name: str | None = None
+    routed_repair_type: str | None = None
+    routed_work_order_id: str | None = None     # WO-XXXXX
 
     @classmethod
-    def from_model(cls, r: DefectReview) -> "DefectReviewResponse":
+    def from_model(
+        cls,
+        r: DefectReview,
+        *,
+        routed_workshop_id: int | None = None,
+        routed_workshop_name: str | None = None,
+        routed_repair_type: str | None = None,
+        routed_work_order_id: str | None = None,
+    ) -> "DefectReviewResponse":
         return cls(
             id=r.id,
             defect_id=r.defect_id,
@@ -97,6 +113,10 @@ class DefectReviewResponse(BaseModel):
             reviewed_at=r.reviewed_at,
             reason=r.reason,
             created_at=r.created_at,
+            routed_workshop_id=routed_workshop_id,
+            routed_workshop_name=routed_workshop_name,
+            routed_repair_type=routed_repair_type,
+            routed_work_order_id=routed_work_order_id,
         )
 
 
@@ -315,8 +335,10 @@ async def approve_defect(
     # `rr.status`, so a second approval within the window still finds the
     # same OPEN RR via the bundler. The `not _rr_has_live_wo` guard below
     # then skips re-routing if a WO already exists for that RR.
+    routed_wo_id: int | None = None
+    routed_workshop_id: int | None = None
     if rr is not None and rr.status == RepairRequestStatus.OPEN:
-        has_wo = (
+        existing_wo = (
             await session.execute(
                 select(WorkOrder)
                 .where(WorkOrder.repair_request_id == rr.id)
@@ -324,13 +346,51 @@ async def approve_defect(
                 .limit(1)
             )
         ).scalar_one_or_none()
-        if has_wo is None:
-            await route_repair_request(
+        if existing_wo is None:
+            new_wo = await route_repair_request(
                 session, repair_request_id=rr.id, actor_id=current.id
             )
+            if new_wo is not None:
+                routed_wo_id = new_wo.id
+                routed_workshop_id = new_wo.vendor_workshop_id
+        else:
+            # Sibling bundling case — the new defect joined an RR that
+            # already has a WO. Surface that WO so the UI can still tell
+            # the DSP "your defect was added to WO-12345 at Capital Body
+            # Shop" instead of leaving them in the dark.
+            routed_wo_id = existing_wo.id
+            routed_workshop_id = existing_wo.vendor_workshop_id
+
+    # Resolve workshop label for the response so the frontend doesn't need
+    # a second round-trip just to render "Routed to <vendor>".
+    routed_workshop_name: str | None = None
+    if routed_workshop_id is not None:
+        ws = (
+            await session.execute(
+                select(VendorWorkshop).where(VendorWorkshop.id == routed_workshop_id)
+            )
+        ).scalar_one_or_none()
+        if ws is not None:
+            routed_workshop_name = ws.name
+
+    routed_repair_type: str | None = None
+    if rr is not None:
+        routed_repair_type = (
+            rr.repair_type.value if hasattr(rr.repair_type, "value")
+            else str(rr.repair_type)
+        )
+
     await session.commit()
     await session.refresh(review)
-    return DefectReviewResponse.from_model(review)
+    return DefectReviewResponse.from_model(
+        review,
+        routed_workshop_id=routed_workshop_id,
+        routed_workshop_name=routed_workshop_name,
+        routed_repair_type=routed_repair_type,
+        routed_work_order_id=(
+            f"WO-{routed_wo_id:05d}" if routed_wo_id is not None else None
+        ),
+    )
 
 
 @router.post(

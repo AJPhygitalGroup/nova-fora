@@ -182,13 +182,18 @@ export default function Defects({ user }) {
 
   const handleCreateWO = async (d) => {
     // V2.0: "Create WO" is shorthand for "approve the defect scope". The
-    // backend writes a defect_reviews row + fires the bundler synchronously,
-    // which creates (or attaches to) an OPEN RR. The router places the RR
-    // with a workshop on its own cadence (cron / bundle-route-cron).
+    // backend writes a defect_reviews row, runs the bundler, AND now routes
+    // inline — the response carries routed_workshop_name + routed_work_order_id
+    // so we can immediately tell the DSP which vendor received the WO.
     try {
-      await defectReviews.approve(d.id, {
+      const res = await defectReviews.approve(d.id, {
         reason: 'Approved via Defects view',
       });
+      if (res?.routedWorkshopName) {
+        alert(`✓ ${res.routedWorkOrderId || 'Work order'} routed to ${res.routedWorkshopName}`);
+      } else {
+        alert("Defect approved — no eligible vendor workshop found for this repair type yet. It's queued for routing once a matching workshop is registered.");
+      }
       await reload();
     } catch (err) {
       alert(`Approve failed: ${err?.detail || err?.message || 'unknown'}`);

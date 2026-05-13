@@ -615,6 +615,9 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
   const [success, setSuccess] = useState(false);
   const [submitError, setSubmitError] = useState(null);
   const [createdWoId, setCreatedWoId] = useState('');
+  // [{workOrderId, workshopName, repairType}] populated from the backend
+  // approve response so the success view can show "Routed to <vendor>".
+  const [routedDestinations, setRoutedDestinations] = useState([]);
 
   // Fetch vendors from the API on mount; fall back to mock list if it fails
   // (so the demo never breaks even in dev w/ no backend running).
@@ -669,9 +672,12 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
 
   // Step 1 validity: defect mode needs section + description; PM mode only needs
   // vehicle + PM type. Bulk mode never reaches step 1 (van is pre-set + locked).
+  // V2.0: step 2 is now an informational "auto-routing preview" — no vendor
+  // pick required. Always advances. Step 1 still validates van + section +
+  // description (or PM type) as before.
   const canGoNext = step === 1
     ? (van && (isPM ? !!pmType : (section && description.length > 4)))
-    : step === 2 ? !!vendor : true;
+    : true;
 
   const handleSubmit = async () => {
     setSubmitError(null);
@@ -721,16 +727,25 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
           'Check the review queue or try again.'
         );
       }
-      // Mark success even if some defects partially failed — the user can
-      // re-trigger from the Defects tab.
+      // Capture the routed-workshop info from every successful approve so the
+      // success view can tell the DSP where each defect actually went. The
+      // backend now routes inline and returns routed_workshop_name +
+      // routed_work_order_id on the DefectReviewResponse.
+      const routedSummaries = results
+        .filter((r) => r.status === 'fulfilled' && r.value?.routedWorkshopName)
+        .map((r) => ({
+          workOrderId: r.value.routedWorkOrderId,
+          workshopName: r.value.routedWorkshopName,
+          repairType: r.value.routedRepairType,
+        }));
+      setRoutedDestinations(routedSummaries);
       const pendingMarker = bulkMode
         ? `Approved ${itemIds.length - failed.length}/${itemIds.length} defects`
         : 'Approved';
       setCreatedWoId(pendingMarker);
       onCreate?.({
-        // V2.0 doesn't have an immediate WO id — the WO is created
-        // async (after bundling window + routing). Caller treats this
-        // as a "submitted" event.
+        // V2.0 routes inline now — `routedSummaries` carries the immediate
+        // WO ids and their destinations. The parent can surface them too.
         id: pendingMarker,
         van,
         section,
@@ -745,6 +760,7 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
         createdBy: user?.name,
         approvedCount: itemIds.length - failed.length,
         failedIds: failed,
+        routedSummaries,
       });
       setSuccess(true);
     } catch (err) {
@@ -816,21 +832,71 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                   className="w-16 h-16 mx-auto rounded-full bg-accent-green/15 border border-accent-green/40 flex items-center justify-center mb-4">
                   <CheckCircle2 size={32} className="text-accent-green" />
                 </motion.div>
-                <h4 className="text-lg font-semibold text-white mb-1">{t('createWO.successHeadingFmt', { vendor: vendor.name, defaultValue: `Work order sent to ${vendor.name}` })}</h4>
-                <p className="text-sm text-navy-400 mb-4">
-                  {bulkMode
-                    ? t('createWO.successBodyBulkFmt', { vendor: vendor.name, count: bulkIds.length, vehicleId: van?.id, defaultValue: `${vendor.name} received one work order covering ${bulkIds.length} defects on ${van?.id}. You'll get a single update when they accept, decline or complete.` })
-                    : t('createWO.successBodySingleFmt', { vendor: vendor.name, defaultValue: `${vendor.name} has been notified and will see this in their Work Orders hub. You'll receive an update when they accept, decline or complete.` })}
-                </p>
-                <div className="inline-flex flex-col gap-1 px-4 py-3 rounded-lg bg-navy-800/60 border border-navy-700/40 text-left">
-                  <div className="text-[11px] text-navy-400">{t('createWO.workOrderId', 'Work Order ID')}</div>
-                  <div className="text-sm font-mono text-accent-blue">{createdWoId}</div>
-                  <div className="text-[11px] text-navy-400 mt-1">
-                    {t('createWO.successDetailVehicle', 'Vehicle:')} <span className="text-white">{van?.id}</span> · {t('createWO.successDetailVendor', 'Vendor:')} <span className="text-white">{vendor?.name}</span>
-                    {bulkMode && <> · <span className="text-white">{t('createWO.successDetailDefectsFmt', { count: bulkIds.length, defaultValue: `${bulkIds.length} defects` })}</span></>}
-                  </div>
-                  {isRush && <div className="text-[11px] text-accent-red mt-1 flex items-center gap-1"><Flame size={10} /> {t('createWO.rushBadge', 'Rush Order — scheduled tonight')}</div>}
-                </div>
+                {routedDestinations.length > 0 ? (
+                  <>
+                    {/* V2.0 success view — show the actual workshop(s) the
+                        backend's router placed each WO at. Groups by
+                        workshop so multi-defect approvals across different
+                        repair types render as multiple destination cards. */}
+                    <h4 className="text-lg font-semibold text-white mb-1">
+                      {routedDestinations.length === 1
+                        ? t('createWO.routedSingleHeadingFmt', {
+                            vendor: routedDestinations[0].workshopName,
+                            defaultValue: `Routed to ${routedDestinations[0].workshopName}`,
+                          })
+                        : t('createWO.routedMultiHeadingFmt', {
+                            count: routedDestinations.length,
+                            defaultValue: `Routed to ${routedDestinations.length} workshops`,
+                          })}
+                    </h4>
+                    <p className="text-sm text-navy-400 mb-4">
+                      {t('createWO.routedBody',
+                        'Each defect was matched to the right vendor based on its repair type.')}
+                    </p>
+                    <div className="inline-flex flex-col gap-1.5 max-w-md w-full text-left">
+                      {routedDestinations.map((r, i) => (
+                        <div key={i} className="px-4 py-3 rounded-lg bg-navy-800/60 border border-navy-700/40">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm font-semibold text-white truncate">{r.workshopName}</div>
+                              {r.repairType && (
+                                <div className="text-[10px] uppercase tracking-wide text-navy-400 mt-0.5">
+                                  {r.repairType}
+                                </div>
+                              )}
+                            </div>
+                            {r.workOrderId && (
+                              <span className="text-xs font-mono text-accent-blue shrink-0">{r.workOrderId}</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {/* Fallback: approve succeeded but the response carried
+                        no routed_workshop_name (e.g. no eligible workshop
+                        for that repair_type yet). Tell the user the defect
+                        is queued so they're not confused. */}
+                    <h4 className="text-lg font-semibold text-white mb-1">
+                      {t('createWO.queuedHeading', 'Defect queued')}
+                    </h4>
+                    <p className="text-sm text-navy-400 mb-4">
+                      {t('createWO.queuedBody',
+                        "We couldn't find an eligible vendor workshop for this repair type yet. The defect is in the queue and will be routed as soon as a matching workshop is registered.")}
+                    </p>
+                    <div className="inline-flex flex-col gap-1 px-4 py-3 rounded-lg bg-navy-800/60 border border-navy-700/40 text-left">
+                      <div className="text-[11px] text-navy-400">{t('createWO.workOrderId', 'Work Order ID')}</div>
+                      <div className="text-sm font-mono text-accent-blue">{createdWoId}</div>
+                      <div className="text-[11px] text-navy-400 mt-1">
+                        {t('createWO.successDetailVehicle', 'Vehicle:')} <span className="text-white">{van?.id}</span>
+                        {bulkMode && <> · <span className="text-white">{t('createWO.successDetailDefectsFmt', { count: bulkIds.length, defaultValue: `${bulkIds.length} defects` })}</span></>}
+                      </div>
+                    </div>
+                  </>
+                )}
+                {isRush && <div className="text-[11px] text-accent-red mt-3 flex items-center justify-center gap-1"><Flame size={10} /> {t('createWO.rushBadge', 'Rush Order — scheduled tonight')}</div>}
               </motion.div>
             ) : step === 1 ? (
               <motion.div key="s1" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
@@ -1009,24 +1075,65 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                 )}
               </motion.div>
             ) : step === 2 ? (
-              <motion.div key="s2" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-3">
+              <motion.div key="s2" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
                 {bulkMode && (
                   <div className="rounded-lg border border-accent-blue/40 bg-accent-blue/5 px-3 py-2 flex items-center gap-2 text-xs text-navy-200">
                     <ClipboardList size={12} className="text-accent-blue shrink-0" />
                     {t('createWO.successDetailDefectsFmt', { count: bulkIds.length, defaultValue: `${bulkIds.length} defects` })} · <span className="font-mono text-white">{van?.id}</span>
                   </div>
                 )}
-                <div className="flex items-center gap-2 text-xs text-navy-400 mb-2 flex-wrap">
-                  <span>{t('createWO.chooseVendor', 'Choose a vendor to process this work order')}</span>
-                  {neededServices.length > 0 && (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-accent-green/10 border border-accent-green/30 text-accent-green">
-                      <Zap size={10} /> {t('createWO.servicesNeededFmt', { list: neededServices.join(', '), defaultValue: `Services needed: ${neededServices.join(', ')}` })}
+
+                {/* V2.0: vendor selection is automatic. The router places each
+                    defect's RepairRequest with the first vendor_workshops row
+                    whose `repair_types[]` matches the defect's group. The
+                    DSP no longer picks a vendor manually; this panel tells
+                    them what's going to happen. */}
+                <div className="rounded-xl border border-accent-blue/40 bg-accent-blue/5 p-4 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Zap size={14} className="text-accent-blue" />
+                    <span className="text-sm font-semibold text-white">
+                      {t('createWO.autoRouteTitle', 'Auto-routed by repair type')}
                     </span>
-                  )}
+                  </div>
+                  <p className="text-xs text-navy-300 leading-relaxed">
+                    {t('createWO.autoRouteBody',
+                      "Nova Fora sends each defect to the vendor workshop that handles its repair type. You don't have to pick a vendor — the system matches defect → workshop based on the defect's category.")}
+                  </p>
                 </div>
-                {sortedVendors.map((v) => (
-                  <VendorCard key={v.id} vendor={v} selected={vendor?.id === v.id} onSelect={setVendor} neededServices={neededServices} />
-                ))}
+
+                {/* Mapping table — quick visual reference of where each
+                    category goes. Frontend-only labels; the actual mapping
+                    happens server-side in `wo_bundler._GROUP_TO_REPAIR_TYPE`
+                    and `wo_router._find_eligible_workshops`. */}
+                <div className="rounded-xl border border-navy-700/60 bg-navy-800/40 overflow-hidden">
+                  <div className="px-4 py-2 border-b border-navy-700/60 text-[10px] uppercase tracking-wide font-semibold text-navy-400">
+                    {t('createWO.routingTableTitle', 'How defects get routed')}
+                  </div>
+                  <table className="w-full text-xs">
+                    <tbody>
+                      {[
+                        { type: 'Mechanical / AMR / CMR / PM / CNMR', dest: 'Dulles Midas' },
+                        { type: 'Body damage', dest: 'Capital Body Shop' },
+                        { type: 'Tires / Wheels', dest: 'Wheels & Brakes Co' },
+                        { type: 'Detailing', dest: 'Premium Detail' },
+                        { type: 'Netradyne (cameras)', dest: 'Netradyne Telematics' },
+                      ].map((row) => (
+                        <tr key={row.type} className="border-b border-navy-800/60 last:border-b-0">
+                          <td className="px-4 py-2 text-navy-300">{row.type}</td>
+                          <td className="px-4 py-2 text-right text-white font-medium">→ {row.dest}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* "Want to configure a different preferred vendor per repair
+                    type?" hint — the admin panel isn't wired yet (post-Jun 15
+                    backlog), but we signal where the config will live. */}
+                <div className="text-[11px] text-navy-400 italic">
+                  {t('createWO.adminHint',
+                    'Want a different vendor for a repair type? Configure preferred vendors in Admin → Vendor Workshops (coming soon).')}
+                </div>
               </motion.div>
             ) : (
               <motion.div key="s3" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
@@ -1319,11 +1426,13 @@ export default function FleetSnapshot({ user, embedded = false }) {
               </div>
             )}
 
-            {/* V1 had a "Create Work Order" button here that let a DSP pick
-                a vendor manually. V2.0 removed manual vendor selection — WOs
-                now derive from approved defects, with the bundler routing to
-                the right vendor automatically based on repair_type. Users
-                approve defects via the Defects tab instead. */}
+            {/* Create WO — DSP can send repair work to any vendor */}
+            {isDsp && (
+              <button onClick={() => openCreateWO()}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-accent-blue text-white text-xs font-semibold hover:opacity-90 cursor-pointer shadow-lg shadow-accent-blue/20">
+                <ClipboardList size={12} /> {t('fleetSnapshot.createWorkOrder', 'Create Work Order')}
+              </button>
+            )}
           </div>
         </div>
 
