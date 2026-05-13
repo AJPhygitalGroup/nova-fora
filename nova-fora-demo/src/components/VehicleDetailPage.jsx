@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import {
@@ -6,7 +6,11 @@ import {
   CheckCircle2, AlertTriangle, Lock, Truck, Wrench, ClipboardCheck, Calendar,
   Clock, TrendingUp, Gauge, RefreshCw, X, Plus, Hourglass, PlayCircle
 } from 'lucide-react';
-import { workOrdersData, preventiveMaintenanceJobs } from '../data/mockData';
+import { preventiveMaintenanceJobs } from '../data/mockData';
+import {
+  inspections as inspectionsApi,
+  workOrders as workOrdersApi,
+} from '../api/client';
 import Badge from './ui/Badge';
 
 // V2.2 vehicle types — drive the DVIC; map 1:1 to the backend enum.
@@ -61,39 +65,120 @@ const FMC_OPTIONS = [
 ];
 const MAKES = ['Ford', 'Mercedes', 'Ram', 'Chevrolet', 'Isuzu'];
 
-// Generate a plausible inspection history for the demo based on the vehicle id
-function buildInspectionHistory(vehicleId) {
-  const seed = parseInt(vehicleId.replace(/\D/g, ''), 10) || 1;
-  const inspectors = ['David Torres', 'Olger Joya', 'Mike Chen', 'Sarah Johnson'];
-  const out = [];
-  const today = new Date();
-  for (let i = 0; i < 6; i++) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - (i * 3 + (seed % 4)));
-    const flagged = (i + seed) % 3 === 0;
-    out.push({
-      id: `INS-${vehicleId.replace('VAN-', '')}-${String(i + 1).padStart(2, '0')}`,
-      date: d.toISOString(),
-      inspector: inspectors[(seed + i) % inspectors.length],
-      result: flagged ? 'Flagged' : 'Pass',
-      defectsFound: flagged ? ((seed + i) % 3) + 1 : 0,
-      mileage: 48000 - i * 1200,
-    });
-  }
-  return out;
+// Adapt an Inspection API row to the shape InspectionHistoryTable expects:
+// { id, date, inspector, result, defectsFound, mileage }.
+//
+// API shape (camelCase via keysToCamel): id (INS-XXXXX), inspectorName,
+// inspector (display), submittedAt | startedAt | createdAt, result
+// ('pass' | 'fail' | 'incomplete'), defectCount, odometerMiles.
+function inspectionFromApi(insp) {
+  const date = insp.submittedAt || insp.startedAt || insp.createdAt || null;
+  const rawResult = String(insp.result || '').toLowerCase();
+  const result =
+    rawResult === 'pass' ? 'Pass'
+    : rawResult === 'fail' ? 'Flagged'
+    : rawResult === 'incomplete' ? 'Not inspected'
+    : 'Pass';
+  return {
+    id: insp.id,
+    date,
+    inspector: insp.inspector || insp.inspectorName || '—',
+    result,
+    defectsFound: insp.defectCount ?? 0,
+    mileage: insp.odometerMiles ?? null,
+  };
 }
 
-function buildMileageHistory(vehicleId, currentMileage) {
-  const out = [];
-  let m = currentMileage || 48000;
-  const today = new Date();
-  for (let i = 0; i < 8; i++) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i * 7);
-    out.push({ date: d.toISOString(), mileage: m, source: i === 0 ? 'Last inspection' : i % 2 === 0 ? 'DVIC' : 'WO completion' });
-    m -= Math.round(800 + Math.random() * 300);
+// Compose a mileage timeline from real inspections (each carries an
+// odometer reading) and real completed WOs (each carries lastMileage at
+// completion). Sort newest-first and dedupe identical readings on the
+// same day so the table doesn't render redundant rows.
+function buildMileageTimeline(inspections, workOrders) {
+  const rows = [];
+  for (const insp of inspections) {
+    if (insp.odometerMiles == null) continue;
+    rows.push({
+      date: insp.submittedAt || insp.startedAt || insp.createdAt,
+      mileage: insp.odometerMiles,
+      source: 'DVIC',
+    });
   }
-  return out;
+  for (const wo of workOrders) {
+    if (wo.lastMileage == null) continue;
+    if (wo.status !== 'completed') continue;
+    rows.push({
+      date: wo.completedAt || wo.updatedAt,
+      mileage: wo.lastMileage,
+      source: 'WO completion',
+    });
+  }
+  rows.sort((a, b) => new Date(b.date) - new Date(a.date));
+  // Dedupe (same date + same reading) — these come up when a single
+  // inspection reading also persists onto the WO row.
+  const seen = new Set();
+  return rows.filter((r) => {
+    const key = `${r.date}|${r.mileage}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+// Adapt the V2.0 WO list row to the shape ServiceHistoryTable expects:
+// { id, completedAt, createdAt, lastMileage, section, part, description,
+//   status, source, ... }. The V2.0 wire payload already speaks the V1
+// shape with help from the WO adapter on the WorkOrders screen, but we
+// keep this view independent so it pulls straight from the API.
+function workOrderFromApi(wo) {
+  return {
+    id: wo.id,
+    status: wo.status === 'pending_acceptance'
+      ? 'pending'
+      : wo.status === 'accepted'
+        ? 'acknowledged'
+        : wo.status === 'cancelled'
+          ? 'canceled'
+          : (wo.status || 'pending'),
+    createdAt: wo.createdAt,
+    completedAt: wo.completedAt,
+    lastMileage: wo.lastMileage,
+    section: '—',
+    part: wo.workshopName || '—',
+    description: '—',
+    source: 'inspection',
+  };
+}
+
+function numericIdFromPrefixed(prefixed) {
+  if (!prefixed) return null;
+  const parts = String(prefixed).split('-');
+  const n = parseInt(parts[parts.length - 1], 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+// "today" / "yesterday" / "5 days ago" / explicit date.
+// Used for the "Last inspected …" line in the sidebar — replaces the
+// hardcoded "yesterday" placeholder.
+function formatRelativeDay(iso, t) {
+  if (!iso) return '—';
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return '—';
+  const now = new Date();
+  // Compare on midnight UTC so a 23:59 vs 00:01 difference doesn't
+  // bump "today" → "1 day ago".
+  const dayMs = 86400000;
+  const startThen = Date.UTC(then.getUTCFullYear(), then.getUTCMonth(), then.getUTCDate());
+  const startNow  = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const diffDays = Math.round((startNow - startThen) / dayMs);
+  if (diffDays <= 0) return t('vehicleDetail.today', 'today');
+  if (diffDays === 1) return t('vehicleDetail.yesterday', 'yesterday');
+  if (diffDays < 7) {
+    return t('vehicleDetail.daysAgoFmt', {
+      count: diffDays,
+      defaultValue: `${diffDays} days ago`,
+    });
+  }
+  return then.toLocaleDateString();
 }
 
 // Translate a vehicle row (which may carry a legacy display string for
@@ -150,17 +235,54 @@ export default function VehicleDetailPage({ vehicle, fleet, user, readOnly, onBa
     }
   };
 
-  // Data sources per vehicle
-  const serviceHistory = useMemo(
-    () => workOrdersData.filter((wo) => wo.vehicleId === vehicle.fleetId).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)),
-    [vehicle.fleetId]
+  // Real data sources (replaced the mock builders 2026-05-12). Vehicle
+  // detail fetches:
+  //   - inspections via GET /inspections?vehicle_id=...
+  //   - work orders via GET /work-orders?vehicle_id=...
+  // upcoming PMs is still mock — the PM table will be wired when the
+  // scheduling endpoint lands (post-Jun 15 launch).
+  const [rawInspections, setRawInspections] = useState([]);
+  const [rawWorkOrders, setRawWorkOrders] = useState([]);
+  const numericVehicleId = numericIdFromPrefixed(vehicle.id);
+
+  useEffect(() => {
+    let alive = true;
+    if (!numericVehicleId) return undefined;
+    // Inspections — accepts both prefixed and int forms; pass the int so
+    // we don't need an extra parse on the server side.
+    inspectionsApi
+      .list({ vehicleId: numericVehicleId, perPage: 50 })
+      .then((res) => { if (alive) setRawInspections(res.items || []); })
+      .catch((err) => console.warn('vehicle inspections load failed', err));
+    workOrdersApi
+      .list({ vehicleId: numericVehicleId, limit: 50 })
+      .then((res) => { if (alive) setRawWorkOrders(res.items || []); })
+      .catch((err) => console.warn('vehicle WO list failed', err));
+    return () => { alive = false; };
+  }, [numericVehicleId]);
+
+  const inspectionHistory = useMemo(
+    () => rawInspections.map(inspectionFromApi)
+      .sort((a, b) => new Date(b.date) - new Date(a.date)),
+    [rawInspections],
   );
-  const inspectionHistory = useMemo(() => buildInspectionHistory(vehicle.fleetId), [vehicle.fleetId]);
+  const serviceHistory = useMemo(
+    () => rawWorkOrders.map(workOrderFromApi)
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)),
+    [rawWorkOrders],
+  );
   const upcomingPMs = useMemo(
     () => preventiveMaintenanceJobs.filter((p) => p.vehicleId === vehicle.fleetId),
-    [vehicle.fleetId]
+    [vehicle.fleetId],
   );
-  const mileageHistory = useMemo(() => buildMileageHistory(vehicle.fleetId, vehicle.mileage), [vehicle.fleetId, vehicle.mileage]);
+  const mileageHistory = useMemo(
+    () => buildMileageTimeline(rawInspections, rawWorkOrders),
+    [rawInspections, rawWorkOrders],
+  );
+
+  // Most recent inspection — drives the "Last route completed …" line in
+  // the sidebar (used to read a fake "yesterday" hardcoded value).
+  const lastInspectionAt = inspectionHistory[0]?.date || null;
 
   // Operational status
   const opStatus = vehicle.grounded ? 'grounded' : (vehicle.defectCount || 0) > 0 ? 'attention' : 'operational';
@@ -397,7 +519,14 @@ export default function VehicleDetailPage({ vehicle, fleet, user, readOnly, onBa
                 </button>
               )}
             </div>
-            <p className="text-[11px] text-navy-400 mt-2">{t('vehicleDetail.lastRoutePart1', 'Last route completed')} <span className="text-white">{vehicle.lastInspected?.toLowerCase().includes('today') ? t('vehicleDetail.today', 'today') : t('vehicleDetail.yesterday', 'yesterday')}</span></p>
+            <p className="text-[11px] text-navy-400 mt-2">
+              {t('vehicleDetail.lastInspectedLabel', 'Last inspected')}{' '}
+              <span className="text-white">
+                {lastInspectionAt
+                  ? formatRelativeDay(lastInspectionAt, t)
+                  : t('vehicleDetail.never', 'never')}
+              </span>
+            </p>
           </div>
 
           <div>

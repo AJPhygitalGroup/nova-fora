@@ -97,10 +97,13 @@ function fromApiVehicle(v) {
     lastInspected: v.lastInspected || 'Never',
     photos: v.photos ?? 0,
     inspector: v.inspector || '—',
-    // Frontend-only metadata (not stored server-side yet)
+    // Color is still derived (not on the model); ownership-driven FMC stays
+    // local to the row.
     color: ['White', 'Blue', 'Silver', 'Black', 'Gray'][seed % 5],
     isFmcManaged: !!v.fmc,
-    location: 'parking_lot',
+    // Real persisted location (parking_lot | offsite | checked_out). Falls
+    // back to parking_lot on legacy rows that haven't been migrated yet.
+    location: v.location || 'parking_lot',
   };
 }
 
@@ -1351,8 +1354,19 @@ export default function MyVehicles({ user }) {
     return Array.from(map.values()).sort((a, b) => a.dspName.localeCompare(b.dspName));
   }, [filtered, isVendor, dspFilter]);
 
-  const handleLocationChange = (fleetId, newLocation) => {
-    setFleet(fleet.map((v) => (v.fleetId === fleetId ? { ...v, location: newLocation } : v)));
+  const handleLocationChange = async (fleetId, newLocation) => {
+    const target = fleet.find((v) => v.fleetId === fleetId);
+    if (!target) return;
+    // Optimistic update so the UI reacts instantly; revert on API failure.
+    const previous = target.location;
+    setFleet((prev) => prev.map((v) => (v.fleetId === fleetId ? { ...v, location: newLocation } : v)));
+    try {
+      await vehiclesApi.update(target.id, { location: newLocation });
+    } catch (err) {
+      setFleet((prev) => prev.map((v) => (v.fleetId === fleetId ? { ...v, location: previous } : v)));
+      const msg = err?.detail || err?.message || 'Could not update location';
+      alert(typeof msg === 'string' ? msg : 'Could not update location');
+    }
   };
 
   // Copy vehicle details to clipboard (helpful for vendors creating invoices)

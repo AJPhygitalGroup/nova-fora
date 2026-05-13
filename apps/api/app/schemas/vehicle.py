@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.defect_catalog import VehicleClass
 from app.models.organization import Organization
-from app.models.vehicle import Ownership, Vehicle
+from app.models.vehicle import Ownership, Vehicle, VehicleLocation
 
 
 class VehicleResponse(BaseModel):
@@ -31,6 +31,7 @@ class VehicleResponse(BaseModel):
     vehicle_class: str = "regular_cargo_van"  # drives catalog applicability
     ownership: str = "branded"                # branded | owner | rented
     fmc: str | None = None                    # Fleet Management Company (Element / LP / Budget / …)
+    location: str = "parking_lot"             # parking_lot | offsite | checked_out
 
     # Derived from inspections / defects
     defect_count: int = 0
@@ -67,6 +68,10 @@ class VehicleResponse(BaseModel):
                 else str(v.ownership)
             ),
             fmc=v.fmc,
+            location=(
+                v.location.value if hasattr(v.location, "value")
+                else str(v.location or "parking_lot")
+            ),
             is_active=v.is_active,
         )
 
@@ -104,6 +109,7 @@ class VehicleUpdate(BaseModel):
     vehicle_class: VehicleClass | None = None
     ownership: Ownership | None = None
     fmc: str | None = Field(default=None, max_length=50)
+    location: VehicleLocation | None = None
 
     model_config = ConfigDict(extra="forbid")
 

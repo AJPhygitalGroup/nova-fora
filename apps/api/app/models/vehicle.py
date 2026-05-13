@@ -43,6 +43,20 @@ class Ownership(str, Enum):
     RENTAL        = "rental"         # DSP rents from third party (no decals)
 
 
+class VehicleLocation(str, Enum):
+    """Where the van physically is. The DSP toggles between PARKING_LOT and
+    OFFSITE manually; CHECKED_OUT is set by the vendor when they pull the
+    van for an overnight repair (the WO transitions back to PARKING_LOT
+    once the WO is completed).
+
+    Stored as VARCHAR per CLAUDE.md rule #2.
+    """
+
+    PARKING_LOT = "parking_lot"
+    OFFSITE     = "offsite"
+    CHECKED_OUT = "checked_out"
+
+
 class Vehicle(SQLModel, table=True):
     __tablename__ = "vehicles"
 
@@ -117,6 +131,25 @@ class Vehicle(SQLModel, table=True):
     grounded_at: datetime | None = Field(
         default=None,
         sa_column=Column("grounded_at", DateTime(timezone=True), nullable=True),
+    )
+
+    # Where the van is right now. Persisted across sessions so vendor +
+    # dispatcher views stay in sync (PARKING_LOT = on lot, OFFSITE = on the
+    # road, CHECKED_OUT = pulled by a vendor for overnight repair).
+    location: VehicleLocation = Field(
+        default=VehicleLocation.PARKING_LOT,
+        sa_column=Column(
+            "location",
+            sa.Enum(
+                VehicleLocation,
+                native_enum=False,
+                length=20,
+                values_callable=lambda e: [m.value for m in e],
+            ),
+            nullable=False,
+            index=True,
+            server_default="parking_lot",
+        ),
     )
 
     # Soft-delete (preserve historical WOs/inspections referencing this vehicle)

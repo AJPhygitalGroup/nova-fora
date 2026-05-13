@@ -93,8 +93,12 @@
     "activeBadge": "Active",
     "lastRouteFmt": "Last route completed <0>{{when}}</0>",
     "lastRoutePart1": "Last route completed",
+    "lastInspectedLabel": "Last inspected",
     "today": "today",
     "yesterday": "yesterday",
+    "never": "never",
+    "daysAgoFmt_one": "{{count}} day ago",
+    "daysAgoFmt_other": "{{count}} days ago",
     "stat": {
       "openDefects": "Open defects",
       "serviceItems": "Service items",

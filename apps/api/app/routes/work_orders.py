@@ -599,6 +599,7 @@ async def list_work_orders(
     status_filter: WO_STATUS | None = Query(default=None, alias="status"),
     dsp_id: int | None = Query(default=None),
     vendor_workshop_id: int | None = Query(default=None),
+    vehicle_id: int | None = Query(default=None),
     assigned_to_me: bool = Query(default=False),
     limit: int = Query(default=100, ge=1, le=500),
     current: User = Depends(get_current_user),
@@ -631,6 +632,11 @@ async def list_work_orders(
         stmt = stmt.where(WorkOrder.assigned_technician_id == current.id)
     if status_filter is not None:
         stmt = stmt.where(WorkOrder.status == status_filter)
+    if vehicle_id is not None:
+        # Useful for the vehicle-detail "service history" panel. Tenancy
+        # filters above already restrict the visible WOs; an out-of-scope
+        # vehicle_id just yields an empty list rather than leaking data.
+        stmt = stmt.where(WorkOrder.vehicle_id == vehicle_id)
 
     stmt = stmt.order_by(WorkOrder.created_at.desc()).limit(limit)
     rows = list((await session.execute(stmt)).scalars().all())

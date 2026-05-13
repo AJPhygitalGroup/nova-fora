@@ -802,6 +802,7 @@ export const workOrders = {
       dspId: 'dsp_id',
       vendorWorkshopId: 'vendor_workshop_id',
       assignedToMe: 'assigned_to_me',
+      vehicleId: 'vehicle_id',
     };
     for (const [k, v] of Object.entries(params)) {
       if (v === undefined || v === null || v === '') continue;
