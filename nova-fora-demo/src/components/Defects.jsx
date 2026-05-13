@@ -4,12 +4,33 @@ import { AlertTriangle, RefreshCw, X, Camera } from 'lucide-react';
 import { TodaysDefectsTable } from './RealDVIC';
 import { CreateWorkOrderModal } from './FleetSnapshot';
 import PhotoUploader from './ui/PhotoUploader';
+import VendorPickerModal from './ui/VendorPickerModal';
 import {
   defects as defectsApi,
   defectReviews,
   vehicles as vehiclesApi,
   APIError,
 } from '../api/client';
+
+// Frontend mirror of the server-side bundler's group → repair_type map
+// (apps/api/app/services/wo_bundler._GROUP_TO_REPAIR_TYPE). Used here so
+// the vendor picker can pre-filter workshops to those eligible for the
+// defect's repair category before the user even clicks Approve. Keep this
+// in sync with the backend; an unknown group falls back to mechanical
+// (the bundler's safe default for unmapped rules).
+const GROUP_TO_REPAIR_TYPE = {
+  AMR: 'mechanical',
+  CMR: 'mechanical',
+  Body: 'body',
+  Tires: 'tires',
+  PM: 'pm',
+  CNMR: 'cnmr',
+  Detailing: 'detailing',
+  Netradyne: 'netradyne',
+};
+function repairTypeForDefect(d) {
+  return GROUP_TO_REPAIR_TYPE[d?.group] || 'mechanical';
+}
 
 // ─────────────────────────────────────────────────────
 // Transform API defect -> shape expected by TodaysDefectsTable
@@ -180,20 +201,27 @@ export default function Defects({ user }) {
     }
   };
 
-  const handleCreateWO = async (d) => {
-    // V2.0: "Create WO" is shorthand for "approve the defect scope". The
-    // backend writes a defect_reviews row, runs the bundler, AND now routes
-    // inline — the response carries routed_workshop_name + routed_work_order_id
-    // so we can immediately tell the DSP which vendor received the WO.
+  // The Create-WO click now opens the vendor picker instead of one-clicking
+  // through to approve. The DSP picks their preferred vendor (auto-suggested
+  // pre-selected); the actual `defectReviews.approve` fires from the
+  // picker's `onConfirm` below with the chosen `vendor_workshop_id`.
+  const [pickerDefect, setPickerDefect] = useState(null);
+  const handleCreateWO = (d) => {
+    setPickerDefect(d);
+  };
+  const handlePickerConfirm = async (workshopId) => {
+    if (!pickerDefect) return;
     try {
-      const res = await defectReviews.approve(d.id, {
+      const res = await defectReviews.approve(pickerDefect.id, {
         reason: 'Approved via Defects view',
+        vendorWorkshopId: workshopId,
       });
       if (res?.routedWorkshopName) {
         alert(`✓ ${res.routedWorkOrderId || 'Work order'} routed to ${res.routedWorkshopName}`);
       } else {
-        alert("Defect approved — no eligible vendor workshop found for this repair type yet. It's queued for routing once a matching workshop is registered.");
+        alert("Defect approved — couldn't place the WO with the chosen workshop. The defect is queued for routing.");
       }
+      setPickerDefect(null);
       await reload();
     } catch (err) {
       alert(`Approve failed: ${err?.detail || err?.message || 'unknown'}`);
@@ -319,6 +347,19 @@ export default function Defects({ user }) {
           />
         )}
       </AnimatePresence>
+
+      <VendorPickerModal
+        open={!!pickerDefect}
+        onClose={() => setPickerDefect(null)}
+        onConfirm={handlePickerConfirm}
+        repairType={pickerDefect ? repairTypeForDefect(pickerDefect) : 'mechanical'}
+        defectSummary={
+          pickerDefect
+            ? `${pickerDefect.line1 || pickerDefect.partLabel || pickerDefect.part || 'Defect'} — ${pickerDefect.line2 || pickerDefect.defectTypeLabel || pickerDefect.defectType || ''}`.trim()
+            : ''
+        }
+        vehicleLabel={pickerDefect?.van || ''}
+      />
 
       <AnimatePresence>
         {photosModal && (

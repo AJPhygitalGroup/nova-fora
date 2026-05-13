@@ -56,11 +56,18 @@ async def route_repair_request(
     repair_request_id: int,
     actor_id: int | None = None,
     exclude_workshop_ids: list[int] | None = None,
+    target_workshop_id: int | None = None,
 ) -> WorkOrder | None:
     """Place the RR with the first eligible vendor workshop.
 
     Returns the created WorkOrder (in `pending_acceptance`) or None if no
     eligible vendor was found. Caller commits.
+
+    When `target_workshop_id` is set, the router validates that the
+    requested workshop actually handles the RR's repair_type and routes
+    there directly — letting the DSP override the auto-pick on approve.
+    Falls through to "no eligible vendor" if the target doesn't qualify
+    or is in exclude_workshop_ids.
     """
     rr = (
         await session.execute(
@@ -92,7 +99,29 @@ async def route_repair_request(
         )
         return None
 
-    workshop = eligible[0]
+    # If the caller asked for a specific workshop, look it up inside the
+    # eligible set. Eligibility already covers "is_active + handles
+    # repair_type + not excluded", so this enforces the DSP's pick
+    # without leaking an out-of-scope workshop in.
+    if target_workshop_id is not None:
+        workshop = next((w for w in eligible if w.id == target_workshop_id), None)
+        if workshop is None:
+            await log_event(
+                session,
+                entity_type=WoActivityLogEntityType.REPAIR_REQUEST,
+                entity_id=rr.id,
+                action="targeted_workshop_not_eligible",
+                actor_id=actor_id,
+                details={
+                    "repair_type": repair_type_value,
+                    "target_workshop_id": target_workshop_id,
+                    "eligible_ids": [w.id for w in eligible],
+                },
+            )
+            # Fall through to auto-pick so the approve doesn't fail outright.
+            workshop = eligible[0]
+    else:
+        workshop = eligible[0]
     tracking_mode = workshop.status_tracking_mode
     if hasattr(tracking_mode, "value"):
         tracking_mode_enum = tracking_mode

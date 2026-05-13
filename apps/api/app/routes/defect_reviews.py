@@ -128,6 +128,13 @@ class DefectReviewListResponse(BaseModel):
 
 class ReviewBody(BaseModel):
     reason: str | None = Field(default=None, max_length=500)
+    # Optional override for the destination vendor workshop on approve. When
+    # null (the default), the auto-router picks the first eligible workshop
+    # based on the defect's repair_type. When set, the approve endpoint
+    # validates that the workshop actually handles the repair_type and
+    # routes there instead — letting the DSP express a "preferred vendor"
+    # decision per approval. Ignored on reject.
+    vendor_workshop_id: int | None = Field(default=None)
     model_config = ConfigDict(extra="forbid")
 
 
@@ -150,10 +157,19 @@ class PendingDefectResponse(BaseModel):
     source: str
     reported_at: datetime
     hours_pending: float
+    # repair_type the bundler will route this defect to (mechanical, body,
+    # tires, pm, cnmr, detailing, netradyne). Surfaces so the UI's vendor
+    # picker can filter workshops to those eligible for THIS defect's
+    # category before the user even clicks Approve.
+    repair_type: str = "mechanical"
 
     @classmethod
     def from_row(
-        cls, defect: Defect, vehicle: Vehicle, hours_pending: float
+        cls,
+        defect: Defect,
+        vehicle: Vehicle,
+        hours_pending: float,
+        repair_type: str = "mechanical",
     ) -> "PendingDefectResponse":
         return cls(
             id=defect.id,
@@ -175,6 +191,7 @@ class PendingDefectResponse(BaseModel):
             ),
             reported_at=defect.reported_at,
             hours_pending=round(hours_pending, 2),
+            repair_type=repair_type,
         )
 
 
@@ -232,12 +249,21 @@ async def review_queue(
     stmt = stmt.order_by(Defect.reported_at.asc()).limit(limit)
 
     rows = list((await session.execute(stmt)).all())
+    # Per-row repair_type resolution reuses the bundler's helper so the
+    # frontend's vendor picker filters by the SAME bucket the router would
+    # later assign on approve. This is N small queries — fine at the
+    # default limit=50; if the queue grows we'd batch with a JOIN.
+    from app.services.wo_bundler import _resolve_repair_type
     now = datetime.utcnow().replace(tzinfo=None)
     items: list[PendingDefectResponse] = []
     for defect, vehicle in rows:
         delta = now - defect.reported_at.replace(tzinfo=None)
         hours = delta.total_seconds() / 3600
-        items.append(PendingDefectResponse.from_row(defect, vehicle, hours))
+        repair_type = await _resolve_repair_type(session, defect, vehicle.vehicle_class)
+        rt_value = repair_type.value if hasattr(repair_type, "value") else str(repair_type)
+        items.append(
+            PendingDefectResponse.from_row(defect, vehicle, hours, repair_type=rt_value)
+        )
     return PendingDefectListResponse(items=items, total=len(items))
 
 
@@ -341,6 +367,10 @@ async def approve_defect(
     )
     routed_wo_id: int | None = None
     routed_workshop_id: int | None = None
+    # `body.vendor_workshop_id` lets the DSP override the auto-pick. When
+    # set, both the same-workshop merge check and the router target this
+    # workshop instead of the auto-selected one.
+    requested_workshop_id = body.vendor_workshop_id
     if rr is not None and rr.status == RepairRequestStatus.OPEN:
         existing_wo = (
             await session.execute(
@@ -373,7 +403,16 @@ async def approve_defect(
                 else str(rr.repair_type)
             )
             eligible = await _find_eligible_workshops(session, rr_type_value)
-            target_workshop_id = eligible[0].id if eligible else None
+            # Honor the DSP's vendor pick if (a) they passed one AND (b) it
+            # actually handles this defect's repair_type. Otherwise fall
+            # back to the auto-pick (first eligible).
+            target_workshop_id: int | None = None
+            if requested_workshop_id is not None and any(
+                w.id == requested_workshop_id for w in eligible
+            ):
+                target_workshop_id = requested_workshop_id
+            elif eligible:
+                target_workshop_id = eligible[0].id
 
             sibling_wo = None
             if target_workshop_id is not None:
@@ -428,8 +467,15 @@ async def approve_defect(
                 routed_workshop_id = sibling_wo.vendor_workshop_id
             else:
                 # No same-workshop WO to merge into — route normally.
+                # Pass the DSP's pick down so the router places the WO at
+                # that workshop instead of the auto-first. Validated above:
+                # `target_workshop_id` is either requested_workshop_id (if
+                # the DSP chose one and it's eligible) or eligible[0].id.
                 new_wo = await route_repair_request(
-                    session, repair_request_id=rr.id, actor_id=current.id
+                    session,
+                    repair_request_id=rr.id,
+                    actor_id=current.id,
+                    target_workshop_id=target_workshop_id,
                 )
                 if new_wo is not None:
                     routed_wo_id = new_wo.id

@@ -12,6 +12,7 @@ import { fleetSnapshotVans } from '../data/mockData';
 import { isDspRole, canInspect, canApproveDefects } from '../lib/permissions';
 import CreateInspectionWizard from './CreateInspectionWizard';
 import LiveInspectionReportCard from './LiveInspectionReportCard';
+import VendorPickerModal from './ui/VendorPickerModal';
 import {
   inspections as inspectionsApi,
   vehicles as vehiclesApi,
@@ -698,6 +699,11 @@ function CardDetailModal({
   liveInspected, liveDefects, pendingReviewQueue, onQueueChanged,
 }) {
   const { t } = useTranslation('dashboard');
+  // Vendor picker overlay state for the Immediate-Action approve flow.
+  // When a row's Approve button is clicked, we stash the item here and
+  // open the picker; the actual `defectReviews.approve` call (with the
+  // chosen vendor_workshop_id) fires from the picker's onConfirm.
+  const [pickerItem, setPickerItem] = useState(null);
   if (!cardKey) return null;
   let data = cardDetails[cardKey];
   // Override the static English title with a localized one (the mock summary
@@ -731,6 +737,9 @@ function CardDetailModal({
       part: q.part,
       // Real backend defect id — used by the V2.0 approve / reject calls.
       defectId: q.id,
+      // Carried through to the vendor picker so it can pre-filter
+      // workshops to those eligible for this defect's repair_type.
+      repairType: q.repairType || 'mechanical',
     }));
     data = {
       ...data,
@@ -868,19 +877,14 @@ function CardDetailModal({
                 // Items sourced from the live queue carry the real defectId;
                 // mock-fallback rows don't, so skip silently if missing.
                 if (!it.defectId) return;
-                const { defectReviews } = await import('../api/client');
-                try {
-                  const res = await defectReviews.approve(it.defectId, {
-                    reason: 'Approved via Immediate Action panel',
-                  });
-                  if (res?.routedWorkshopName) {
-                    alert(`✓ ${res.routedWorkOrderId || 'Work order'} routed to ${res.routedWorkshopName}`);
-                  }
-                  onQueueChanged?.();
-                } catch (err) {
-                  alert(`Approve failed: ${err?.detail || err?.message || 'unknown'}`);
-                  throw err;  // let the renderer roll back optimistic state
-                }
+                // Open the vendor picker — the actual approve+route call
+                // fires from the picker's onConfirm once the DSP picks a
+                // workshop (auto-suggested pre-selected). Reject the
+                // optimistic-state promise so the row reverts to Pending
+                // if the user cancels the picker.
+                return new Promise((resolve, reject) => {
+                  setPickerItem({ item: it, resolve, reject });
+                });
               }}
               onReject={async (it) => {
                 if (!it.defectId) return;
@@ -946,6 +950,43 @@ function CardDetailModal({
           </button>
         </div>
       </motion.div>
+
+      {/* Vendor picker for the Immediate-Action approve flow. The renderer's
+          optimistic `setActions(approved)` happens before the picker resolves
+          — onClose rejects so the row reverts to Pending if the DSP cancels. */}
+      <VendorPickerModal
+        open={!!pickerItem}
+        repairType={pickerItem?.item?.repairType || 'mechanical'}
+        defectSummary={pickerItem?.item?.title || ''}
+        vehicleLabel={pickerItem?.item?.label || ''}
+        onClose={() => {
+          if (pickerItem) {
+            pickerItem.reject?.(new Error('cancelled'));
+            setPickerItem(null);
+          }
+        }}
+        onConfirm={async (workshopId) => {
+          const ctx = pickerItem;
+          if (!ctx) return;
+          try {
+            const { defectReviews } = await import('../api/client');
+            const res = await defectReviews.approve(ctx.item.defectId, {
+              reason: 'Approved via Immediate Action panel',
+              vendorWorkshopId: workshopId,
+            });
+            if (res?.routedWorkshopName) {
+              alert(`✓ ${res.routedWorkOrderId || 'Work order'} routed to ${res.routedWorkshopName}`);
+            }
+            ctx.resolve?.();
+            onQueueChanged?.();
+          } catch (err) {
+            alert(`Approve failed: ${err?.detail || err?.message || 'unknown'}`);
+            ctx.reject?.(err);
+          } finally {
+            setPickerItem(null);
+          }
+        }}
+      />
     </motion.div>
   );
 }
