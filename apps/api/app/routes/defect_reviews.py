@@ -35,9 +35,12 @@ from app.models.vehicle import Vehicle
 from app.models.work_orders import (
     DefectReview,
     DefectReviewDecision,
+    RepairRequestStatus,
+    WorkOrder,
 )
 from app.services.wo_bundler import consider_defect_for_bundling
 from app.services.wo_defect_reviews import manual_review
+from app.services.wo_router import route_repair_request
 
 router = APIRouter(prefix="/defect-reviews", tags=["defect-reviews"])
 
@@ -297,9 +300,34 @@ async def approve_defect(
         reason=body.reason,
     )
     # Hand the approved defect to the bundler immediately.
-    await consider_defect_for_bundling(
+    rr = await consider_defect_for_bundling(
         session, defect_id=defect.id, actor_id=current.id
     )
+    # ROUTING (2026-05-13): historically the router only ran via cron after
+    # the dsp_settings.bundling_window_minutes elapsed. That made the demo
+    # feel broken — the DSP would approve a defect and nothing would appear
+    # at the vendor until the next cron tick. We now route inline: if the RR
+    # the bundler returned is still OPEN and has no live WorkOrder yet, fire
+    # the router right here so the WO lands at the right vendor instantly
+    # (based on repair_type → vendor_workshops.repair_types match).
+    #
+    # Bundling still works for sibling approvals: the router does NOT change
+    # `rr.status`, so a second approval within the window still finds the
+    # same OPEN RR via the bundler. The `not _rr_has_live_wo` guard below
+    # then skips re-routing if a WO already exists for that RR.
+    if rr is not None and rr.status == RepairRequestStatus.OPEN:
+        has_wo = (
+            await session.execute(
+                select(WorkOrder)
+                .where(WorkOrder.repair_request_id == rr.id)
+                .where(WorkOrder.status != "cancelled")
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if has_wo is None:
+            await route_repair_request(
+                session, repair_request_id=rr.id, actor_id=current.id
+            )
     await session.commit()
     await session.refresh(review)
     return DefectReviewResponse.from_model(review)

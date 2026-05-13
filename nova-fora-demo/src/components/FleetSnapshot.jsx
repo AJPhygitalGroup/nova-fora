@@ -1319,13 +1319,11 @@ export default function FleetSnapshot({ user, embedded = false }) {
               </div>
             )}
 
-            {/* Create WO — DSP can send repair work to any vendor */}
-            {isDsp && (
-              <button onClick={() => openCreateWO()}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-accent-blue text-white text-xs font-semibold hover:opacity-90 cursor-pointer shadow-lg shadow-accent-blue/20">
-                <ClipboardList size={12} /> {t('fleetSnapshot.createWorkOrder', 'Create Work Order')}
-              </button>
-            )}
+            {/* V1 had a "Create Work Order" button here that let a DSP pick
+                a vendor manually. V2.0 removed manual vendor selection — WOs
+                now derive from approved defects, with the bundler routing to
+                the right vendor automatically based on repair_type. Users
+                approve defects via the Defects tab instead. */}
           </div>
         </div>
 
