@@ -341,6 +341,18 @@
   "bulkUpload": {
     "title": "Carga masiva de vehículos",
     "subtitle": "Sincroniza tu hoja Amazon Logistics Fleet Data",
+    "successPrompt": {
+      "title": "Vehículos cargados",
+      "subtitle": "Tu flota ya está sincronizada con la hoja.",
+      "added": "Agregados",
+      "updated": "Actualizados",
+      "unchanged": "Sin cambios",
+      "deactivatedFmt": "{{count}} desactivados",
+      "errorsFmt_one": "{{count}} error",
+      "errorsFmt_other": "{{count}} errores",
+      "moreErrorsFmt": "+{{count}} más",
+      "done": "Listo"
+    },
     "successHeading": "Flota sincronizada",
     "successBodyFmt": "{{added}} agregados · {{updated}} actualizados · {{deactivated}} desactivados.",
     "step1Title": "Hoja Fleet Data",

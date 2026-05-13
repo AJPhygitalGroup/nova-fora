@@ -497,13 +497,16 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
   const [file, setFile] = useState(null);
   const [parsing, setParsing] = useState(false);
   const [applying, setApplying] = useState(false);
-  const [success, setSuccess] = useState(false);
   // Real parsed state (replaces the mock delta)
   const [parseResult, setParseResult] = useState(null);  // { mapped, errors, skipped, missingColumns }
   const [parseError, setParseError] = useState(null);
   const [deactivateMissing, setDeactivateMissing] = useState(false);
-  const [applyResults, setApplyResults] = useState(null);  // backend response
   const [applyError, setApplyError] = useState(null);
+  // NOTE: legacy in-modal success view was removed (2026-05-12). On a
+  // successful Apply the modal now closes itself via onClose() and the
+  // parent renders a separate <BulkUploadSuccessPrompt /> with the summary,
+  // so the user sees a clear "upload was successful" dialog instead of
+  // staying inside the same upload modal.
 
   // Real delta computed from the parsed XLSX rows.
   // Match by VIN (globally unique) — fleet_id is DSP-internal and can collide
@@ -608,7 +611,6 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
     if (!parseResult?.mapped?.length) return;
     setApplying(true);
     setApplyError(null);
-    setApplyResults(null);
     try {
       const { vehicles: vehiclesApi } = await import('../api/client');
       const rows = parseResult.mapped.map((m) => ({
@@ -627,10 +629,13 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
         rows,
         deactivateMissing,
       });
-      setApplyResults(res);
-      setSuccess(true);
-      // Bubble the result up so the parent can refresh the fleet list
+      // UX FIX (2026-05-12): close the upload modal immediately on success
+      // and hand the summary up so the parent can show a dedicated success
+      // prompt. The previous "stay inside the same modal with a green check
+      // and a Done button" UI felt to the user like the upload form had
+      // just reopened — they expected a clean confirmation dialog.
       onApply?.(res);
+      onClose?.();
     } catch (err) {
       const msg = err?.detail || err?.message || 'Upload failed';
       setApplyError(typeof msg === 'string' ? msg : 'Upload failed');
@@ -661,55 +666,25 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
         </div>
 
         {/* Progress */}
-        {!success && (
-          <div className="px-4 sm:px-6 pt-4">
-            <div className="flex items-center gap-2 mb-3">
-              {[1, 2, 3].map((s) => (
-                <div key={s} className="flex-1 h-1 rounded-full bg-navy-800 overflow-hidden">
-                  <motion.div className="h-full bg-gradient-to-r from-accent-blue to-accent-purple"
-                    initial={false} animate={{ width: step >= s ? '100%' : '0%' }} transition={{ duration: 0.4 }} />
-                </div>
-              ))}
-            </div>
-            <div className="flex items-center justify-between text-[10px] sm:text-[11px] text-navy-400 mb-2">
-              <span className={step >= 1 ? 'text-white font-semibold' : ''}>{t('bulkUpload.stepProgress.upload', '1. Upload file')}</span>
-              <span className={step >= 2 ? 'text-white font-semibold' : ''}>{t('bulkUpload.stepProgress.review', '2. Review delta')}</span>
-              <span className={step >= 3 ? 'text-white font-semibold' : ''}>{t('bulkUpload.stepProgress.apply', '3. Apply')}</span>
-            </div>
+        <div className="px-4 sm:px-6 pt-4">
+          <div className="flex items-center gap-2 mb-3">
+            {[1, 2, 3].map((s) => (
+              <div key={s} className="flex-1 h-1 rounded-full bg-navy-800 overflow-hidden">
+                <motion.div className="h-full bg-gradient-to-r from-accent-blue to-accent-purple"
+                  initial={false} animate={{ width: step >= s ? '100%' : '0%' }} transition={{ duration: 0.4 }} />
+              </div>
+            ))}
           </div>
-        )}
+          <div className="flex items-center justify-between text-[10px] sm:text-[11px] text-navy-400 mb-2">
+            <span className={step >= 1 ? 'text-white font-semibold' : ''}>{t('bulkUpload.stepProgress.upload', '1. Upload file')}</span>
+            <span className={step >= 2 ? 'text-white font-semibold' : ''}>{t('bulkUpload.stepProgress.review', '2. Review delta')}</span>
+            <span className={step >= 3 ? 'text-white font-semibold' : ''}>{t('bulkUpload.stepProgress.apply', '3. Apply')}</span>
+          </div>
+        </div>
 
         <div className="px-4 sm:px-6 py-5 overflow-y-auto flex-1">
           <AnimatePresence mode="wait">
-            {success ? (
-              <motion.div key="success" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="text-center py-8">
-                <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 200 }}
-                  className="w-16 h-16 mx-auto rounded-full bg-accent-green/15 border border-accent-green/40 flex items-center justify-center mb-4">
-                  <CheckCircle2 size={32} className="text-accent-green" />
-                </motion.div>
-                <h4 className="text-lg font-semibold text-white mb-1">{t('bulkUpload.successHeading', 'Fleet synchronized')}</h4>
-                <p className="text-sm text-navy-400 mb-4">
-                  <span className="text-accent-green">{t('bulkUpload.deltaSummary.added', { count: applyResults?.summary?.created ?? 0, defaultValue: `+${applyResults?.summary?.created ?? 0} added` })}</span> &middot;{' '}
-                  <span className="text-accent-blue">{t('bulkUpload.deltaSummary.updated', { count: applyResults?.summary?.updated ?? 0, defaultValue: `${applyResults?.summary?.updated ?? 0} updated` })}</span> &middot;{' '}
-                  <span className="text-navy-300">{t('bulkUpload.deltaSummary.unchanged', { count: applyResults?.summary?.skipped ?? 0, defaultValue: `${applyResults?.summary?.skipped ?? 0} unchanged` })}</span>
-                  {(applyResults?.summary?.deactivated ?? 0) > 0 && (
-                    <> &middot; <span className="text-accent-red">{t('bulkUpload.deltaSummary.deactivated', { count: applyResults.summary.deactivated, defaultValue: `${applyResults.summary.deactivated} deactivated` })}</span></>
-                  )}
-                  {(applyResults?.summary?.error ?? 0) > 0 && (
-                    <> &middot; <span className="text-accent-red">{t('bulkUpload.deltaSummary.errorFmt', { count: applyResults.summary.error, defaultValue: `${applyResults.summary.error} error${applyResults.summary.error > 1 ? 's' : ''}` })}</span></>
-                  )}
-                </p>
-                {(applyResults?.summary?.error ?? 0) > 0 && (
-                  <div className="text-left max-h-48 overflow-y-auto mt-3 rounded-lg border border-accent-red/30 bg-accent-red/5 p-2 space-y-1">
-                    {applyResults.results.filter((r) => r.action === 'error').map((r) => (
-                      <div key={r.vin} className="text-[11px] text-navy-300">
-                        <span className="font-mono text-accent-red">{r.fleetId} / {r.vin}</span>: {r.error}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </motion.div>
-            ) : step === 1 ? (
+            {step === 1 ? (
               <motion.div key="s1" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
                 <div className="rounded-lg bg-accent-blue/10 border border-accent-blue/30 p-3 text-xs text-navy-200 flex items-start gap-2">
                   <Info size={14} className="text-accent-blue mt-0.5 shrink-0" />
@@ -971,24 +946,133 @@ function BulkUploadModal({ currentFleet, onApply, onClose }) {
           </AnimatePresence>
         </div>
 
-        {!success && (
-          <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-3 sm:py-4 border-t border-navy-800 bg-navy-900/80">
-            <button onClick={() => (step === 1 ? onClose() : setStep(step - 1))} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">
-              {step === 1 ? t('bulkUpload.cancel', 'Cancel') : t('bulkUpload.back', 'Back')}
+        <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-3 sm:py-4 border-t border-navy-800 bg-navy-900/80">
+          <button onClick={() => (step === 1 ? onClose() : setStep(step - 1))} className="px-4 py-2.5 rounded-lg text-sm font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">
+            {step === 1 ? t('bulkUpload.cancel', 'Cancel') : t('bulkUpload.back', 'Back')}
+          </button>
+          {step === 2 && (
+            <button onClick={handleApply} disabled={applying}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-gradient-to-r from-accent-blue to-accent-purple text-white hover:opacity-90 disabled:opacity-40 cursor-pointer">
+              {applying ? (<><motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full" /> {t('bulkUpload.applying', 'Applying…')}</>) : (<>{t('bulkUpload.confirmApply', 'Confirm & Apply')} <Check size={14} /></>)}
             </button>
-            {step === 2 && (
-              <button onClick={handleApply} disabled={applying}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-gradient-to-r from-accent-blue to-accent-purple text-white hover:opacity-90 disabled:opacity-40 cursor-pointer">
-                {applying ? (<><motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full" /> {t('bulkUpload.applying', 'Applying…')}</>) : (<>{t('bulkUpload.confirmApply', 'Confirm & Apply')} <Check size={14} /></>)}
-              </button>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+// ============================================================
+// Bulk Upload — standalone success prompt
+//
+// Shown by the MyVehicles parent after BulkUploadModal closes on a
+// successful apply. Keeps the success acknowledgment visually distinct
+// from the upload form so users don't mistake the green-check screen
+// for "the upload modal reopened" (the original UX complaint).
+// ============================================================
+function BulkUploadSuccessPrompt({ summary, errors = [], onClose }) {
+  const { t } = useTranslation('fleet');
+  const created = summary?.created ?? 0;
+  const updated = summary?.updated ?? 0;
+  const skipped = summary?.skipped ?? 0;
+  const deactivated = summary?.deactivated ?? 0;
+  const errorCount = errors.length;
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+      onClick={onClose}>
+      <motion.div
+        initial={{ opacity: 0, y: 20, scale: 0.95 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 20, scale: 0.95 }}
+        transition={{ type: 'spring', damping: 22, stiffness: 280 }}
+        className="bg-navy-900 border border-navy-700 rounded-2xl max-w-sm w-full overflow-hidden shadow-2xl"
+        onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 pt-6 pb-4 text-center">
+          <motion.div
+            initial={{ scale: 0 }} animate={{ scale: 1 }}
+            transition={{ type: 'spring', stiffness: 220, delay: 0.05 }}
+            className="w-14 h-14 mx-auto rounded-full bg-accent-green/15 border border-accent-green/40 flex items-center justify-center mb-3">
+            <CheckCircle2 size={28} className="text-accent-green" />
+          </motion.div>
+          <h3 className="text-base font-semibold text-white mb-1">
+            {t('bulkUpload.successPrompt.title', 'Vehicles uploaded')}
+          </h3>
+          <p className="text-xs text-navy-400">
+            {t(
+              'bulkUpload.successPrompt.subtitle',
+              'Your fleet is now synchronized with the spreadsheet.',
+            )}
+          </p>
+        </div>
+        <div className="grid grid-cols-3 gap-px bg-navy-800 border-y border-navy-800">
+          <div className="bg-navy-900 px-3 py-3 text-center">
+            <div className="text-lg font-semibold text-accent-green">+{created}</div>
+            <div className="text-[10px] uppercase tracking-wide text-navy-400">
+              {t('bulkUpload.successPrompt.added', 'Added')}
+            </div>
+          </div>
+          <div className="bg-navy-900 px-3 py-3 text-center">
+            <div className="text-lg font-semibold text-accent-blue">{updated}</div>
+            <div className="text-[10px] uppercase tracking-wide text-navy-400">
+              {t('bulkUpload.successPrompt.updated', 'Updated')}
+            </div>
+          </div>
+          <div className="bg-navy-900 px-3 py-3 text-center">
+            <div className="text-lg font-semibold text-navy-200">{skipped}</div>
+            <div className="text-[10px] uppercase tracking-wide text-navy-400">
+              {t('bulkUpload.successPrompt.unchanged', 'Unchanged')}
+            </div>
+          </div>
+        </div>
+        {(deactivated > 0 || errorCount > 0) && (
+          <div className="px-6 py-3 border-b border-navy-800 text-[11px] flex items-center justify-center gap-3 flex-wrap">
+            {deactivated > 0 && (
+              <span className="text-accent-red font-semibold">
+                {t('bulkUpload.successPrompt.deactivatedFmt', {
+                  count: deactivated,
+                  defaultValue: `${deactivated} deactivated`,
+                })}
+              </span>
+            )}
+            {errorCount > 0 && (
+              <span className="text-accent-red font-semibold">
+                {t('bulkUpload.successPrompt.errorsFmt', {
+                  count: errorCount,
+                  defaultValue: `${errorCount} error${errorCount > 1 ? 's' : ''}`,
+                })}
+              </span>
             )}
           </div>
         )}
-        {success && (
-          <div className="flex justify-end px-4 sm:px-6 py-3 sm:py-4 border-t border-navy-800">
-            <button onClick={onClose} className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-accent-green text-white hover:opacity-90 cursor-pointer">{t('bulkUpload.doneButton', 'Done')}</button>
+        {errorCount > 0 && (
+          <div className="max-h-32 overflow-y-auto px-6 py-2 bg-accent-red/5 border-b border-navy-800 space-y-1">
+            {errors.slice(0, 5).map((r) => (
+              <div key={r.vin} className="text-[11px] text-navy-300">
+                <span className="font-mono text-accent-red">
+                  {r.fleetId} / {r.vin}
+                </span>
+                : {r.error}
+              </div>
+            ))}
+            {errorCount > 5 && (
+              <div className="text-[10px] text-navy-500 italic">
+                {t('bulkUpload.successPrompt.moreErrorsFmt', {
+                  count: errorCount - 5,
+                  defaultValue: `+${errorCount - 5} more`,
+                })}
+              </div>
+            )}
           </div>
         )}
+        <div className="px-6 py-4 flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-accent-green text-white hover:opacity-90 cursor-pointer">
+            {t('bulkUpload.successPrompt.done', 'Done')}
+          </button>
+        </div>
       </motion.div>
     </motion.div>
   );
@@ -1192,6 +1276,11 @@ export default function MyVehicles({ user }) {
   const [detailVehicle, setDetailVehicle] = useState(null);
   const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [showFlexFleet, setShowFlexFleet] = useState(false);
+  // Holds the result summary from the bulk-upsert API after the upload modal
+  // closes. Drives the standalone success prompt — the user explicitly asked
+  // for a "your upload succeeded" dialog instead of staying inside the upload
+  // modal with a green check (which they read as "upload form still open").
+  const [bulkUploadSummary, setBulkUploadSummary] = useState(null);
   const [classFilter, setClassFilter] = useState('all');
   const [dspFilter, setDspFilter] = useState('all');
   const [dspFilterOpen, setDspFilterOpen] = useState(false);
@@ -1336,7 +1425,12 @@ export default function MyVehicles({ user }) {
   // refresh the fleet list from the backend so derived counts + photo / defect
   // counts pick up the new rows. The modal's onApply fires after the API
   // call succeeds, so it's safe to assume the change is committed.
-  const handleApplyBulk = async () => {
+  //
+  // We also capture the API response so the standalone success prompt can
+  // render the +N added / N updated / N unchanged summary (see
+  // BulkUploadSuccessPrompt below). The modal closes itself on success.
+  const handleApplyBulk = async (res) => {
+    setBulkUploadSummary(res || null);
     await reloadFleet();
   };
 
@@ -1609,6 +1703,13 @@ export default function MyVehicles({ user }) {
             currentFleet={fleet}
             onApply={handleApplyBulk}
             onClose={() => setShowBulkUpload(false)}
+          />
+        )}
+        {bulkUploadSummary && (
+          <BulkUploadSuccessPrompt
+            summary={bulkUploadSummary.summary}
+            errors={(bulkUploadSummary.results || []).filter((r) => r.action === 'error')}
+            onClose={() => setBulkUploadSummary(null)}
           />
         )}
         {showFlexFleet && (

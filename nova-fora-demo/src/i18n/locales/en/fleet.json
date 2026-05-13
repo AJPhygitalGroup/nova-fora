@@ -341,6 +341,18 @@
   "bulkUpload": {
     "title": "Bulk Upload Vehicles",
     "subtitle": "Sync your Amazon Logistics Fleet Data spreadsheet",
+    "successPrompt": {
+      "title": "Vehicles uploaded",
+      "subtitle": "Your fleet is now synchronized with the spreadsheet.",
+      "added": "Added",
+      "updated": "Updated",
+      "unchanged": "Unchanged",
+      "deactivatedFmt": "{{count}} deactivated",
+      "errorsFmt_one": "{{count}} error",
+      "errorsFmt_other": "{{count}} errors",
+      "moreErrorsFmt": "+{{count}} more",
+      "done": "Done"
+    },
     "successHeading": "Fleet synchronized",
     "successBodyFmt": "{{added}} added · {{updated}} updated · {{deactivated}} deactivated.",
     "step1Title": "Fleet Data spreadsheet",
