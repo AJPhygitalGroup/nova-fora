@@ -218,7 +218,12 @@ PART_GROUP_DEFAULTS: list[tuple[P, G, str | None]] = [
     # windshield_wipers
     (P.WINDSHIELD, G.BODY, None),
     (P.WIPER_BLADE, G.AMR, None),
-    (P.WASHER_SYSTEM, G.AMR, None),
+    # NOTE: P.WASHER_SYSTEM is intentionally NOT listed here — it already
+    # appears earlier in this list (under the AMR header at line ~197).
+    # Re-adding it triggered a PK collision in seed-defect-catalog because
+    # the idempotency check (SELECT-before-add) runs before SQLAlchemy
+    # flushes the prior iteration's INSERT, so both passes thought the row
+    # was missing and both queued an INSERT for (part='washer_system').
     # mirrors
     (P.SIDE_MIRROR, G.BODY, None),
     (P.MIRROR_LIGHT, G.AMR, "Turn signal embedded in side mirror — AMR like other lights."),
