@@ -710,14 +710,23 @@ function CardDetailModal({
   // the user opens the card before the parent's fetch completes).
   if (cardKey === 'immediate' && Array.isArray(pendingReviewQueue)) {
     const items = pendingReviewQueue.map((q) => ({
-      // The label is the prefixed van id ("VAN-0042"); keeping it as a string
-      // so the existing renderer's mock-data lookups still work for any rows
-      // that fall back to the static list.
-      label: `VAN-${String(q.vehicleId).padStart(4, '0')}`,
+      // The label uses the DSP-facing fleet_id from Amazon Cortex (e.g.
+      // "10" / "PR006") — the same code that shows up in MyFleet. The
+      // backend's `fleet_id` field surfaces that, so the DSP doesn't have
+      // to mentally translate the database primary key into their fleet
+      // number. Falls back to the prefixed numeric id only for older
+      // payloads that don't carry the fleet_id yet.
+      label: q.fleetId
+        ? `VAN-${q.fleetId}`
+        : `VAN-${String(q.vehicleId).padStart(4, '0')}`,
       title: `${q.part}${q.position ? ` (${q.position})` : ''} — ${(q.defectType || '').replace(/_/g, ' ')}`,
-      meta: `Reported ${new Date(q.reportedAt).toLocaleString([], {
-        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-      })} · ${Math.round(q.hoursPending)}h pending`,
+      meta: q.plate
+        ? `Plate ${q.plate} · Reported ${new Date(q.reportedAt).toLocaleString([], {
+            month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+          })} · ${Math.round(q.hoursPending)}h pending`
+        : `Reported ${new Date(q.reportedAt).toLocaleString([], {
+            month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+          })} · ${Math.round(q.hoursPending)}h pending`,
       section: q.source === 'inspection' ? 'Inspection' : 'Off-inspection',
       part: q.part,
       // Real backend defect id — used by the V2.0 approve / reject calls.

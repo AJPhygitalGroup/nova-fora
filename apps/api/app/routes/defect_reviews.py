@@ -135,6 +135,13 @@ class PendingDefectResponse(BaseModel):
 
     id: int
     vehicle_id: int
+    # Human-readable van code the DSP sees in MyFleet (Amazon Cortex
+    # `vehicleName`, e.g. "10" or "PR006"). The numeric vehicle_id above is
+    # the DB primary key — it's what the API uses for routing/joins but the
+    # DSP never recognizes it. Both surface so the UI can render the fleet
+    # code while keeping the canonical id around for follow-up calls.
+    fleet_id: str
+    plate: str | None = None
     dsp_id: int
     part: str
     defect_type: str
@@ -150,6 +157,8 @@ class PendingDefectResponse(BaseModel):
         return cls(
             id=defect.id,
             vehicle_id=defect.vehicle_id,
+            fleet_id=vehicle.fleet_id,
+            plate=vehicle.plate,
             dsp_id=vehicle.dsp_id,
             part=(defect.part.value if hasattr(defect.part, "value") else str(defect.part)),
             defect_type=(
