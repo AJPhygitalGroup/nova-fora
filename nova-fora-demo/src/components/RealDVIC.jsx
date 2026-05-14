@@ -3215,7 +3215,11 @@ export default function RealDVIC({ user }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const totalDefectsToday = newDefects.length + liveDefects.length;
+  // Real-data only: liveDefects is fetched from /defects (filtered to
+  // DSP-reported sources). The legacy `newDefects` local state was a
+  // demo-only side effect of CreateDefectModal that never persisted to
+  // the backend — counting it would inflate the metric with mock rows.
+  const totalDefectsToday = liveDefects.length;
   // v2 spec has no urgency / rush concept yet — keep the slot for future use.
   const rushOrders = 0;
   const allDefects = [...newDefects];
@@ -3457,51 +3461,11 @@ export default function RealDVIC({ user }) {
             </div>
           </div>
 
-          {/* Charts */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
-              className="bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl p-5"
-            >
-              <h3 className="text-sm font-semibold text-white mb-4">{t('realDvic.charts.approvedVsRepaired', 'Daily Approved vs Repaired Defects')}</h3>
-              <div className="h-[200px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={weeklyInspections}>
-                    <XAxis dataKey="day" tick={{ fill: '#829ab1', fontSize: 12 }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fill: '#829ab1', fontSize: 11 }} axisLine={false} tickLine={false} />
-                    <Tooltip contentStyle={{ background: '#102a43', border: '1px solid #334e68', borderRadius: 8, fontSize: 12 }} />
-                    <Legend wrapperStyle={{ fontSize: 11, color: '#829ab1' }} />
-                    <Bar dataKey="approved" name={t('realDvic.charts.approvedSeries', 'Approved Defects')} fill="#22c55e" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="repaired" name={t('realDvic.charts.repairedSeries', 'Repaired')} fill="#627d98" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </motion.div>
-
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}
-              className="bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl p-5"
-            >
-              <h3 className="text-sm font-semibold text-white mb-4">{t('realDvic.charts.openDefects', 'Open Defects')}</h3>
-              <div className="h-[200px] flex items-center">
-                <ResponsiveContainer width="50%" height="100%">
-                  <PieChart>
-                    <Pie data={defectCategoryBreakdown} cx="50%" cy="50%" innerRadius={45} outerRadius={70} dataKey="value" stroke="none">
-                      {defectCategoryBreakdown.map((entry, i) => <Cell key={i} fill={entry.color} />)}
-                    </Pie>
-                    <Tooltip contentStyle={{ background: '#102a43', border: '1px solid #334e68', borderRadius: 8, fontSize: 12 }} formatter={(v) => [`${v}%`]} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="flex flex-col gap-1.5 text-xs">
-                  {defectCategoryBreakdown.map((cat) => (
-                    <div key={cat.name} className="flex items-center gap-2">
-                      <span className="w-2.5 h-2.5 rounded-full" style={{ background: cat.color }} />
-                      <span className="text-navy-300">{cat.name}</span>
-                      <span className="text-white font-semibold">{cat.value}%</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </motion.div>
-          </div>
+          {/* Charts removed — were driven by static mock arrays
+              (weeklyInspections, defectCategoryBreakdown) that never
+              reflected real DSP activity. We'll bring them back once we
+              have proper backend aggregation endpoints for
+              "defects-by-day" and "open-defects-by-category". */}
 
           {/* DA Reward Tiers cards removed from Home — they live on the dedicated Rewards page */}
           {/* Today's Defects table moved to its own top-level 'Defects' page */}
