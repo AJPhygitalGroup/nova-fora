@@ -17,6 +17,21 @@ import {
 } from '../api/client';
 import { isDspRole } from '../lib/permissions';
 import Badge from './ui/Badge';
+import VendorPickerModal from './ui/VendorPickerModal';
+
+// Mirrors `wo_bundler._GROUP_TO_REPAIR_TYPE` on the backend so the
+// VendorPickerModal can filter workshops to the right eligibility set
+// (a body shop shouldn't appear in the picker for a fluid leak, etc.).
+const GROUP_TO_REPAIR_TYPE = {
+  AMR: 'mechanical',
+  CMR: 'mechanical',
+  Body: 'body',
+  Tires: 'tires',
+  PM: 'pm',
+  CNMR: 'cnmr',
+  Detailing: 'detailing',
+  Netradyne: 'netradyne',
+};
 
 // Defect-count → color configuration for heatmap tiles.
 // (Replaces the old severity grading. Driven by defect count buckets:
@@ -627,7 +642,10 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
   const [isRush, setIsRush] = useState(false);
   const [damagePhotos, setDamagePhotos] = useState([]);
   const [isPM, setIsPM] = useState(false);
-  const [pmType, setPmType] = useState('Oil Change');
+  // pmType holds the catalog defect_type enum value (e.g. 'oil_change')
+  // so the same string round-trips into POST /defects without translation.
+  // Each option in the dropdown carries the matching label for display.
+  const [pmType, setPmType] = useState('oil_change');
 
   // Internal fetch of the DSP's real fleet for the create-from-scratch flow.
   // Different callers pass different `vans` props (FleetSnapshot still feeds
@@ -720,10 +738,26 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
     : null;
   const validPositions = selectedDefectType?.validPositions || [];
   const positionRequired = selectedDefectType?.positionRequired || false;
+
+  // Which repair_type bucket this work will fall into. Drives the
+  // VendorPickerModal's workshop filter so the DSP only sees shops that
+  // can actually do the job. PM mode is unambiguous; for defects we map
+  // the selected defect_type's `group` through GROUP_TO_REPAIR_TYPE
+  // (same mapping the bundler uses server-side).
+  const targetRepairType = isPM
+    ? 'pm'
+    : (selectedDefectType?.group
+        ? GROUP_TO_REPAIR_TYPE[selectedDefectType.group] || 'mechanical'
+        : null);
   // Step 2: vendor
   const [vendor, setVendor] = useState(null);
   const [apiVendors, setApiVendors] = useState(null);  // null = loading; [] = loaded
   const [vendorsError, setVendorsError] = useState(null);
+  // Optional manual vendor override. null = auto-router. When set, the
+  // defectReviews.approve() call passes vendor_workshop_id so the router
+  // honors the DSP's pick instead of selecting the first eligible shop.
+  const [pickedWorkshopId, setPickedWorkshopId] = useState(null);
+  const [vendorPickerOpen, setVendorPickerOpen] = useState(false);
   // Step 3: review
   const [preferredDate, setPreferredDate] = useState('');
   const [extraNotes, setExtraNotes] = useState('');
@@ -787,12 +821,9 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
   });
 
   // Step 1 validity:
-  //   - PM mode: blocked until the backend wires preventive-maintenance
-  //     WO creation (no defect required → needs a dedicated /work-orders
-  //     POST or a synthetic PM defect_type in the catalog). Keeping the
-  //     toggle visible as a planned feature, but the user can't advance
-  //     past step 1 — saves them from filling in steps 2-3 and getting
-  //     an error at the very end.
+  //   - PM mode: needs vehicle + pmType. The PM service-type values map
+  //     directly to catalog defect_types under part='pm_service' so the
+  //     submit path is the same as a regular DSP-reported defect.
   //   - Create-from-scratch defect (V2.2 catalog flow): vehicle + part +
   //     defect_type, and position if the defect type requires one.
   //   - Legacy create-from-existing-defect path: vehicle + section +
@@ -802,7 +833,7 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
   if (!van) {
     step1Valid = false;
   } else if (isPM) {
-    step1Valid = false;  // PM scheduling is not yet wired end-to-end
+    step1Valid = !!pmType;
   } else if (isCreateFromScratch && cat) {
     step1Valid = !!partId && !!defectTypeId && (!positionRequired || !!positionId);
   } else {
@@ -812,12 +843,6 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
 
   const handleSubmit = async () => {
     setSubmitError(null);
-
-    // PM mode is not yet wired to the backend — surface a friendly error.
-    if (isPM) {
-      setSubmitError('Preventive Maintenance work orders are coming soon. For now, convert from a reported defect on the Defects tab.');
-      return;
-    }
 
     setSubmitting(true);
     try {
@@ -830,20 +855,26 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
       //     metric card with no source defect selected.
       let itemIds = bulkIds || (initialDefectId ? [initialDefectId] : []);
       if (itemIds.length === 0) {
-        if (!isCreateFromScratch || !van || !partId || !defectTypeId) {
+        // Resolve the (part, defect_type) to send to /defects.
+        //   PM mode  → part='pm_service', defect_type=<the dropdown value>
+        //   Defect   → user picked them explicitly via the catalog dropdowns
+        // Either way the backend resolves classification + group from the
+        // (part, defect_type, vehicle_class) applicability row — we don't
+        // pass those in.
+        const partToSend = isPM ? 'pm_service' : partId;
+        const typeToSend = isPM ? pmType : defectTypeId;
+        const positionToSend = isPM ? null : (positionId || null);
+        if (!isCreateFromScratch || !van || !partToSend || !typeToSend) {
           setSubmitError('No source defect — open this dialog from the Defects tab.');
           setSubmitting(false);
           return;
         }
-        // Mint a defect from the catalog selections. The backend resolves
-        // classification + group from (part, defect_type, vehicle_class)
-        // applicability rows; we don't pass those in.
         const created = await defectsApi.create({
           vehicleId: van.id,                   // 'VAN-XXXX' or numeric id
           source: 'maintenance_request',       // DSP-initiated, not from inspection
-          part: partId,
-          defectType: defectTypeId,
-          position: positionId || null,
+          part: partToSend,
+          defectType: typeToSend,
+          position: positionToSend,
           notes: (description || '').trim() || null,
         });
         if (!created?.id) {
@@ -868,8 +899,14 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
       if (extraNotes) reasonParts.push(extraNotes);
       const reason = reasonParts.join(' — ');
 
+      // approveBody: if the DSP picked a specific vendor in step 2 we pin
+      // `vendor_workshop_id` so the server-side router honors the choice
+      // instead of auto-picking the first eligible shop. Omitting it
+      // preserves the auto-route default behavior.
+      const approveBody = { reason };
+      if (pickedWorkshopId != null) approveBody.vendorWorkshopId = pickedWorkshopId;
       const results = await Promise.allSettled(
-        itemIds.map((id) => defectReviews.approve(id, { reason }))
+        itemIds.map((id) => defectReviews.approve(id, approveBody))
       );
       const failed = results
         .map((r, i) => (r.status === 'rejected' ? itemIds[i] : null))
@@ -1107,40 +1144,26 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                   </button>
                 </div>
 
-                {/* PM mode: show PM type selector instead of Section */}
+                {/* PM mode: show PM type selector instead of Section.
+                    Each <option value=...> is the catalog defect_type enum
+                    value (oil_change, tire_rotation, …) so the same string
+                    round-trips into the POST /defects payload at submit. */}
                 {isPM ? (
-                  <div className="space-y-3">
-                    <div>
-                      <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('createWO.pmServiceType', 'PM service type')}</label>
-                      <select value={pmType} onChange={(e) => setPmType(e.target.value)}
-                        className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-green cursor-pointer">
-                        <option>{t('createWO.pmType.oilChange', 'Oil Change')}</option>
-                        <option>{t('createWO.pmType.tireRotation', 'Tire Rotation')}</option>
-                        <option>{t('createWO.pmType.brakeInspection', 'Brake Inspection')}</option>
-                        <option>{t('createWO.pmType.fullService', 'Full Service')}</option>
-                        <option>{t('createWO.pmType.alignment', 'Alignment')}</option>
-                        <option>{t('createWO.pmType.coolantFlush', 'Coolant Flush')}</option>
-                        <option>{t('createWO.pmType.transmissionService', 'Transmission Service')}</option>
-                        <option>{t('createWO.pmType.cabinAirFilter', 'Cabin Air Filter')}</option>
-                        <option>{t('createWO.pmType.otherPM', 'Other PM')}</option>
-                      </select>
-                      <p className="text-[10px] text-navy-400 mt-1">{t('createWO.pmHint', 'No inspection required — scheduled preventive maintenance.')}</p>
-                    </div>
-                    {/* PM scheduling isn't wired to the backend yet — surface
-                        the limitation up front instead of letting the user
-                        fill out steps 2 and 3 only to hit a submit error. */}
-                    <div className="rounded-lg border border-accent-gold/40 bg-accent-gold/10 px-3 py-2.5 flex items-start gap-2 text-xs">
-                      <AlertTriangle size={14} className="text-accent-gold shrink-0 mt-0.5" />
-                      <div className="text-navy-200">
-                        <div className="font-semibold text-accent-gold mb-0.5">
-                          {t('createWO.pmComingSoonTitle', 'Preventive Maintenance — coming soon')}
-                        </div>
-                        <div className="text-navy-300">
-                          {t('createWO.pmComingSoonBody',
-                            "PM scheduling isn't wired to vendors yet. For now, report the issue on the Defects tab so it routes through the regular repair flow.")}
-                        </div>
-                      </div>
-                    </div>
+                  <div>
+                    <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('createWO.pmServiceType', 'PM service type')}</label>
+                    <select value={pmType} onChange={(e) => setPmType(e.target.value)}
+                      className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-green cursor-pointer">
+                      <option value="oil_change">{t('createWO.pmType.oilChange', 'Oil Change')}</option>
+                      <option value="tire_rotation">{t('createWO.pmType.tireRotation', 'Tire Rotation')}</option>
+                      <option value="brake_pm_inspection">{t('createWO.pmType.brakeInspection', 'Brake Inspection')}</option>
+                      <option value="full_pm_service">{t('createWO.pmType.fullService', 'Full Service')}</option>
+                      <option value="wheel_alignment">{t('createWO.pmType.alignment', 'Alignment')}</option>
+                      <option value="coolant_flush">{t('createWO.pmType.coolantFlush', 'Coolant Flush')}</option>
+                      <option value="transmission_service">{t('createWO.pmType.transmissionService', 'Transmission Service')}</option>
+                      <option value="cabin_air_filter">{t('createWO.pmType.cabinAirFilter', 'Cabin Air Filter')}</option>
+                      <option value="other_pm">{t('createWO.pmType.otherPM', 'Other PM')}</option>
+                    </select>
+                    <p className="text-[10px] text-navy-400 mt-1">{t('createWO.pmHint', 'No inspection required — scheduled preventive maintenance.')}</p>
                   </div>
                 ) : isCreateFromScratch ? (
                   /* V2.2 catalog flow — section → part → defect type → optional position.
@@ -1366,22 +1389,49 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                   </div>
                 )}
 
-                {/* V2.0: vendor selection is automatic. The router places each
-                    defect's RepairRequest with the first vendor_workshops row
-                    whose `repair_types[]` matches the defect's group. The
-                    DSP no longer picks a vendor manually; this panel tells
-                    them what's going to happen. */}
-                <div className="rounded-xl border border-accent-blue/40 bg-accent-blue/5 p-4 space-y-2">
+                {/* V2.0: vendor selection is automatic by default. The
+                    router places each defect's RepairRequest with the
+                    first vendor_workshops row whose `repair_types[]`
+                    matches the defect's group. The DSP can override that
+                    pick via the "Choose specific vendor" button below;
+                    when they do, `vendor_workshop_id` is pinned on the
+                    approve call so the router uses the chosen workshop. */}
+                <div className="rounded-xl border border-accent-blue/40 bg-accent-blue/5 p-4 space-y-3">
                   <div className="flex items-center gap-2">
                     <Zap size={14} className="text-accent-blue" />
                     <span className="text-sm font-semibold text-white">
-                      {t('createWO.autoRouteTitle', 'Auto-routed by repair type')}
+                      {pickedWorkshopId == null
+                        ? t('createWO.autoRouteTitle', 'Auto-routed by repair type')
+                        : t('createWO.manualPickTitle', 'Pinned to a specific vendor')}
                     </span>
                   </div>
                   <p className="text-xs text-navy-300 leading-relaxed">
-                    {t('createWO.autoRouteBody',
-                      "Nova Fora sends each defect to the vendor workshop that handles its repair type. You don't have to pick a vendor — the system matches defect → workshop based on the defect's category.")}
+                    {pickedWorkshopId == null
+                      ? t('createWO.autoRouteBody',
+                          "Nova Fora sends each defect to the vendor workshop that handles its repair type. You don't have to pick a vendor — the system matches defect → workshop based on the defect's category.")
+                      : t('createWO.manualPickBody',
+                          "You picked the vendor for this work order. Auto-routing is overridden for this submission only.")}
                   </p>
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      disabled={!targetRepairType}
+                      onClick={() => setVendorPickerOpen(true)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-accent-blue/20 border border-accent-blue/50 text-accent-blue hover:bg-accent-blue/30 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">
+                      <MapPin size={11} />
+                      {pickedWorkshopId == null
+                        ? t('createWO.pickSpecificVendor', 'Choose specific vendor')
+                        : t('createWO.changeVendor', 'Change vendor')}
+                    </button>
+                    {pickedWorkshopId != null && (
+                      <button
+                        type="button"
+                        onClick={() => setPickedWorkshopId(null)}
+                        className="text-[11px] text-navy-400 hover:text-white underline cursor-pointer">
+                        {t('createWO.clearVendorPick', 'Back to auto-route')}
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Mapping table — quick visual reference of where each
@@ -1563,6 +1613,27 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
           </div>
         )}
       </motion.div>
+
+      {/* Vendor override picker — fetches workshops filtered by the
+          target repair_type and pins the user's choice. On confirm we
+          store the integer workshop id; the submit handler reads it back
+          and passes vendor_workshop_id to defectReviews.approve(). */}
+      <VendorPickerModal
+        open={vendorPickerOpen}
+        repairType={targetRepairType}
+        vehicleLabel={van ? (van.fleetId || van.id) : null}
+        defectSummary={isPM
+          ? `${t('createWO.pmServiceType', 'PM service')}: ${pmType.replace(/_/g, ' ')}`
+          : (selectedDefectType?.label && selectedPart?.label
+              ? `${selectedPart.label} — ${selectedDefectType.label}`
+              : null)}
+        initialWorkshopId={pickedWorkshopId}
+        onClose={() => setVendorPickerOpen(false)}
+        onConfirm={(workshopId) => {
+          setPickedWorkshopId(workshopId);
+          setVendorPickerOpen(false);
+        }}
+      />
     </motion.div>
   );
 }
