@@ -885,7 +885,7 @@ function WorkOrderCard({ wo, expanded, onToggle, userRole, currentUserId, onActi
               })}
             </div>
             <div className="text-sm text-white font-medium">
-              <span className="text-navy-300">{wo.dspName}</span> &nbsp;·&nbsp; {wo.vehicleId} &nbsp;·&nbsp; <span className="text-navy-400 font-mono">{wo.plate}</span>
+              <span className="text-navy-300">{wo.dspName}</span> &nbsp;·&nbsp; {wo.fleetId || wo.vehicleId} &nbsp;·&nbsp; <span className="text-navy-400 font-mono">{wo.plate}</span>
             </div>
             <div className="text-xs text-navy-400 mt-0.5 truncate">{wo.section} &nbsp;·&nbsp; <span className="text-white">{wo.part}</span></div>
           </div>
@@ -1342,6 +1342,7 @@ export default function WorkOrders({ user }) {
       list = list.filter((wo) =>
         wo.id.toLowerCase().includes(s) ||
         wo.vehicleId.toLowerCase().includes(s) ||
+        (wo.fleetId || '').toLowerCase().includes(s) ||
         wo.plate.toLowerCase().includes(s) ||
         wo.description.toLowerCase().includes(s) ||
         wo.dspName.toLowerCase().includes(s) ||

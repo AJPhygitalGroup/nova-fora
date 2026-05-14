@@ -911,12 +911,12 @@ function CardDetailModal({
     const items = pendingReviewQueue.map((q) => ({
       // The label uses the DSP-facing fleet_id from Amazon Cortex (e.g.
       // "10" / "PR006") — the same code that shows up in MyFleet. The
-      // backend's `fleet_id` field surfaces that, so the DSP doesn't have
-      // to mentally translate the database primary key into their fleet
-      // number. Falls back to the prefixed numeric id only for older
-      // payloads that don't carry the fleet_id yet.
+      // backend's `fleet_id` field surfaces that as-typed, so the DSP
+      // doesn't have to mentally translate the database primary key into
+      // their fleet number. Falls back to the prefixed numeric id only
+      // for older payloads that don't carry the fleet_id yet.
       label: q.fleetId
-        ? `VAN-${q.fleetId}`
+        ? String(q.fleetId)
         : `VAN-${String(q.vehicleId).padStart(4, '0')}`,
       title: `${q.part}${q.position ? ` (${q.position})` : ''} — ${(q.defectType || '').replace(/_/g, ' ')}`,
       meta: q.plate
@@ -961,7 +961,11 @@ function CardDetailModal({
       // The shape `ScheduledRepairItem` reads. The renderer treats
       // `repairBucket` ('overnight' | 'shop') to bucket the row.
       woId: wo.id,                           // 'WO-00042'
-      fleetId: wo.vehicleFleetId ? `VAN-${wo.vehicleFleetId}` : wo.vehicleIdStr,
+      // Show the DSP-registered fleet_id verbatim (matches My Fleet) when
+      // present, falling back to the system-generated VAN-XXXX only if the
+      // DSP never set one. Don't prefix the fleet_id with "VAN-" — the
+      // customer's value is the source of truth as-typed.
+      fleetId: wo.vehicleFleetId || wo.vehicleIdStr,
       vendor: wo.workshopName || '—',
       scheduledAt: fmtSlot(wo.scheduledAt),
       // Raw ISO kept around so the reschedule form can default to
