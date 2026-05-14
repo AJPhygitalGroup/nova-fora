@@ -787,7 +787,12 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
   });
 
   // Step 1 validity:
-  //   - PM mode: just needs vehicle + PM type.
+  //   - PM mode: blocked until the backend wires preventive-maintenance
+  //     WO creation (no defect required → needs a dedicated /work-orders
+  //     POST or a synthetic PM defect_type in the catalog). Keeping the
+  //     toggle visible as a planned feature, but the user can't advance
+  //     past step 1 — saves them from filling in steps 2-3 and getting
+  //     an error at the very end.
   //   - Create-from-scratch defect (V2.2 catalog flow): vehicle + part +
   //     defect_type, and position if the defect type requires one.
   //   - Legacy create-from-existing-defect path: vehicle + section +
@@ -797,7 +802,7 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
   if (!van) {
     step1Valid = false;
   } else if (isPM) {
-    step1Valid = !!pmType;
+    step1Valid = false;  // PM scheduling is not yet wired end-to-end
   } else if (isCreateFromScratch && cat) {
     step1Valid = !!partId && !!defectTypeId && (!positionRequired || !!positionId);
   } else {
@@ -1104,21 +1109,38 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
 
                 {/* PM mode: show PM type selector instead of Section */}
                 {isPM ? (
-                  <div>
-                    <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('createWO.pmServiceType', 'PM service type')}</label>
-                    <select value={pmType} onChange={(e) => setPmType(e.target.value)}
-                      className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-green cursor-pointer">
-                      <option>{t('createWO.pmType.oilChange', 'Oil Change')}</option>
-                      <option>{t('createWO.pmType.tireRotation', 'Tire Rotation')}</option>
-                      <option>{t('createWO.pmType.brakeInspection', 'Brake Inspection')}</option>
-                      <option>{t('createWO.pmType.fullService', 'Full Service')}</option>
-                      <option>{t('createWO.pmType.alignment', 'Alignment')}</option>
-                      <option>{t('createWO.pmType.coolantFlush', 'Coolant Flush')}</option>
-                      <option>{t('createWO.pmType.transmissionService', 'Transmission Service')}</option>
-                      <option>{t('createWO.pmType.cabinAirFilter', 'Cabin Air Filter')}</option>
-                      <option>{t('createWO.pmType.otherPM', 'Other PM')}</option>
-                    </select>
-                    <p className="text-[10px] text-navy-400 mt-1">{t('createWO.pmHint', 'No inspection required — scheduled preventive maintenance.')}</p>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('createWO.pmServiceType', 'PM service type')}</label>
+                      <select value={pmType} onChange={(e) => setPmType(e.target.value)}
+                        className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-green cursor-pointer">
+                        <option>{t('createWO.pmType.oilChange', 'Oil Change')}</option>
+                        <option>{t('createWO.pmType.tireRotation', 'Tire Rotation')}</option>
+                        <option>{t('createWO.pmType.brakeInspection', 'Brake Inspection')}</option>
+                        <option>{t('createWO.pmType.fullService', 'Full Service')}</option>
+                        <option>{t('createWO.pmType.alignment', 'Alignment')}</option>
+                        <option>{t('createWO.pmType.coolantFlush', 'Coolant Flush')}</option>
+                        <option>{t('createWO.pmType.transmissionService', 'Transmission Service')}</option>
+                        <option>{t('createWO.pmType.cabinAirFilter', 'Cabin Air Filter')}</option>
+                        <option>{t('createWO.pmType.otherPM', 'Other PM')}</option>
+                      </select>
+                      <p className="text-[10px] text-navy-400 mt-1">{t('createWO.pmHint', 'No inspection required — scheduled preventive maintenance.')}</p>
+                    </div>
+                    {/* PM scheduling isn't wired to the backend yet — surface
+                        the limitation up front instead of letting the user
+                        fill out steps 2 and 3 only to hit a submit error. */}
+                    <div className="rounded-lg border border-accent-gold/40 bg-accent-gold/10 px-3 py-2.5 flex items-start gap-2 text-xs">
+                      <AlertTriangle size={14} className="text-accent-gold shrink-0 mt-0.5" />
+                      <div className="text-navy-200">
+                        <div className="font-semibold text-accent-gold mb-0.5">
+                          {t('createWO.pmComingSoonTitle', 'Preventive Maintenance — coming soon')}
+                        </div>
+                        <div className="text-navy-300">
+                          {t('createWO.pmComingSoonBody',
+                            "PM scheduling isn't wired to vendors yet. For now, report the issue on the Defects tab so it routes through the regular repair flow.")}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 ) : isCreateFromScratch ? (
                   /* V2.2 catalog flow — section → part → defect type → optional position.
