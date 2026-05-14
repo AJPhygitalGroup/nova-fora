@@ -3171,6 +3171,19 @@ export default function RealDVIC({ user }) {
   // current via the SSE stream at /defects/v2/events. Both are role-scoped on
   // the server (dsp_owner sees own DSP only). dedup by id_str so a publish
   // arriving while the initial fetch is in flight doesn't double-count.
+  //
+  // "DSP-reported" excludes defects the inspector found during a walkaround
+  // (source='inspection') and findings vendors flagged from the shop
+  // (source='shop_finding'). The remaining sources — driver_report,
+  // maintenance_request, customer_report, other — are all DSP-originated.
+  const DSP_REPORTED_SOURCES = new Set([
+    'driver_report',
+    'maintenance_request',
+    'customer_report',
+    'other',
+  ]);
+  const isDspReportedSource = (d) => DSP_REPORTED_SOURCES.has(d?.source);
+
   const [liveDefects, setLiveDefects] = useState([]);
 
   useEffect(() => {
@@ -3180,12 +3193,16 @@ export default function RealDVIC({ user }) {
       .list({ dateFrom: today, dateTo: today, perPage: 100 })
       .then((res) => {
         if (cancelled) return;
-        setLiveDefects(res.items || []);
+        // Filter to DSP-originated sources so inspector-found defects don't
+        // inflate the "DSP-reported defects today" metric.
+        const rows = (res.items || []).filter(isDspReportedSource);
+        setLiveDefects(rows);
       })
       .catch((err) => console.warn('defects/v2 list failed', err));
 
     const cleanup = defectsApi.subscribe({
       onDefect: (d) => {
+        if (!isDspReportedSource(d)) return;
         setLiveDefects((prev) => (prev.some((x) => x.id === d.id) ? prev : [d, ...prev]));
       },
       onError: (e) => console.warn('defects/v2 SSE error', e),
@@ -3195,6 +3212,7 @@ export default function RealDVIC({ user }) {
       cancelled = true;
       cleanup();
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const totalDefectsToday = newDefects.length + liveDefects.length;
