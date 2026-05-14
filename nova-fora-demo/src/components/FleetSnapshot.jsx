@@ -640,7 +640,9 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
     if (!isCreateFromScratch) return;
     let alive = true;
     vehiclesApi
-      .list({ perPage: 200 })
+      // Backend caps per_page at 100. Sufficient for every demo DSP; if a
+      // production tenant exceeds it we'll need to paginate.
+      .list({ perPage: 100 })
       .then((res) => {
         if (!alive) return;
         const rows = (res.items || []).map((v) => ({

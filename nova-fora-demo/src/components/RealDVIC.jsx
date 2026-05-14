@@ -3141,7 +3141,10 @@ export default function RealDVIC({ user }) {
   useEffect(() => {
     let cancelled = false;
     vehiclesApi
-      .list({ perPage: 200 })
+      // Backend caps per_page at 100. Most DSPs have < 100 vans; if a customer
+      // exceeds the cap we'll paginate (the rest just won't appear in the
+      // Create-WO dropdown until then, which is a tolerable demo gap).
+      .list({ perPage: 100 })
       .then((res) => {
         if (cancelled) return;
         const rows = (res.items || []).map((v) => ({
