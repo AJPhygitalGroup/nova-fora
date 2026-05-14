@@ -1467,8 +1467,12 @@ export default function FleetSnapshot({ user, embedded = false }) {
                     <Badge variant="gray" size="md">{t('fleetSnapshot.groupVansFmt', { count: group.vans.length, defaultValue: `${group.vans.length} vans` })}</Badge>
                   </div>
                   <div className="flex items-center gap-2 text-[11px]">
-
-                    {groupIssues > 0 && groupCritical !== groupIssues && <span className="text-accent-orange">{t('fleetSnapshot.groupIssuesFmt', { count: groupIssues, defaultValue: `${groupIssues} with issues` })}</span>}
+                    {/* Reference to a long-removed `groupCritical` was
+                        crashing the vendor view (ReferenceError → blank
+                        page). The "critical" bucket was retired when
+                        TILE_BUCKETS replaced severity grading; just
+                        show the issues count directly. */}
+                    {groupIssues > 0 && <span className="text-accent-orange">{t('fleetSnapshot.groupIssuesFmt', { count: groupIssues, defaultValue: `${groupIssues} with issues` })}</span>}
                     {groupIssues === 0 && <span className="text-accent-green">{t('fleetSnapshot.groupAllClean', 'All clean')}</span>}
                   </div>
                 </div>
