@@ -229,6 +229,7 @@ PART_LABELS_ES: dict[P, dict[str, str]] = {
     # attached
     P.LIFT_GATE: {"label": "Plataforma elevadora"},
     P.MUD_FLAP: {"label": "Loderas"},
+    P.PM_SERVICE: {"label": "Servicio PM"},
 }
 
 
@@ -311,6 +312,15 @@ TYPE_LABELS_ES: dict[T, dict[str, str]] = {
     T.NOT_ADJUSTABLE: {"label": "No ajustable"},
     T.ODOR: {"label": "Olor"},
     T.OTHER_DAMAGE: {"label": "Otro daño"},
+    T.OIL_CHANGE: {"label": "Cambio de aceite"},
+    T.TIRE_ROTATION: {"label": "Rotación de llantas"},
+    T.BRAKE_PM_INSPECTION: {"label": "Inspección de frenos"},
+    T.FULL_PM_SERVICE: {"label": "Servicio completo"},
+    T.WHEEL_ALIGNMENT: {"label": "Alineación de ruedas"},
+    T.COOLANT_FLUSH: {"label": "Cambio de refrigerante"},
+    T.TRANSMISSION_SERVICE: {"label": "Servicio de transmisión"},
+    T.CABIN_AIR_FILTER: {"label": "Filtro de aire de cabina"},
+    T.OTHER_PM: {"label": "Otro PM"},
 }
 
 

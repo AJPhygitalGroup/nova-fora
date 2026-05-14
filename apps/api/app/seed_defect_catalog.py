@@ -283,6 +283,10 @@ PART_GROUP_DEFAULTS: list[tuple[P, G, str | None]] = [
     # attached
     (P.MUD_FLAP, G.BODY, None),
     (P.LIFT_GATE, G.CMR, None),
+    # PM service umbrella — defaults defects on this part to group=PM so
+    # the bundler maps them to RepairType.PM and the router places them
+    # at workshops that include 'pm' in their `repair_types[]`.
+    (P.PM_SERVICE, G.PM, "PM service umbrella — DSP Schedule-PM flow only."),
 ]
 
 
@@ -708,6 +712,41 @@ RULES: list[RuleSpec] = [
     (P.WINDSHIELD, T.OBSTRUCTED, ALL_CLASSES, C.SEV3,
      [], False, True, {}, {},
      "Device or accessory mounted on the windshield obstructing view.", None),
+
+    # ── PM service umbrella (DSP-only, all vehicle classes) ───────────
+    # These are not "defects" in the inspection sense — they're scheduled
+    # preventive maintenance items the DSP launches from the home "Create
+    # Work Order → Schedule PM" flow. Classification stays None so the
+    # backend treats them as routine work (not safety-critical). The
+    # frontend never exposes them via the inspector wizard because
+    # P.PM_SERVICE has no PART_SYSTEMS row.
+    (P.PM_SERVICE, T.OIL_CHANGE, ALL_CLASSES, None,
+     [], False, True, {}, {},
+     "Scheduled oil + filter change.", None),
+    (P.PM_SERVICE, T.TIRE_ROTATION, ALL_CLASSES, None,
+     [], False, True, {}, {},
+     "Scheduled tire rotation (corner positions swap).", None),
+    (P.PM_SERVICE, T.BRAKE_PM_INSPECTION, ALL_CLASSES, None,
+     [], False, True, {}, {},
+     "Scheduled brake-pad / disc inspection (no defect required).", None),
+    (P.PM_SERVICE, T.FULL_PM_SERVICE, ALL_CLASSES, None,
+     [], False, True, {}, {},
+     "Scheduled full PM (oil + tires + brakes + fluids).", None),
+    (P.PM_SERVICE, T.WHEEL_ALIGNMENT, ALL_CLASSES, None,
+     [], False, True, {}, {},
+     "Scheduled 4-wheel alignment.", None),
+    (P.PM_SERVICE, T.COOLANT_FLUSH, ALL_CLASSES, None,
+     [], False, True, {}, {},
+     "Scheduled coolant drain + refill.", None),
+    (P.PM_SERVICE, T.TRANSMISSION_SERVICE, ALL_CLASSES, None,
+     [], False, True, {}, {},
+     "Scheduled transmission fluid service.", None),
+    (P.PM_SERVICE, T.CABIN_AIR_FILTER, ALL_CLASSES, None,
+     [], False, True, {}, {},
+     "Scheduled cabin air filter replacement.", None),
+    (P.PM_SERVICE, T.OTHER_PM, ALL_CLASSES, None,
+     [], False, True, {}, {},
+     "Other preventive maintenance — describe in notes.", None),
 ]
 
 

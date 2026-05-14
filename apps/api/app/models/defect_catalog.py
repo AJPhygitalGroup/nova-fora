@@ -251,6 +251,12 @@ class DefectPart(str, Enum):
     # attached
     LIFT_GATE = "lift_gate"
     MUD_FLAP = "mud_flap"
+    # PM umbrella — not surfaced in the inspector wizard (no PART_SYSTEMS
+    # row). Exists solely so the DSP "Create Work Order → Schedule PM"
+    # flow can mint a defect with one of the PM defect_types below and
+    # let the existing create-defect → approve → router pipeline place
+    # a PM WO at a PM-capable workshop.
+    PM_SERVICE = "pm_service"
 
 
 class DefectPosition(str, Enum):
@@ -348,6 +354,18 @@ class DefectType(str, Enum):
     NOT_ADJUSTABLE = "not_adjustable"
     ODOR = "odor"
     OTHER_DAMAGE = "other_damage"
+    # PM service umbrella — only valid when part=pm_service. Each value
+    # mirrors the PM service-type dropdown in the DSP "Create WO" modal
+    # so the same string round-trips end-to-end without translation.
+    OIL_CHANGE = "oil_change"
+    TIRE_ROTATION = "tire_rotation"
+    BRAKE_PM_INSPECTION = "brake_pm_inspection"
+    FULL_PM_SERVICE = "full_pm_service"
+    WHEEL_ALIGNMENT = "wheel_alignment"
+    COOLANT_FLUSH = "coolant_flush"
+    TRANSMISSION_SERVICE = "transmission_service"
+    CABIN_AIR_FILTER = "cabin_air_filter"
+    OTHER_PM = "other_pm"
 
 
 # ─────────────────────────────────────────────────────

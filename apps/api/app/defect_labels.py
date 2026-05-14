@@ -229,6 +229,9 @@ PART_LABELS: dict[P, dict[str, str]] = {
     # attached
     P.LIFT_GATE: {"label": "Lift gate", "icon": "🚪"},
     P.MUD_FLAP: {"label": "Mud flap", "icon": "🟫"},
+    # PM umbrella — invisible to the inspector wizard (no system mapping)
+    # and only surfaced through the DSP "Create WO → Schedule PM" flow.
+    P.PM_SERVICE: {"label": "PM service", "icon": "🛠️"},
 }
 
 
@@ -311,6 +314,16 @@ TYPE_LABELS: dict[T, dict[str, str]] = {
     T.NOT_ADJUSTABLE: {"label": "Not adjustable", "icon": "🔧"},
     T.ODOR: {"label": "Odor", "icon": "👃"},
     T.OTHER_DAMAGE: {"label": "Other damage", "icon": "❓"},
+    # PM service types — only valid when paired with P.PM_SERVICE.
+    T.OIL_CHANGE: {"label": "Oil change", "icon": "🛢️"},
+    T.TIRE_ROTATION: {"label": "Tire rotation", "icon": "🔄"},
+    T.BRAKE_PM_INSPECTION: {"label": "Brake inspection", "icon": "🛑"},
+    T.FULL_PM_SERVICE: {"label": "Full service", "icon": "🔧"},
+    T.WHEEL_ALIGNMENT: {"label": "Wheel alignment", "icon": "📐"},
+    T.COOLANT_FLUSH: {"label": "Coolant flush", "icon": "💧"},
+    T.TRANSMISSION_SERVICE: {"label": "Transmission service", "icon": "⚙️"},
+    T.CABIN_AIR_FILTER: {"label": "Cabin air filter", "icon": "🌬️"},
+    T.OTHER_PM: {"label": "Other PM", "icon": "🛠️"},
 }
 
 
