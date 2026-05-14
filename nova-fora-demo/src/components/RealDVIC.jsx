@@ -1308,7 +1308,11 @@ function CardDetailModal({
       const partLabel = d.position ? `${d.part} (${d.position})` : d.part;
       const typeLabel = (d.defectType || '').replace(/_/g, ' ');
       return {
-        label: d.vehicleId,
+        // Show the DSP-registered fleet_id (matches My Fleet) when present
+        // — falling back to the system-generated VAN-XXXX only when the
+        // DSP never set a fleet_id on the vehicle. Same rule we already
+        // apply on the WO card, repair history modal, and inspected list.
+        label: d.fleetId || d.vehicleId,
         title: `${partLabel} — ${typeLabel}`,
         meta: `${d.reportedBy || 'Driver'} · ${fmtTime(d.reportedAt)}`,
         status: 'Reported',
