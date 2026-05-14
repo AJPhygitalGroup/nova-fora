@@ -210,6 +210,10 @@ export function adaptWO(wo, ctx = {}) {
     dspResponse:   wo.dspResponse   || null,    // 'confirmed' | 'not_available'
     dspResponseAt: wo.dspResponseAt || null,
     keyLocation:   wo.keyLocation   || null,
+    // Surfaced by the backend so the vendor card can render a "Cancelled
+    // by customer" badge and the tech queue can hide the row. True when
+    // the DSP was the actor on POST /cancel; vendor cancels stay false.
+    cancelledByCustomer: !!wo.cancelledByCustomer,
 
     // Escape hatch: full raw V2.0 row for any caller that needs it
     _v2: wo,

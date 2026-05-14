@@ -47,6 +47,7 @@ from app.models.organization import Organization
 from app.models.vehicle import Vehicle
 from app.models.work_orders import (
     DefectResolution,
+    DspWoResponse,
     LineItemBillingType,
     LineItemCategory,
     LineItemStatus,
@@ -133,6 +134,11 @@ class WorkOrderResponse(BaseModel):
     dsp_response: str | None = None        # 'confirmed' | 'not_available'
     dsp_response_at: datetime | None = None
     key_location: str | None = None
+    # Derived from `cancelled_reason` — when the DSP cancels the WO we
+    # prefix the reason with "[customer]". The vendor side uses this to
+    # group customer-cancelled WOs in a separate section and to hide
+    # them from the technician's queue (cleaner work surface for techs).
+    cancelled_by_customer: bool = False
 
     @classmethod
     def from_model(
@@ -193,6 +199,10 @@ class WorkOrderResponse(BaseModel):
             ),
             dsp_response_at=wo.dsp_response_at,
             key_location=wo.key_location,
+            cancelled_by_customer=(
+                bool(wo.cancelled_reason)
+                and wo.cancelled_reason.lower().startswith("[customer]")
+            ),
         )
 
 
@@ -414,6 +424,21 @@ class DspResponseBody(BaseModel):
 
     response: Literal["confirmed", "not_available"] = Field(...)
     key_location: str | None = Field(default=None, max_length=80)
+    model_config = ConfigDict(extra="forbid")
+
+
+class DspRescheduleBody(BaseModel):
+    """POST /work-orders/{id}/dsp-reschedule — DSP picks a new slot.
+
+    Use when the originally-proposed slot doesn't work for the customer.
+    Saves the new `scheduled_at` and marks `dsp_response='confirmed'` since
+    the DSP themselves picked this date. Vendor / service writer side sees
+    the new slot as already-confirmed.
+    """
+
+    scheduled_at: datetime = Field(...)
+    key_location: str | None = Field(default=None, max_length=80)
+    notes: str | None = Field(default=None, max_length=500)
     model_config = ConfigDict(extra="forbid")
 
 
@@ -707,6 +732,12 @@ async def list_work_orders(
         if workshop_ids:
             condition = condition | WorkOrder.vendor_workshop_id.in_(workshop_ids)
         stmt = stmt.where(condition)
+        # Technicians don't see DSP-cancelled WOs — those are work that's
+        # already off the table; surfacing them on the tech queue is just
+        # noise. Vendor admins / service writers still see them
+        # (their list path above doesn't apply this filter).
+        if status_filter is None:
+            stmt = stmt.where(WorkOrder.status != WorkOrderStatus.CANCELLED.value)
     else:
         # site_admin — optional filters
         if dsp_id is not None:
@@ -1243,7 +1274,18 @@ async def cancel_wo(
     prev = wo.status.value if hasattr(wo.status, "value") else str(wo.status)
     wo.status = WorkOrderStatus.CANCELLED
     wo.cancelled_at = utc_now()
-    wo.cancelled_reason = body.reason
+    # Tag the reason with a recognizable prefix when the DSP cancels so
+    # the vendor side can render "Cancelled by customer" / hide the WO
+    # from the technician feed without adding a column. The prefix lives
+    # in `cancelled_reason` text (e.g. "[customer] DSP changed mind").
+    # Vendor-initiated cancels just store the raw reason.
+    raw_reason = (body.reason or "").strip()
+    if current.role == UserRole.DSP_OWNER:
+        wo.cancelled_reason = (
+            f"[customer] {raw_reason}" if raw_reason else "[customer]"
+        )
+    else:
+        wo.cancelled_reason = raw_reason or None
     session.add(wo)
     await log_status_change(
         session,
@@ -1418,6 +1460,71 @@ async def dsp_response_wo(
         actor_id=current.id,
         details={
             "key_location": wo.key_location,
+        },
+    )
+    await session.commit()
+    await session.refresh(wo)
+    return await _build_wo_response(session, wo)
+
+
+@router.post(
+    "/{wo_id}/dsp-reschedule",
+    response_model=WorkOrderResponse,
+    summary="DSP picks a new slot the van will actually be available",
+)
+async def dsp_reschedule_wo(
+    body: DspRescheduleBody,
+    request: Request,
+    wo_id: str = Path(..., examples=["WO-00001"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> WorkOrderResponse:
+    """DSP-owner action when the vendor's proposed slot doesn't work.
+
+    Instead of leaving the WO in 'not_available' purgatory (where the
+    vendor has to chase the DSP for a new date), the DSP picks the new
+    slot directly. We:
+      - update `scheduled_at` to the new date,
+      - set `dsp_response='confirmed'` (the DSP is committing to the slot
+        they themselves just chose),
+      - optionally update `key_location` (defaults to whatever was
+        already there).
+    A short note can ride on the request body and lands in the activity
+    log so the vendor side can see why the reschedule happened.
+    """
+    lang = get_request_language(request)
+    wo = await _load_wo_or_404(session, _parse_wo_id(wo_id), lang)
+    if current.role != UserRole.SITE_ADMIN:
+        if current.role != UserRole.DSP_OWNER or wo.dsp_id != current.organization_id:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                tr_error(E.NOT_YOUR_WORK_ORDER, lang),
+            )
+    if wo.status in (
+        WorkOrderStatus.COMPLETED,
+        WorkOrderStatus.CANCELLED,
+        WorkOrderStatus.DECLINED,
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Cannot reschedule a completed / cancelled / declined WO.",
+        )
+    wo.scheduled_at = body.scheduled_at
+    wo.dsp_response = DspWoResponse.CONFIRMED
+    wo.dsp_response_at = utc_now()
+    if body.key_location is not None:
+        wo.key_location = body.key_location.strip() or None
+    session.add(wo)
+    await log_event(
+        session,
+        entity_type=WoActivityLogEntityType.WORK_ORDER,
+        entity_id=wo.id,
+        action="dsp_rescheduled",
+        actor_id=current.id,
+        details={
+            "scheduled_at": body.scheduled_at.isoformat(),
+            "key_location": wo.key_location,
+            "notes": body.notes,
         },
     )
     await session.commit()

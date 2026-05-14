@@ -911,6 +911,20 @@ export const workOrders = {
     });
   },
 
+  /**
+   * POST /work-orders/{id}/dsp-reschedule — DSP picks a new slot.
+   * Use when the originally-proposed time doesn't work. Server sets
+   * dsp_response='confirmed' automatically since the DSP is the one
+   * picking the slot.
+   * body: { scheduledAt: ISO, keyLocation?: string, notes?: string }
+   */
+  dspReschedule(id, body) {
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/dsp-reschedule`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
   // ── Line items (sub-resource) ─────────────────────
   /**
    * POST /work-orders/{id}/line-items — mid-repair addition.

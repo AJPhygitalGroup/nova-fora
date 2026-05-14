@@ -867,6 +867,12 @@ function WorkOrderCard({ wo, expanded, onToggle, userRole, currentUserId, onActi
               <Badge variant={statusConf.variant} size="md">
                 <StatusIcon size={10} className="inline mr-0.5" /> {t(`workOrders.statusBadge.${wo.status}`, statusConf.label)}
               </Badge>
+              {wo.status === 'canceled' && wo.cancelledByCustomer && (
+                <Badge variant="purple" size="md">
+                  <User size={9} className="inline mr-0.5" />
+                  {t('workOrders.card.cancelledByCustomer', 'Cancelled by customer')}
+                </Badge>
+              )}
               {wo.flags?.map((f) => {
                 const fConf = FLAG_CONFIG[f];
                 if (!fConf) return null;
@@ -1069,7 +1075,13 @@ function WorkOrderCard({ wo, expanded, onToggle, userRole, currentUserId, onActi
                 <Field label={t('workOrders.card.yearMakeModel', 'Y / Make / Model')} value={`${wo.year} ${wo.make} ${wo.model}`} />
                 <Field label={t('workOrders.card.vin', 'VIN')} value={wo.vin} mono small />
                 {wo.declinedReason && <Field label={t('workOrders.card.declinedReason', 'Declined reason')} value={wo.declinedReason} warn />}
-                {wo.canceledReason && <Field label={t('workOrders.card.canceledReason', 'Canceled reason')} value={wo.canceledReason} warn />}
+                {wo.canceledReason && (
+                  <Field
+                    label={t('workOrders.card.canceledReason', 'Canceled reason')}
+                    value={String(wo.canceledReason).replace(/^\[customer\]\s*/i, '').trim() || t('workOrders.card.canceledByCustomerShort', 'Cancelled by customer')}
+                    warn
+                  />
+                )}
                 {wo.completedAt && <Field label={t('workOrders.card.completedAt', 'Completed at')} value={new Date(wo.completedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} />}
               </div>
 

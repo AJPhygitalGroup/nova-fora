@@ -160,6 +160,22 @@ function ScheduledRepairItem({ item, onChanged }) {
     : keyLocationSelect;
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
+  // Inline reschedule form state — popped when the DSP clicks "Not
+  // available" so they can pick the next date the van is actually free.
+  // Defaults to "+1 day, same hour" relative to the original slot so the
+  // DSP doesn't have to type from scratch.
+  const [rescheduleOpen, setRescheduleOpen] = useState(false);
+  const rescheduleDefault = (() => {
+    // item.scheduledAt is a pre-formatted display string at this point;
+    // backend serves the raw ISO on wo.scheduledAt — when wired from the
+    // queue we expose `rescheduleSeedIso` so this defaulting works.
+    const base = item.rescheduleSeedIso ? new Date(item.rescheduleSeedIso) : new Date();
+    base.setDate(base.getDate() + 1);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${base.getFullYear()}-${pad(base.getMonth() + 1)}-${pad(base.getDate())}T${pad(base.getHours())}:${pad(base.getMinutes())}`;
+  })();
+  const [rescheduleAt, setRescheduleAt] = useState(rescheduleDefault);
+  const [rescheduleNotes, setRescheduleNotes] = useState('');
 
   const callResponse = async (response, opts = {}) => {
     if (!item.woId || busy) return;
@@ -191,6 +207,27 @@ function ScheduledRepairItem({ item, onChanged }) {
       onChanged?.();
     } catch (err) {
       setErrorMsg(err?.detail || err?.message || 'Cancel failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const callReschedule = async () => {
+    if (!item.woId || busy || !rescheduleAt) return;
+    setBusy(true);
+    setErrorMsg(null);
+    try {
+      const isoNew = new Date(rescheduleAt).toISOString();
+      await workOrdersApi.dspReschedule(item.woId, {
+        scheduledAt: isoNew,
+        keyLocation: effectiveKeyLocation || null,
+        notes: rescheduleNotes.trim() || null,
+      });
+      setRescheduleOpen(false);
+      setRescheduleNotes('');
+      onChanged?.();
+    } catch (err) {
+      setErrorMsg(err?.detail || err?.message || 'Reschedule failed');
     } finally {
       setBusy(false);
     }
@@ -287,7 +324,12 @@ function ScheduledRepairItem({ item, onChanged }) {
             )}
           </AnimatePresence>
 
-          {/* Action buttons — call the backend on click. */}
+          {/* Action buttons — call the backend on click. The "Not
+              available" path now opens an inline reschedule form rather
+              than just persisting an inconclusive flag — per the spec,
+              the DSP picks the next date the van will actually be free,
+              the WO updates to that slot, and the vendor sees the new
+              time as already-confirmed. */}
           <div className="flex flex-wrap items-center gap-2 pt-1">
             <button
               onClick={() => callResponse('confirmed')}
@@ -296,10 +338,14 @@ function ScheduledRepairItem({ item, onChanged }) {
               <Check size={12} /> {t('scheduledRepair.confirm', 'Confirm')}
             </button>
             <button
-              onClick={() => callResponse('not_available')}
+              onClick={() => setRescheduleOpen((v) => !v)}
               disabled={busy}
-              className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-accent-gold/15 border border-accent-gold/40 text-accent-gold text-xs font-semibold hover:bg-accent-gold/25 disabled:opacity-40 cursor-pointer">
-              <AlertTriangle size={12} /> {t('scheduledRepair.notAvailable', 'Not available')}
+              className={`flex-1 min-w-[120px] flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-semibold disabled:opacity-40 cursor-pointer ${
+                rescheduleOpen
+                  ? 'bg-accent-gold/30 border-accent-gold text-accent-gold'
+                  : 'bg-accent-gold/15 border-accent-gold/40 text-accent-gold hover:bg-accent-gold/25'
+              }`}>
+              <AlertTriangle size={12} /> {t('scheduledRepair.notAvailableReschedule', 'Not available — reschedule')}
             </button>
             <button
               onClick={callCancel}
@@ -308,6 +354,56 @@ function ScheduledRepairItem({ item, onChanged }) {
               <X size={12} /> {t('scheduledRepair.cancelWo', 'Cancel WO')}
             </button>
           </div>
+
+          {/* Inline reschedule form — only rendered when the DSP clicks
+              "Not available". Lets them pick the next available date +
+              add a quick note that lands in the activity log. */}
+          <AnimatePresence>
+            {rescheduleOpen && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="overflow-hidden">
+                <div className="mt-2 rounded-lg border border-accent-gold/40 bg-accent-gold/5 p-3 space-y-2">
+                  <div className="text-[11px] text-accent-gold font-semibold">
+                    {t('scheduledRepair.rescheduleHeading',
+                      'Pick the next date the van is available')}
+                  </div>
+                  <input
+                    type="datetime-local"
+                    value={rescheduleAt}
+                    onChange={(e) => setRescheduleAt(e.target.value)}
+                    disabled={busy}
+                    className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-gold"
+                  />
+                  <input
+                    type="text"
+                    value={rescheduleNotes}
+                    onChange={(e) => setRescheduleNotes(e.target.value)}
+                    disabled={busy}
+                    placeholder={t('scheduledRepair.rescheduleNotesPlaceholder',
+                      "Reason (optional) — e.g. 'driver out tomorrow'")}
+                    className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-gold"
+                  />
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      onClick={() => setRescheduleOpen(false)}
+                      disabled={busy}
+                      className="px-3 py-1.5 rounded-md text-[11px] font-medium text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer">
+                      {t('scheduledRepair.cancelReschedule', 'Cancel')}
+                    </button>
+                    <button
+                      onClick={callReschedule}
+                      disabled={busy || !rescheduleAt}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-md text-[11px] font-semibold bg-accent-gold text-white hover:opacity-90 disabled:opacity-40 cursor-pointer">
+                      <Check size={11} /> {t('scheduledRepair.submitReschedule', 'Submit new date')}
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </>
       )}
 
@@ -868,6 +964,10 @@ function CardDetailModal({
       fleetId: wo.vehicleFleetId ? `VAN-${wo.vehicleFleetId}` : wo.vehicleIdStr,
       vendor: wo.workshopName || '—',
       scheduledAt: fmtSlot(wo.scheduledAt),
+      // Raw ISO kept around so the reschedule form can default to
+      // "the day after the originally-proposed slot" — friendlier than
+      // making the DSP build the date from scratch.
+      rescheduleSeedIso: wo.scheduledAt || null,
       defect: wo.defects?.[0]
         ? `${wo.defects[0].part} — ${(wo.defects[0].defectType || '').replace(/_/g, ' ')}`
         : '—',
