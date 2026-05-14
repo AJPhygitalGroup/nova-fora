@@ -1011,6 +1011,43 @@ export const workOrders = {
       body: JSON.stringify(camelToSnake(body)),
     });
   },
+
+  /**
+   * Subscribe to work-order state-change events via SSE.
+   *
+   * Mirrors `defects.subscribe`: EventSource can't send Authorization
+   * headers, so the JWT rides on `?token=...`. The stream is server-side
+   * role-scoped:
+   *   - DSPs see their own org's WOs
+   *   - vendors see WOs at their workshops
+   *   - technicians see WOs at their workshops or assigned to them
+   *   - site_admin sees all
+   *
+   * Envelope: { event, workOrderId, dspId, vendorWorkshopId,
+   *             assignedTechnicianId }
+   *
+   * @returns {() => void} cleanup — call on unmount to close the connection
+   */
+  subscribe({ onEvent, onError, onOpen } = {}) {
+    const token = getAccessToken();
+    if (!token) return () => {};
+    const url = `${BASE_URL}/work-orders/events?token=${encodeURIComponent(token)}`;
+    const es = new EventSource(url);
+    if (onOpen) es.onopen = onOpen;
+    es.onmessage = (e) => {
+      if (!onEvent || !e.data) return;
+      try {
+        const envelope = JSON.parse(e.data);
+        if (envelope && envelope.event) onEvent(keysToCamel(envelope));
+      } catch {
+        // malformed payload — skip
+      }
+    };
+    if (onError) es.onerror = onError;
+    return () => {
+      try { es.close(); } catch { /* noop */ }
+    };
+  },
 };
 
 // ─────────────────────────────────────────────────────
@@ -1153,6 +1190,40 @@ export const defectReviews = {
         body: JSON.stringify(camelToSnake(body)),
       }
     );
+  },
+
+  /**
+   * Subscribe to defect-review state changes (approved / rejected).
+   *
+   * Auth: JWT as ?token=... (EventSource browser limit). Stream is
+   * server-scoped: DSP-side roles see own-org events; site_admin sees
+   * everything; vendor / technician roles get nothing (they don't
+   * review defects).
+   *
+   * Envelope: { event: 'approved' | 'rejected', defectId, dspId,
+   *             vendorWorkshopId? }
+   *
+   * @returns {() => void} cleanup — call on unmount to close the connection
+   */
+  subscribe({ onEvent, onError, onOpen } = {}) {
+    const token = getAccessToken();
+    if (!token) return () => {};
+    const url = `${BASE_URL}/defect-reviews/events?token=${encodeURIComponent(token)}`;
+    const es = new EventSource(url);
+    if (onOpen) es.onopen = onOpen;
+    es.onmessage = (e) => {
+      if (!onEvent || !e.data) return;
+      try {
+        const envelope = JSON.parse(e.data);
+        if (envelope && envelope.event) onEvent(keysToCamel(envelope));
+      } catch {
+        // malformed payload — skip
+      }
+    };
+    if (onError) es.onerror = onError;
+    return () => {
+      try { es.close(); } catch { /* noop */ }
+    };
   },
 };
 

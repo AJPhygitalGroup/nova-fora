@@ -162,4 +162,22 @@ async def route_repair_request(
             "tracking_mode": tracking_mode_enum.value,
         },
     )
+    # Best-effort SSE fan-out so the destination DSP + the receiving vendor
+    # see the new WO land on their home cards without polling. The commit
+    # happens in the caller's transaction — publishing here is fine because
+    # subscribers only need to know "something changed, refetch your list",
+    # and a brief window where the publish lands before the commit just
+    # triggers an empty refetch on rare race; the next event will catch up.
+    try:
+        from app.services.pubsub import publish_work_order_event
+        await publish_work_order_event({
+            "event": "created",
+            "work_order_id": wo.id,
+            "dsp_id": wo.dsp_id,
+            "vendor_workshop_id": wo.vendor_workshop_id,
+            "assigned_technician_id": None,
+        })
+    except Exception:  # noqa: BLE001
+        # Never block routing on a pubsub failure.
+        pass
     return wo

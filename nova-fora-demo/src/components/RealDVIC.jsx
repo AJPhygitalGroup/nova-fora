@@ -3422,11 +3422,18 @@ function useAutoRefreshTick(intervalMs = 15000) {
 
 export default function RealDVIC({ user }) {
   const { t } = useTranslation('dashboard');
-  // Auto-refresh tick — bumps every 15s while the tab is visible so the
-  // home cards (today's metrics, pending review queue, scheduled WOs,
-  // repaired WOs history) stay fresh without the user having to refresh
-  // the page. Paused while hidden, bumps once on tab focus.
-  const autoTick = useAutoRefreshTick(15000);
+  // Auto-refresh tick — 60s safety-net polling for cases where an SSE
+  // message gets dropped (network blip, proxy timeout, sleep/resume).
+  // Real-time updates come from the SSE subscribers below; this is the
+  // belt to that suspenders. Paused while the tab is hidden, bumps once
+  // immediately on tab focus so resume-from-background is instant.
+  const autoTick = useAutoRefreshTick(60000);
+  // Bumpable signal that everything-stale-revalidate. Anything that
+  // wants to force a fan-out of refetches (SSE event landing, child
+  // modal committing a state change) bumps this tick; data-fetch
+  // effects include it in their deps and refire. Declared up here so
+  // earlier effects (e.g. repairedWOs) can reference it without TDZ.
+  const [queueRefreshTick, setQueueRefreshTick] = useState(0);
   const [activeSection, setActiveSection] = useState('overview');
   const [openCard, setOpenCard] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -3517,12 +3524,13 @@ export default function RealDVIC({ user }) {
       })
       .catch((err) => console.warn('completed WO history fetch failed', err));
     return () => { cancelled = true; };
-    // Refetch when the wizard closes (a newly-reported defect could
-    // trigger auto-routing) AND on every autoTick so completed WOs
-    // (which flip on the vendor side, out of the DSP's UI) show up here
-    // within ~15s without requiring a page refresh.
+    // Refetch triggers:
+    //   - wizardJustClosed: a new defect could auto-route + complete
+    //   - autoTick: 60s safety-net poll in case an SSE event got dropped
+    //   - queueRefreshTick: bumped by the WO SSE subscriber on every
+    //     state change — `completed` events land here within ~200ms
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wizardJustClosed, autoTick]);
+  }, [wizardJustClosed, autoTick, queueRefreshTick]);
   const repairedDefectsCount = repairedWOs.length;
   // "This week" = last 7 days
   const oneWeekAgo = new Date();
@@ -3638,9 +3646,35 @@ export default function RealDVIC({ user }) {
   // bump the refresh tick from inside the modal whenever the DSP commits
   // a response so the count + list update without a full page reload.
   const [scheduledWoQueue, setScheduledWoQueue] = useState([]);
-  // A bumpable tick: anything that needs the queue refreshed (e.g. after a
-  // defect was approved from the modal) increments this so the effect refires.
-  const [queueRefreshTick, setQueueRefreshTick] = useState(0);
+  // SSE subscriptions — instant fan-out from the backend so vendor-side
+  // and DSP-side state changes flow into the home cards within the
+  // round-trip time (≲200ms), not 15-60s. Each event just bumps
+  // queueRefreshTick + autoTick deps; the data-fetch effects above
+  // re-fire and refetch from the canonical endpoints. We deliberately
+  // don't try to merge the event payload into local state — refetching
+  // keeps the cards consistent with whatever filters / scopes the
+  // backend applies, and avoids drift over time.
+  useEffect(() => {
+    const cleanups = [];
+    cleanups.push(workOrdersApi.subscribe({
+      onEvent: (envelope) => {
+        // Any WO state change can affect at least one of: scheduled-WOs
+        // queue, repaired-WOs list, today metrics (assigned tech). Bump
+        // the queue tick — every dependent effect re-fires.
+        setQueueRefreshTick((t) => t + 1);
+      },
+      onError: (e) => console.warn('work_orders SSE error', e),
+    }));
+    cleanups.push(defectReviewsApi.subscribe({
+      onEvent: (envelope) => {
+        // Approve / reject changes the pending-review queue. Same tick
+        // covers it — the queue effect already lives on queueRefreshTick.
+        setQueueRefreshTick((t) => t + 1);
+      },
+      onError: (e) => console.warn('defect_reviews SSE error', e),
+    }));
+    return () => { cleanups.forEach((fn) => fn()); };
+  }, []);
   useEffect(() => {
     let cancelled = false;
     defectReviewsApi

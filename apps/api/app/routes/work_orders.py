@@ -30,12 +30,16 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
+import json
+import logging
+
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, get_current_user_from_query_token
 from app.db import get_session
 from app.i18n_errors import E, tr_error
 from app.i18n_helpers import get_request_language
@@ -72,8 +76,33 @@ from app.services.wo_line_items import (
     generate_line_items_on_accept,
 )
 from app.services.wo_router import route_repair_request
+from app.services.pubsub import (
+    publish_work_order_event,
+    subscribe_work_order_events,
+)
 
+log = logging.getLogger("nova.work_orders")
 router = APIRouter(prefix="/work-orders", tags=["work-orders"])
+
+
+# ─────────────────────────────────────────────────────
+# Pubsub helpers — best-effort instant-latency events
+# ─────────────────────────────────────────────────────
+async def _publish_wo_changed(wo: WorkOrder, event_name: str) -> None:
+    """Best-effort publish of a WO state change. Logs but never raises so
+    the underlying mutation always completes regardless of pubsub health."""
+    try:
+        await publish_work_order_event({
+            "event": event_name,
+            "work_order_id": wo.id,
+            "dsp_id": wo.dsp_id,
+            "vendor_workshop_id": wo.vendor_workshop_id,
+            "assigned_technician_id": wo.assigned_technician_id,
+        })
+    except Exception as e:  # noqa: BLE001
+        log.warning("WO event publish (%s, id=%s) failed: %s", event_name, wo.id, e)
+
+
 
 
 # ─────────────────────────────────────────────────────
@@ -778,6 +807,83 @@ async def list_work_orders(
     return WorkOrderListResponse(items=items, total=len(items))
 
 
+# ─────────────────────────────────────────────────────
+# Live event stream (SSE)
+# ─────────────────────────────────────────────────────
+@router.get(
+    "/events",
+    summary="SSE stream of work-order state changes",
+    response_class=StreamingResponse,
+)
+async def stream_wo_events(
+    current: User = Depends(get_current_user_from_query_token),
+    session: AsyncSession = Depends(get_session),
+):
+    """Server-Sent Events stream of WO lifecycle changes for the caller.
+
+    Auth: pass JWT as `?token=...` (browser EventSource can't set headers).
+    Events: `{event, work_order_id, dsp_id, vendor_workshop_id,
+              assigned_technician_id}` where `event` ∈
+    {created, accepted, declined, started, completed, cancelled,
+    assigned, scheduled, dsp_response, rescheduled}.
+
+    Filters server-side by role so a vendor never sees another vendor's
+    WOs and a DSP never sees another DSP's. Heartbeat every 15s keeps
+    proxies from killing idle connections.
+    """
+    # Pre-compute the user's eligibility set ONCE per connection. Workshops
+    # don't change membership in the middle of a stream, and re-querying on
+    # every event would be ~N round-trips per minute under load.
+    is_dsp = current.role in (
+        UserRole.DSP_OWNER, UserRole.DSP_MANAGER,
+        UserRole.DSP_INSPECTOR, UserRole.DSP_VIEWER,
+    )
+    is_vendor = current.role in (
+        UserRole.VENDOR_ADMIN, UserRole.SERVICE_WRITER,
+        UserRole.VENDOR_VIEWER,
+    )
+    is_tech = current.role == UserRole.TECHNICIAN
+    workshop_ids: set[int] = set()
+    if is_vendor or is_tech:
+        workshop_ids = set(
+            await _vendor_workshop_ids_for_user(session, current)
+        )
+
+    def envelope_visible(env: dict) -> bool:
+        if current.role == UserRole.SITE_ADMIN:
+            return True
+        if is_dsp:
+            return env.get("dsp_id") == current.organization_id
+        if is_vendor:
+            return env.get("vendor_workshop_id") in workshop_ids
+        if is_tech:
+            return (
+                env.get("vendor_workshop_id") in workshop_ids
+                or env.get("assigned_technician_id") == current.id
+            )
+        return False
+
+    async def event_generator():
+        yield ": connected\n\n"
+        async for envelope in subscribe_work_order_events():
+            if envelope.get("_heartbeat"):
+                yield ": heartbeat\n\n"
+                continue
+            if not envelope_visible(envelope):
+                continue
+            yield f"data: {json.dumps(envelope, default=str)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.get(
     "/{wo_id}",
     response_model=WorkOrderDetailResponse,
@@ -984,6 +1090,7 @@ async def accept_wo(
     )
     await session.commit()
     await session.refresh(wo)
+    await _publish_wo_changed(wo, "accepted")
     return await _build_wo_response(session, wo)
 
 
@@ -1050,6 +1157,7 @@ async def decline_wo(
 
     await session.commit()
     await session.refresh(wo)
+    await _publish_wo_changed(wo, "declined")
     return await _build_wo_response(session, wo)
 
 
@@ -1093,6 +1201,7 @@ async def start_wo(
     )
     await session.commit()
     await session.refresh(wo)
+    await _publish_wo_changed(wo, "started")
     return await _build_wo_response(session, wo)
 
 
@@ -1240,6 +1349,7 @@ async def complete_wo(
     await sync_all_drs_for_wo(session, work_order_id=wo.id, actor_id=current.id)
     await session.commit()
     await session.refresh(wo)
+    await _publish_wo_changed(wo, "completed")
     return await _build_wo_response(session, wo)
 
 
@@ -1297,6 +1407,7 @@ async def cancel_wo(
     )
     await session.commit()
     await session.refresh(wo)
+    await _publish_wo_changed(wo, "cancelled")
     return await _build_wo_response(session, wo)
 
 
@@ -1352,6 +1463,7 @@ async def assign_technician(
     )
     await session.commit()
     await session.refresh(wo)
+    await _publish_wo_changed(wo, "assigned")
     return await _build_wo_response(session, wo)
 
 
@@ -1410,6 +1522,7 @@ async def schedule_wo(
     )
     await session.commit()
     await session.refresh(wo)
+    await _publish_wo_changed(wo, "scheduled")
     return await _build_wo_response(session, wo)
 
 
@@ -1464,6 +1577,7 @@ async def dsp_response_wo(
     )
     await session.commit()
     await session.refresh(wo)
+    await _publish_wo_changed(wo, "dsp_response")
     return await _build_wo_response(session, wo)
 
 
@@ -1529,6 +1643,7 @@ async def dsp_reschedule_wo(
     )
     await session.commit()
     await session.refresh(wo)
+    await _publish_wo_changed(wo, "rescheduled")
     return await _build_wo_response(session, wo)
 
 

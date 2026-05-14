@@ -17,15 +17,18 @@ here — the bundling window must elapse first. The cron / CLI driver
 """
 from __future__ import annotations
 
+import json
+import logging
 from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, get_current_user_from_query_token
 from app.db import get_session
 from app.i18n_errors import E, tr_error
 from app.i18n_helpers import get_request_language
@@ -40,11 +43,31 @@ from app.models.work_orders import (
     VendorWorkshop,
     WorkOrder,
 )
+from app.services.pubsub import (
+    publish_defect_review_event,
+    subscribe_defect_review_events,
+)
 from app.services.wo_bundler import consider_defect_for_bundling
 from app.services.wo_defect_reviews import manual_review
 from app.services.wo_router import route_repair_request
 
+log = logging.getLogger("nova.defect_reviews")
 router = APIRouter(prefix="/defect-reviews", tags=["defect-reviews"])
+
+
+async def _publish_review_changed(
+    *, event: str, defect_id: int, dsp_id: int | None, vendor_workshop_id: int | None = None
+) -> None:
+    """Best-effort publish of a defect-review state change. Never raises."""
+    try:
+        await publish_defect_review_event({
+            "event": event,
+            "defect_id": defect_id,
+            "dsp_id": dsp_id,
+            "vendor_workshop_id": vendor_workshop_id,
+        })
+    except Exception as e:  # noqa: BLE001
+        log.warning("defect_review publish (%s id=%s) failed: %s", event, defect_id, e)
 
 
 def _parse_defect_id(raw: str | int) -> int:
@@ -265,6 +288,57 @@ async def review_queue(
             PendingDefectResponse.from_row(defect, vehicle, hours, repair_type=rt_value)
         )
     return PendingDefectListResponse(items=items, total=len(items))
+
+
+# ─────────────────────────────────────────────────────
+# Live event stream (SSE)
+# ─────────────────────────────────────────────────────
+@router.get(
+    "/events",
+    summary="SSE stream of defect-review state changes (approved / rejected)",
+    response_class=StreamingResponse,
+)
+async def stream_review_events(
+    current: User = Depends(get_current_user_from_query_token),
+):
+    """SSE stream of `defect_review.changed` events. Pass JWT as ?token=...
+
+    Subscribers see only events scoped to their role:
+      - dsp_owner / dsp_manager / dsp_inspector / dsp_viewer: own org only
+      - site_admin: everything
+      - vendor / technician roles: don't review defects → no events
+    """
+    is_dsp = current.role in (
+        UserRole.DSP_OWNER, UserRole.DSP_MANAGER,
+        UserRole.DSP_INSPECTOR, UserRole.DSP_VIEWER,
+    )
+
+    def envelope_visible(env: dict) -> bool:
+        if current.role == UserRole.SITE_ADMIN:
+            return True
+        if is_dsp:
+            return env.get("dsp_id") == current.organization_id
+        return False
+
+    async def event_generator():
+        yield ": connected\n\n"
+        async for envelope in subscribe_defect_review_events():
+            if envelope.get("_heartbeat"):
+                yield ": heartbeat\n\n"
+                continue
+            if not envelope_visible(envelope):
+                continue
+            yield f"data: {json.dumps(envelope, default=str)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get(
@@ -502,6 +576,15 @@ async def approve_defect(
 
     await session.commit()
     await session.refresh(review)
+    # Fan out the approval — the pending-review queue on the DSP home
+    # (and on any other admin's tab) drops this row instantly without
+    # waiting for the next polling tick.
+    await _publish_review_changed(
+        event="approved",
+        defect_id=defect.id,
+        dsp_id=vehicle.dsp_id,
+        vendor_workshop_id=routed_workshop_id,
+    )
     return DefectReviewResponse.from_model(
         review,
         routed_workshop_id=routed_workshop_id,
@@ -552,4 +635,9 @@ async def reject_defect(
     )
     await session.commit()
     await session.refresh(review)
+    await _publish_review_changed(
+        event="rejected",
+        defect_id=defect.id,
+        dsp_id=vehicle.dsp_id,
+    )
     return DefectReviewResponse.from_model(review)
