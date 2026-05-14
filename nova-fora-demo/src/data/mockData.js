@@ -76,10 +76,13 @@ export const demoAccounts = [
 // tab set, then strip what doesn't apply (admin tab for non-admins, etc.).
 export const rolePermissions = {
   // ── DSP family ──
-  dsp_owner:     ['dvic', 'defects', 'vehicles', 'body', 'scorecard', 'admin'],
-  dsp_manager:   ['dvic', 'defects', 'vehicles', 'body', 'scorecard', 'admin'],
+  // `wo_status` is the DSP-side read view of work orders (sits inside the
+  // Dashboard dropdown). Underlying component is shared with vendors'
+  // `work_orders` tab; role gating in the WO card hides vendor actions.
+  dsp_owner:     ['dvic', 'defects', 'vehicles', 'body', 'wo_status', 'scorecard', 'admin'],
+  dsp_manager:   ['dvic', 'defects', 'vehicles', 'body', 'wo_status', 'scorecard', 'admin'],
   dsp_inspector: ['dvic', 'defects', 'vehicles'],
-  dsp_viewer:    ['dvic', 'defects', 'vehicles', 'scorecard'],
+  dsp_viewer:    ['dvic', 'defects', 'vehicles', 'wo_status', 'scorecard'],
   // ── Vendor family ──
   vendor_admin:   ['dvic', 'snapshot', 'work_orders', 'my_dsps', 'body', 'scorecard', 'admin'],
   service_writer: ['dvic', 'snapshot', 'work_orders', 'my_dsps', 'admin'],

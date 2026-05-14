@@ -32,6 +32,12 @@ const VIEW_CATALOG = {
   vehicles:    { id: 'vehicles',    i18nKey: 'vehicles',    icon: Truck,          color: 'text-accent-green',  Component: MyVehicles },
   my_dsps:     { id: 'my_dsps',     i18nKey: 'myDsps',      icon: Truck,          color: 'text-accent-blue',   Component: MyDsps },
   work_orders: { id: 'work_orders', i18nKey: 'workOrders',  icon: ClipboardList,  color: 'text-accent-purple', Component: WorkOrders },
+  // DSP-side "Work Orders Status" entry — same component as `work_orders` but
+  // surfaced inside the Dashboard dropdown so the DSP can see the full repair
+  // pipeline (pending / in_progress / completed / declined) without taking
+  // over a top-level tab. The component is already role-aware (read-only for
+  // DSP — no Accept/Decline buttons rendered).
+  wo_status:   { id: 'wo_status',   i18nKey: 'workOrdersStatus', icon: ClipboardList, color: 'text-accent-purple', Component: WorkOrders },
   body:        { id: 'body',        i18nKey: 'body',        icon: Wrench,         color: 'text-accent-purple', Component: BodyRepairs },
   scorecard:   { id: 'scorecard',   i18nKey: 'scorecard',   icon: BarChart3,      color: 'text-accent-blue',   Component: VendorScorecard },
   admin:       { id: 'admin',       i18nKey: 'admin',       icon: Settings,       color: 'text-accent-gold',   Component: AdminPanel },
@@ -45,7 +51,7 @@ const DASHBOARD_GROUP = {
   i18nKey: 'dashboard',
   icon: AlertTriangle,
   color: 'text-accent-orange',
-  children: ['defects', 'body'],
+  children: ['defects', 'body', 'wo_status'],
 };
 
 export default function Layout({ user, onSwitchRole, onLogout, onImpersonate, impersonating, onExitImpersonation }) {

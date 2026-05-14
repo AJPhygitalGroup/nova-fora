@@ -1230,11 +1230,20 @@ export default function WorkOrders({ user }) {
   // Technician = the canonical "do the work" role.
   // Vendor side = anyone who manages the vendor's WO queue (admin or
   // service writer) plus site_admin acting on their behalf.
+  // DSP side = the customer view (owner / manager / inspector / viewer).
+  // The same component renders for both — DSP sees a read-only status
+  // dashboard surfaced through the Dashboard dropdown, with the
+  // vendor-only header actions (Log a Job) and subtitle copy hidden.
   const isTechnician = user?.role === 'technician';
   const isVendor =
     user?.role === 'vendor_admin'
     || user?.role === 'service_writer'
     || user?.role === 'site_admin';
+  const isDsp =
+    user?.role === 'dsp_owner'
+    || user?.role === 'dsp_manager'
+    || user?.role === 'dsp_inspector'
+    || user?.role === 'dsp_viewer';
 
   // Caches for adapter (vehicle/workshop lookups). Loaded once on mount —
   // the V2.0 WO list endpoint returns int FKs only, so we need these to
@@ -1567,13 +1576,20 @@ export default function WorkOrders({ user }) {
           <p className="text-navy-400 text-sm">
             {isTechnician
               ? t('workOrders.subtitleTechFmt', { count: summary.total, defaultValue: `My assigned WOs — ${summary.total} total` })
-              : t('workOrders.subtitleVendorFmt', { count: summary.total, dspCount: uniqueDsps.length, defaultValue: `Vendor hub — ${summary.total} WOs across ${uniqueDsps.length} DSPs` })}
+              : isDsp
+                ? t('workOrders.subtitleDspFmt', { count: summary.total, defaultValue: `Repair status & history — ${summary.total} work orders` })
+                : t('workOrders.subtitleVendorFmt', { count: summary.total, dspCount: uniqueDsps.length, defaultValue: `Vendor hub — ${summary.total} WOs across ${uniqueDsps.length} DSPs` })}
           </p>
         </div>
-        <button onClick={() => setShowLogJob(true)}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-accent-purple/15 border border-accent-purple/40 text-accent-purple text-sm font-semibold hover:bg-accent-purple/25 cursor-pointer">
-          <PackageCheck size={14} /> {t('workOrders.logJob', 'Log a Job')}
-        </button>
+        {/* "Log a Job" is a vendor-only action — DSPs don't log shop work
+            from this view (they create defects from the home page). Hide
+            the button when the DSP family is viewing their status board. */}
+        {!isDsp && (
+          <button onClick={() => setShowLogJob(true)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-accent-purple/15 border border-accent-purple/40 text-accent-purple text-sm font-semibold hover:bg-accent-purple/25 cursor-pointer">
+            <PackageCheck size={14} /> {t('workOrders.logJob', 'Log a Job')}
+          </button>
+        )}
       </div>
 
       {/* Summary card — week-to-date stats */}
