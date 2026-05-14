@@ -771,6 +771,14 @@ function ImmediateDetailRenderer({ items, onApprove, onReject, onBulkApprove, on
 
   const pending = items.filter((it) => !actions[it.label]);
   const processed = items.filter((it) => actions[it.label]);
+  // Processed list ALSO respects the category filter — otherwise the
+  // user filters to "Body", approves one, switches to "Mechanical", and
+  // the processed Body defect is still visible, making it feel like the
+  // filter isn't working. Visible-processed only shows items in the
+  // currently-selected category (or all when no filter is active).
+  const visibleProcessed = categoryFilter
+    ? processed.filter((it) => (it.repairType || 'mechanical') === categoryFilter)
+    : processed;
   const approvedCount = Object.values(actions).filter((a) => a === 'approved').length;
   const rejectedCount = Object.values(actions).filter((a) => a === 'rejected').length;
 
@@ -880,11 +888,27 @@ function ImmediateDetailRenderer({ items, onApprove, onReject, onBulkApprove, on
 
   return (
     <div className="space-y-4 pb-20">
-      {/* Summary band */}
+      {/* Summary band — when a filter is active, the pending chip shows
+          "X of Y pending" so the user can see at a glance how the filter
+          narrowed the list (vs. just the raw totals before). */}
       <div className="flex items-center gap-2 flex-wrap text-xs">
-        <span className="text-navy-400">{t('immediateRenderer.summary', 'Defects awaiting your approval')}</span>
+        <span className="text-navy-400">
+          {categoryFilter
+            ? t('immediateRenderer.summaryFilteredFmt', {
+                category: REPAIR_TYPE_LABELS[categoryFilter] || categoryFilter,
+                defaultValue: `Defects awaiting your approval · filtered to ${REPAIR_TYPE_LABELS[categoryFilter] || categoryFilter}`,
+              })
+            : t('immediateRenderer.summary', 'Defects awaiting your approval')}
+        </span>
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-gold/15 border border-accent-gold/40 text-accent-gold font-semibold">
-          <Hourglass size={10} /> {t('immediateRenderer.pendingChipFmt', { count: pending.length, defaultValue: `${pending.length} pending` })}
+          <Hourglass size={10} />{' '}
+          {categoryFilter
+            ? t('immediateRenderer.pendingChipFilteredFmt', {
+                shown: visiblePending.length,
+                total: pending.length,
+                defaultValue: `${visiblePending.length} of ${pending.length} pending`,
+              })
+            : t('immediateRenderer.pendingChipFmt', { count: pending.length, defaultValue: `${pending.length} pending` })}
         </span>
         {approvedCount > 0 && (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-green/15 border border-accent-green/40 text-accent-green font-semibold">
@@ -900,32 +924,39 @@ function ImmediateDetailRenderer({ items, onApprove, onReject, onBulkApprove, on
 
       {/* Category filter chips — only show categories that actually have
           pending defects. "All" stays first so the un-filtered view is one
-          click away. */}
+          click away. When a filter IS active the non-selected chips dim
+          so the locked-in selection reads at a glance. */}
       {pending.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap">
           <button
             onClick={() => setCategoryFilter(null)}
             className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all cursor-pointer ${
               categoryFilter === null
-                ? 'bg-accent-blue/15 border-accent-blue/50 text-accent-blue'
-                : 'bg-navy-800/40 border-navy-700 text-navy-400 hover:text-white hover:border-navy-600'
+                ? 'bg-accent-blue/20 border-accent-blue text-accent-blue ring-2 ring-accent-blue/30'
+                : 'bg-navy-800/40 border-navy-700 text-navy-500 opacity-60 hover:opacity-100 hover:text-white hover:border-navy-600'
             }`}>
             {t('immediateRenderer.filterAll', 'All')}
             <span className="px-1 rounded bg-navy-700/50 text-navy-200">{pending.length}</span>
           </button>
-          {REPAIR_TYPE_ORDER.filter((rt) => countsByCategory[rt] > 0).map((rt) => (
-            <button
-              key={rt}
-              onClick={() => setCategoryFilter(rt === categoryFilter ? null : rt)}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all cursor-pointer ${
-                categoryFilter === rt
-                  ? 'bg-accent-blue/15 border-accent-blue/50 text-accent-blue'
-                  : 'bg-navy-800/40 border-navy-700 text-navy-400 hover:text-white hover:border-navy-600'
-              }`}>
-              {t(`immediateRenderer.filter.${rt}`, REPAIR_TYPE_LABELS[rt] || rt)}
-              <span className="px-1 rounded bg-navy-700/50 text-navy-200">{countsByCategory[rt]}</span>
-            </button>
-          ))}
+          {REPAIR_TYPE_ORDER.filter((rt) => countsByCategory[rt] > 0).map((rt) => {
+            const isActive = categoryFilter === rt;
+            const isDimmed = categoryFilter !== null && !isActive;
+            return (
+              <button
+                key={rt}
+                onClick={() => setCategoryFilter(isActive ? null : rt)}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all cursor-pointer ${
+                  isActive
+                    ? 'bg-accent-blue/20 border-accent-blue text-accent-blue ring-2 ring-accent-blue/30'
+                    : isDimmed
+                      ? 'bg-navy-800/40 border-navy-700 text-navy-500 opacity-60 hover:opacity-100 hover:text-white hover:border-navy-600'
+                      : 'bg-navy-800/40 border-navy-700 text-navy-400 hover:text-white hover:border-navy-600'
+                }`}>
+                {t(`immediateRenderer.filter.${rt}`, REPAIR_TYPE_LABELS[rt] || rt)}
+                <span className="px-1 rounded bg-navy-700/50 text-navy-200">{countsByCategory[rt]}</span>
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -1016,13 +1047,13 @@ function ImmediateDetailRenderer({ items, onApprove, onReject, onBulkApprove, on
         </div>
       )}
 
-      {processed.length > 0 && (
+      {visibleProcessed.length > 0 && (
         <div>
           <h4 className="text-[10px] font-semibold text-navy-400 uppercase tracking-wide mb-2">
-            {t('immediateRenderer.processedHeadingFmt', { count: processed.length, defaultValue: `Processed this session (${processed.length})` })}
+            {t('immediateRenderer.processedHeadingFmt', { count: visibleProcessed.length, defaultValue: `Processed this session (${visibleProcessed.length})` })}
           </h4>
           <div className="space-y-1.5">
-            {processed.map((it) => {
+            {visibleProcessed.map((it) => {
               const action = actions[it.label];
               return (
                 <div key={it.label} className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 ${
