@@ -776,23 +776,29 @@ function ImmediateDetailRenderer({ items, onApprove, onReject, onBulkApprove, on
   // the processed Body defect is still visible, making it feel like the
   // filter isn't working. Visible-processed only shows items in the
   // currently-selected category (or all when no filter is active).
+  // (normRT is hoisted-defined below in `pending` block via const-after-use;
+  // we inline the same normalization here to avoid the TDZ.)
+  const _normRT2 = (rt) => (rt == null ? 'mechanical' : String(rt).trim().toLowerCase());
   const visibleProcessed = categoryFilter
-    ? processed.filter((it) => (it.repairType || 'mechanical') === categoryFilter)
+    ? processed.filter((it) => _normRT2(it.repairType) === categoryFilter)
     : processed;
   const approvedCount = Object.values(actions).filter((a) => a === 'approved').length;
   const rejectedCount = Object.values(actions).filter((a) => a === 'rejected').length;
 
   // Bucket counts for the filter chips (only pending — processed items are
   // already gone from the bulk-action universe).
+  // Normalize the repair_type string so case / whitespace mismatches between
+  // backend payloads and our enum constants can't silently break the filter.
+  const normRT = (rt) => (rt == null ? 'mechanical' : String(rt).trim().toLowerCase());
   const countsByCategory = pending.reduce((acc, it) => {
-    const k = it.repairType || 'mechanical';
+    const k = normRT(it.repairType);
     acc[k] = (acc[k] || 0) + 1;
     return acc;
   }, {});
 
   // Visible list after the category filter.
   const visiblePending = categoryFilter
-    ? pending.filter((it) => (it.repairType || 'mechanical') === categoryFilter)
+    ? pending.filter((it) => normRT(it.repairType) === categoryFilter)
     : pending;
 
   const visiblePendingIds = visiblePending.map((it) => it.defectId).filter(Boolean);
@@ -957,6 +963,15 @@ function ImmediateDetailRenderer({ items, onApprove, onReject, onBulkApprove, on
               </button>
             );
           })}
+        </div>
+      )}
+
+      {/* DEBUG strip — confirms the filter chain is actually wired. Remove
+          once the user has verified the filter is doing its job. Shows the
+          live state value + the count it produced from the items list. */}
+      {pending.length > 0 && (
+        <div className="text-[10px] text-navy-500 font-mono px-1">
+          debug · categoryFilter={String(categoryFilter)} · pending.length={pending.length} · visiblePending.length={visiblePending.length} · types=[{Array.from(new Set(pending.map((it) => normRT(it.repairType)))).join(',')}]
         </div>
       )}
 
