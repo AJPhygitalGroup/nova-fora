@@ -3382,8 +3382,51 @@ export function TodaysDefectsTable({ defects, daList, onReject, onCreateWO, onBu
   );
 }
 
+// ─────────────────────────────────────────────────────
+// Auto-refresh tick — increments every `intervalMs` while the tab is
+// visible, pauses when hidden, and bumps once immediately on tab focus
+// so coming back from a long break shows fresh data without waiting
+// for the next interval. Data hooks that include this tick in their
+// useEffect deps will refetch on every bump.
+// ─────────────────────────────────────────────────────
+function useAutoRefreshTick(intervalMs = 15000) {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+    let intervalId = null;
+    const startInterval = () => {
+      if (intervalId) return;
+      intervalId = setInterval(() => setTick((t) => t + 1), intervalMs);
+    };
+    const stopInterval = () => {
+      if (intervalId) { clearInterval(intervalId); intervalId = null; }
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        // Immediate bump on focus + restart the interval.
+        setTick((t) => t + 1);
+        startInterval();
+      } else {
+        stopInterval();
+      }
+    };
+    if (document.visibilityState === 'visible') startInterval();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      stopInterval();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [intervalMs]);
+  return tick;
+}
+
 export default function RealDVIC({ user }) {
   const { t } = useTranslation('dashboard');
+  // Auto-refresh tick — bumps every 15s while the tab is visible so the
+  // home cards (today's metrics, pending review queue, scheduled WOs,
+  // repaired WOs history) stay fresh without the user having to refresh
+  // the page. Paused while hidden, bumps once on tab focus.
+  const autoTick = useAutoRefreshTick(15000);
   const [activeSection, setActiveSection] = useState('overview');
   const [openCard, setOpenCard] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -3447,7 +3490,10 @@ export default function RealDVIC({ user }) {
 
   useEffect(() => {
     refreshTodayMetrics();
-  }, [refreshTodayMetrics]);
+    // autoTick is the polling pulse — when it bumps, refetch metrics so
+    // the "Vans Inspected" / "Defects today" cards keep up with what's
+    // happening on the inspector side without a page reload.
+  }, [refreshTodayMetrics, autoTick]);
 
   // After the wizard submits (closes), refresh
   const wizardJustClosed = !showStartInspection;
@@ -3472,11 +3518,11 @@ export default function RealDVIC({ user }) {
       .catch((err) => console.warn('completed WO history fetch failed', err));
     return () => { cancelled = true; };
     // Refetch when the wizard closes (a newly-reported defect could
-    // trigger auto-routing). Completed WOs flip status on the vendor
-    // side; the DSP home doesn't drive that transition, so we don't
-    // need a tighter polling cycle here.
+    // trigger auto-routing) AND on every autoTick so completed WOs
+    // (which flip on the vendor side, out of the DSP's UI) show up here
+    // within ~15s without requiring a page refresh.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wizardJustClosed]);
+  }, [wizardJustClosed, autoTick]);
   const repairedDefectsCount = repairedWOs.length;
   // "This week" = last 7 days
   const oneWeekAgo = new Date();
@@ -3616,11 +3662,15 @@ export default function RealDVIC({ user }) {
       })
       .catch((err) => console.warn('scheduled WO queue failed', err));
     return () => { cancelled = true; };
-    // refetch when a new defect lands via SSE (totalDefectsToday changes)
-    // or after the inspection wizard closes — or any time something in the
-    // modal flagged the queue as stale via setQueueRefreshTick.
+    // Refetch triggers:
+    //   - new defect lands via SSE (totalDefectsToday changes)
+    //   - inspection wizard closes
+    //   - explicit invalidation from a child modal (queueRefreshTick)
+    //   - autoTick — periodic 15s pulse so vendor-side state changes
+    //     (accept / start / complete / DSP response on a WO) flow into
+    //     the home cards without the user refreshing the page
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [totalDefectsToday, wizardJustClosed, queueRefreshTick]);
+  }, [totalDefectsToday, wizardJustClosed, queueRefreshTick, autoTick]);
   // Repairs still waiting for DSP feedback (thumbs up/down) on the vendor's work
   const repairsPendingFeedback = repairedDefectsCount;
   // Next inspection date auto-computed from the org's inspection frequency
