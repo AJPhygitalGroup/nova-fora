@@ -3132,6 +3132,38 @@ export default function RealDVIC({ user }) {
   const repairedThisWeekCount = repairedWOs.filter((wo) => wo.completedAt && new Date(wo.completedAt) >= oneWeekAgo).length;
   const [newDefects, setNewDefects] = useState([]);
 
+  // Real DSP fleet — feeds the Create Work Order modal's vehicle dropdown
+  // so the DSP picks from their actual vans (not the demo mockup). Backend
+  // scopes by JWT: dsp_owner sees own org only; vendor/site_admin see all.
+  // The modal expects a `{ id, model, plate, mileage, dsp, dspId, defectCount,
+  // vehicleClass }` shape — we adapt vehicles.list() rows on the fly.
+  const [realFleetVans, setRealFleetVans] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    vehiclesApi
+      .list({ perPage: 200 })
+      .then((res) => {
+        if (cancelled) return;
+        const rows = (res.items || []).map((v) => ({
+          id: v.id,                                       // 'VAN-0151'
+          fleetId: v.fleetId || null,                     // 'SV12' / '12' / etc
+          model: [v.year, v.make, v.model].filter(Boolean).join(' '),
+          plate: v.plate,
+          mileage: v.mileage,
+          dspId: v.dspId,                                 // numeric — modal doesn't render it
+          dsp: v.dspName || '',
+          defectCount: 0,                                 // modal only renders if > 0
+          vehicleClass: v.vehicleClass,                   // drives catalog filter
+          vin: v.vin,
+          year: v.year,
+          make: v.make,
+        }));
+        setRealFleetVans(rows);
+      })
+      .catch((err) => console.warn('fleet fetch (for Create WO modal) failed', err));
+    return () => { cancelled = true; };
+  }, []);
+
   // Live "DSP-reported defects today" — seeded from GET /defects/v2 and kept
   // current via the SSE stream at /defects/v2/events. Both are role-scoped on
   // the server (dsp_owner sees own DSP only). dedup by id_str so a publish
@@ -3627,7 +3659,7 @@ export default function RealDVIC({ user }) {
           <CreateWorkOrderModal
             initialVan={createWOContext.van}
             initialDefect={createWOContext.defect}
-            vans={fleetSnapshotVans}
+            vans={realFleetVans.length > 0 ? realFleetVans : fleetSnapshotVans}
             user={user}
             onClose={() => setCreateWOContext(null)}
           />

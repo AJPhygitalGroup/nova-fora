@@ -8,7 +8,7 @@ import {
   Wrench, Flame, FileText, ClipboardList, Zap, Info, Loader2
 } from 'lucide-react';
 import { fleetSnapshotVans, fleetSnapshotDefectDetails, availableVendors, SECTION_TO_SERVICES } from '../data/mockData';
-import { directory as dirApi, defectReviews } from '../api/client';
+import { directory as dirApi, defectReviews, catalog, defects as defectsApi } from '../api/client';
 import { isDspRole } from '../lib/permissions';
 import Badge from './ui/Badge';
 
@@ -594,9 +594,27 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
 
   // In bulk mode we skip step 1 entirely (van is locked, no per-defect form).
   const [step, setStep] = useState(bulkMode || initialVan ? 2 : 1);
+  // The modal is in "create from scratch" mode (vs "approve existing defect")
+  // when the caller hasn't passed any defect id(s). In that mode step 1
+  // renders a catalog-driven defect form (real V2.2 schema); on submit we
+  // create the defect and approve it inline.
+  const isCreateFromScratch = !bulkMode && !initialDefectId;
   // Step 1: vehicle + defect
   const [van, setVan] = useState(initialVan || null);
   const [vanDropdownOpen, setVanDropdownOpen] = useState(false);
+  // Catalog-driven defect form state (used in create-from-scratch mode).
+  // `systemId` / `partId` / `defectTypeId` / `positionId` are catalog enum
+  // values (e.g. 'tires_wheels', 'headlight', 'not_working', 'driver_side').
+  // We keep the legacy `section` / `part` strings too so the V1-style review
+  // summary in step 3 still renders something readable (we populate them with
+  // catalog labels when the user picks from the catalog dropdowns).
+  const [cat, setCat] = useState(null);
+  const [catLoading, setCatLoading] = useState(false);
+  const [catError, setCatError] = useState(null);
+  const [systemId, setSystemId] = useState('');
+  const [partId, setPartId] = useState('');
+  const [defectTypeId, setDefectTypeId] = useState('');
+  const [positionId, setPositionId] = useState('');
   const [section, setSection] = useState(initialDefect?.section || '');
   const [part, setPart] = useState(initialDefect?.part || '');
   const [description, setDescription] = useState(initialDefect?.description || '');
@@ -604,6 +622,55 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
   const [damagePhotos, setDamagePhotos] = useState([]);
   const [isPM, setIsPM] = useState(false);
   const [pmType, setPmType] = useState('Oil Change');
+
+  // Load the V2.2 defect catalog filtered by the selected vehicle's class.
+  // Only applies in create-from-scratch mode; the existing approve-defect
+  // paths don't need it. Cached per (vehicle_class, lang) on the API client
+  // so re-opening the modal is instant.
+  useEffect(() => {
+    if (!isCreateFromScratch || !van?.vehicleClass) {
+      setCat(null);
+      return;
+    }
+    setCatLoading(true);
+    setCatError(null);
+    let alive = true;
+    catalog
+      .load(van.vehicleClass)
+      .then((res) => {
+        if (!alive) return;
+        setCat(res);
+      })
+      .catch((err) => {
+        if (!alive) return;
+        console.warn('catalog load failed', err);
+        setCatError(err?.detail || err?.message || 'Failed to load defect catalog');
+      })
+      .finally(() => {
+        if (alive) setCatLoading(false);
+      });
+    return () => { alive = false; };
+  }, [van?.vehicleClass, isCreateFromScratch]);
+
+  // When the user picks a new system, clear the downstream selectors so
+  // stale values can't sneak through. Same for part → defect_type → position.
+  useEffect(() => { setPartId(''); setDefectTypeId(''); setPositionId(''); }, [systemId]);
+  useEffect(() => { setDefectTypeId(''); setPositionId(''); }, [partId]);
+  useEffect(() => { setPositionId(''); }, [defectTypeId]);
+
+  // Derived: parts in the selected system, defect types on the selected part,
+  // valid positions for the selected defect type. The catalog helpers are
+  // null-safe so these are stable across the catalog loading state.
+  const partsInSystem = cat && systemId
+    ? catalog.partsForSystem(cat, systemId)
+    : [];
+  const selectedPart = cat && partId ? catalog.getPart(cat, partId) : null;
+  const defectTypesForPart = selectedPart?.defectTypes || [];
+  const selectedDefectType = selectedPart && defectTypeId
+    ? catalog.getDefectType(selectedPart, defectTypeId)
+    : null;
+  const validPositions = selectedDefectType?.validPositions || [];
+  const positionRequired = selectedDefectType?.positionRequired || false;
   // Step 2: vendor
   const [vendor, setVendor] = useState(null);
   const [apiVendors, setApiVendors] = useState(null);  // null = loading; [] = loaded
@@ -670,14 +737,24 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
     return (b.rating || 0) - (a.rating || 0);
   });
 
-  // Step 1 validity: defect mode needs section + description; PM mode only needs
-  // vehicle + PM type. Bulk mode never reaches step 1 (van is pre-set + locked).
-  // V2.0: step 2 is now an informational "auto-routing preview" — no vendor
-  // pick required. Always advances. Step 1 still validates van + section +
-  // description (or PM type) as before.
-  const canGoNext = step === 1
-    ? (van && (isPM ? !!pmType : (section && description.length > 4)))
-    : true;
+  // Step 1 validity:
+  //   - PM mode: just needs vehicle + PM type.
+  //   - Create-from-scratch defect (V2.2 catalog flow): vehicle + part +
+  //     defect_type, and position if the defect type requires one.
+  //   - Legacy create-from-existing-defect path: vehicle + section +
+  //     description (kept for callers that still pass `initialDefect`).
+  // Step 2 is now an informational "auto-routing preview" — always advances.
+  let step1Valid;
+  if (!van) {
+    step1Valid = false;
+  } else if (isPM) {
+    step1Valid = !!pmType;
+  } else if (isCreateFromScratch && cat) {
+    step1Valid = !!partId && !!defectTypeId && (!positionRequired || !!positionId);
+  } else {
+    step1Valid = !!(section && description.length > 4);
+  }
+  const canGoNext = step === 1 ? step1Valid : true;
 
   const handleSubmit = async () => {
     setSubmitError(null);
@@ -688,16 +765,38 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
       return;
     }
 
-    // Build the items list — bulk mode passes N ids; legacy single-defect path
-    // collapses to a 1-item list.
-    const itemIds = bulkIds || (initialDefectId ? [initialDefectId] : []);
-    if (itemIds.length === 0) {
-      setSubmitError('No source defect — open this dialog from the Defects tab.');
-      return;
-    }
-
     setSubmitting(true);
     try {
+      // Build the items list:
+      //   - bulk mode (N pre-selected defect ids)            → approve all N
+      //   - single existing defect (initialDefectId)         → approve 1
+      //   - create-from-scratch (catalog flow on this modal) → POST /defects
+      //     to mint a new defect, then approve the returned id. This is the
+      //     path used when the DSP clicks "Create Work Order" from the home
+      //     metric card with no source defect selected.
+      let itemIds = bulkIds || (initialDefectId ? [initialDefectId] : []);
+      if (itemIds.length === 0) {
+        if (!isCreateFromScratch || !van || !partId || !defectTypeId) {
+          setSubmitError('No source defect — open this dialog from the Defects tab.');
+          setSubmitting(false);
+          return;
+        }
+        // Mint a defect from the catalog selections. The backend resolves
+        // classification + group from (part, defect_type, vehicle_class)
+        // applicability rows; we don't pass those in.
+        const created = await defectsApi.create({
+          vehicleId: van.id,                   // 'VAN-XXXX' or numeric id
+          source: 'maintenance_request',       // DSP-initiated, not from inspection
+          part: partId,
+          defectType: defectTypeId,
+          position: positionId || null,
+          notes: (description || '').trim() || null,
+        });
+        if (!created?.id) {
+          throw new Error('Defect creation failed — backend returned no id');
+        }
+        itemIds = [created.id];
+      }
       // V2.0 flow: the "Create WO" modal is now a defect SCOPE APPROVAL
       // step. The DSP doesn't pick a vendor; the router does it server-side
       // based on `vendor_workshops.repair_types`. We approve every
@@ -908,7 +1007,7 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                       className="w-full flex items-center justify-between px-4 py-3 rounded-lg border border-navy-700 bg-navy-800/50 text-left hover:border-navy-600 cursor-pointer min-h-[52px]">
                       {van ? (
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm font-semibold text-white truncate">{van.id} <span className="text-navy-400 font-normal">— {van.model}</span></div>
+                          <div className="text-sm font-semibold text-white truncate">{van.fleetId || van.id} <span className="text-navy-400 font-normal">— {van.model}</span></div>
                           <div className="text-[11px] text-navy-400 truncate">{van.plate} · {van.mileage?.toLocaleString()} {t('myVehicles.milesShort', 'mi')}</div>
                         </div>
                       ) : (
@@ -926,7 +1025,7 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                                 van?.id === v.id ? 'bg-navy-800' : ''
                               }`}>
                               <div className="min-w-0 flex-1">
-                                <div className="text-sm font-semibold text-white truncate">{v.id} <span className="text-navy-400 font-normal">— {v.model}</span></div>
+                                <div className="text-sm font-semibold text-white truncate">{v.fleetId || v.id} <span className="text-navy-400 font-normal">— {v.model}</span></div>
                                 <div className="text-[11px] text-navy-400 truncate">{v.plate} · {t('vehicleReport.defectFmt', { count: v.defectCount, defaultValue: `${v.defectCount} defect${v.defectCount !== 1 ? 's' : ''}` })}</div>
                               </div>
                               {van?.id === v.id && <Check size={14} className="text-accent-green shrink-0" />}
@@ -972,6 +1071,115 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                     </select>
                     <p className="text-[10px] text-navy-400 mt-1">{t('createWO.pmHint', 'No inspection required — scheduled preventive maintenance.')}</p>
                   </div>
+                ) : isCreateFromScratch ? (
+                  /* V2.2 catalog flow — section → part → defect type → optional position.
+                     Replaces the old visual "1. Front Side" buttons + free-text part
+                     so the defect lands in the real schema and routes correctly. */
+                  <div className="space-y-4">
+                    {!van && (
+                      <div className="rounded-lg border border-navy-700/60 bg-navy-800/40 px-3 py-2 text-[11px] text-navy-400">
+                        {t('createWO.pickVehicleFirst', 'Pick a vehicle above to load its defect catalog.')}
+                      </div>
+                    )}
+                    {van && catLoading && (
+                      <div className="rounded-lg border border-navy-700/60 bg-navy-800/40 px-3 py-2 text-[11px] text-navy-400">
+                        {t('createWO.loadingCatalog', 'Loading defect catalog…')}
+                      </div>
+                    )}
+                    {van && catError && (
+                      <div className="rounded-lg border border-accent-red/40 bg-accent-red/10 px-3 py-2 text-[11px] text-accent-red">
+                        {catError}
+                      </div>
+                    )}
+                    {cat && (
+                      <>
+                        {/* System (replaces "Vehicle section") */}
+                        <div>
+                          <label className="text-xs font-semibold text-navy-300 mb-1.5 block">
+                            {t('createWO.system', 'System')}
+                          </label>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                            {cat.systems.map((s) => (
+                              <button key={s.id}
+                                onClick={() => {
+                                  setSystemId(s.id);
+                                  // Mirror to the legacy `section` field so step 3
+                                  // review summary renders a human-readable label.
+                                  setSection(s.label);
+                                }}
+                                className={`px-3 py-2 rounded-lg text-xs font-semibold border transition-all cursor-pointer min-h-[44px] ${
+                                  systemId === s.id ? 'bg-accent-blue/15 border-accent-blue/50 text-white' : 'bg-navy-800 border-navy-700 text-navy-300 hover:border-navy-600'
+                                }`}>
+                                {s.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Part — only after a system is picked */}
+                        {systemId && (
+                          <div>
+                            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">
+                              {t('createWO.part', 'Part')}
+                            </label>
+                            <select
+                              value={partId}
+                              onChange={(e) => {
+                                const newPartId = e.target.value;
+                                setPartId(newPartId);
+                                const p = catalog.getPart(cat, newPartId);
+                                setPart(p?.label || '');
+                              }}
+                              className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue cursor-pointer">
+                              <option value="">{t('createWO.selectPart', 'Select a part…')}</option>
+                              {partsInSystem.map((p) => (
+                                <option key={p.id} value={p.id}>{p.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+
+                        {/* Defect type — only after a part is picked */}
+                        {partId && (
+                          <div>
+                            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">
+                              {t('createWO.defectType', 'Defect type')}
+                            </label>
+                            <select
+                              value={defectTypeId}
+                              onChange={(e) => setDefectTypeId(e.target.value)}
+                              className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue cursor-pointer">
+                              <option value="">{t('createWO.selectDefectType', 'Select a defect type…')}</option>
+                              {defectTypesForPart.map((dt) => (
+                                <option key={dt.id} value={dt.id}>{dt.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+
+                        {/* Position — only if the defect type has positions */}
+                        {defectTypeId && validPositions.length > 0 && (
+                          <div>
+                            <label className="text-xs font-semibold text-navy-300 mb-1.5 block">
+                              {t('createWO.position', 'Position')}
+                              {!positionRequired && (
+                                <span className="text-navy-500 font-normal"> {t('createWO.optionalSuffix', '(optional)')}</span>
+                              )}
+                            </label>
+                            <select
+                              value={positionId}
+                              onChange={(e) => setPositionId(e.target.value)}
+                              className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue cursor-pointer">
+                              <option value="">{t('createWO.selectPosition', 'Select a position…')}</option>
+                              {validPositions.map((p) => (
+                                <option key={p.id} value={p.id}>{p.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
                 ) : (
                   <div>
                     <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('createWO.vehicleSection', 'Vehicle section')}</label>
@@ -988,15 +1196,19 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                   </div>
                 )}
 
-                {/* Part */}
-                <div>
-                  <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('createWO.partOptional', 'Part (optional)')}</label>
-                  <input value={part} onChange={(e) => setPart(e.target.value)}
-                    placeholder={isPM
-                      ? t('createWO.partPlaceholderPM', 'e.g. Oil filter, Brake pads')
-                      : t('createWO.partPlaceholderDefect', 'e.g. Windshield, Brake pads, Headlight')}
-                    className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue" />
-                </div>
+                {/* Part — only rendered for the legacy section flow (PM mode
+                    or approve-existing-defect mode). The create-from-scratch
+                    flow above already has its own catalog-driven Part picker. */}
+                {(isPM || !isCreateFromScratch) && (
+                  <div>
+                    <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('createWO.partOptional', 'Part (optional)')}</label>
+                    <input value={part} onChange={(e) => setPart(e.target.value)}
+                      placeholder={isPM
+                        ? t('createWO.partPlaceholderPM', 'e.g. Oil filter, Brake pads')
+                        : t('createWO.partPlaceholderDefect', 'e.g. Windshield, Brake pads, Headlight')}
+                      className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white placeholder-navy-500 outline-none focus:border-accent-blue" />
+                  </div>
+                )}
 
                 {/* Description */}
                 <div>
