@@ -1098,7 +1098,7 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                       className="w-full flex items-center justify-between px-4 py-3 rounded-lg border border-navy-700 bg-navy-800/50 text-left hover:border-navy-600 cursor-pointer min-h-[52px]">
                       {van ? (
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm font-semibold text-white truncate">{van.fleetId || van.id} <span className="text-navy-400 font-normal">— {van.model}</span></div>
+                          <div className="text-sm font-semibold text-white truncate">{van.fleetId || '—'} <span className="text-navy-400 font-normal">— {van.model}</span></div>
                           <div className="text-[11px] text-navy-400 truncate">{van.plate} · {van.mileage?.toLocaleString()} {t('myVehicles.milesShort', 'mi')}</div>
                         </div>
                       ) : (
@@ -1116,7 +1116,7 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                                 van?.id === v.id ? 'bg-navy-800' : ''
                               }`}>
                               <div className="min-w-0 flex-1">
-                                <div className="text-sm font-semibold text-white truncate">{v.fleetId || v.id} <span className="text-navy-400 font-normal">— {v.model}</span></div>
+                                <div className="text-sm font-semibold text-white truncate">{v.fleetId || '—'} <span className="text-navy-400 font-normal">— {v.model}</span></div>
                                 <div className="text-[11px] text-navy-400 truncate">{v.plate} · {t('vehicleReport.defectFmt', { count: v.defectCount, defaultValue: `${v.defectCount} defect${v.defectCount !== 1 ? 's' : ''}` })}</div>
                               </div>
                               {van?.id === v.id && <Check size={14} className="text-accent-green shrink-0" />}
@@ -1621,7 +1621,7 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
       <VendorPickerModal
         open={vendorPickerOpen}
         repairType={targetRepairType}
-        vehicleLabel={van ? (van.fleetId || van.id) : null}
+        vehicleLabel={van ? (van.fleetId || '—') : null}
         defectSummary={isPM
           ? `${t('createWO.pmServiceType', 'PM service')}: ${pmType.replace(/_/g, ' ')}`
           : (selectedDefectType?.label && selectedPart?.label

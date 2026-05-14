@@ -92,7 +92,7 @@ function fromApiDefect(d) {
 
   return {
     id: d.id,                              // FD-008 (defect's own id)
-    van: d.fleetId || d.van || '—',
+    van: d.fleetId || '—',
     vanInternalId: d.van,                  // "VAN-0001" — for vehicle lookup
     plate: d.plate || null,
     // Two-line structured display (preferred when available)

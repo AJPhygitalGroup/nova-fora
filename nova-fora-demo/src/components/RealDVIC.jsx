@@ -1215,9 +1215,7 @@ function CardDetailModal({
       // doesn't have to mentally translate the database primary key into
       // their fleet number. Falls back to the prefixed numeric id only
       // for older payloads that don't carry the fleet_id yet.
-      label: q.fleetId
-        ? String(q.fleetId)
-        : `VAN-${String(q.vehicleId).padStart(4, '0')}`,
+      label: q.fleetId ? String(q.fleetId) : '—',
       title: `${q.part}${q.position ? ` (${q.position})` : ''} — ${(q.defectType || '').replace(/_/g, ' ')}`,
       meta: q.plate
         ? `Plate ${q.plate} · Reported ${new Date(q.reportedAt).toLocaleString([], {
@@ -1261,11 +1259,11 @@ function CardDetailModal({
       // The shape `ScheduledRepairItem` reads. The renderer treats
       // `repairBucket` ('overnight' | 'shop') to bucket the row.
       woId: wo.id,                           // 'WO-00042'
-      // Show the DSP-registered fleet_id verbatim (matches My Fleet) when
-      // present, falling back to the system-generated VAN-XXXX only if the
-      // DSP never set one. Don't prefix the fleet_id with "VAN-" — the
-      // customer's value is the source of truth as-typed.
-      fleetId: wo.vehicleFleetId || wo.vehicleIdStr,
+      // Show the DSP-registered fleet_id verbatim (matches My Fleet). If
+      // the vehicle has no fleet_id we render '—' so the gap is obvious;
+      // the system VAN-XXXX fallback is intentionally gone — DSPs should
+      // see only their own identifiers.
+      fleetId: wo.vehicleFleetId || '—',
       vendor: wo.workshopName || '—',
       scheduledAt: fmtSlot(wo.scheduledAt),
       // Raw ISO kept around so the reschedule form can default to
@@ -1308,11 +1306,11 @@ function CardDetailModal({
       const partLabel = d.position ? `${d.part} (${d.position})` : d.part;
       const typeLabel = (d.defectType || '').replace(/_/g, ' ');
       return {
-        // Show the DSP-registered fleet_id (matches My Fleet) when present
-        // — falling back to the system-generated VAN-XXXX only when the
-        // DSP never set a fleet_id on the vehicle. Same rule we already
-        // apply on the WO card, repair history modal, and inspected list.
-        label: d.fleetId || d.vehicleId,
+        // Show the DSP-registered fleet_id only. We deliberately don't
+        // fall back to the system VAN-XXXX — vehicles missing a fleet_id
+        // render '—' so the gap is visible and the DSP knows to fix it
+        // in My Fleet rather than silently seeing a database-generated id.
+        label: d.fleetId || '—',
         title: `${partLabel} — ${typeLabel}`,
         meta: `${d.reportedBy || 'Driver'} · ${fmtTime(d.reportedAt)}`,
         status: 'Reported',
@@ -1357,7 +1355,7 @@ function CardDetailModal({
         defaultValue: `${reallyInspected.length} inspected · ${incomplete.length} not inspectable today`,
       }),
       inspectedVans: reallyInspected.map((i) => ({
-        id: i.fleetId || i.vehicleId,
+        id: i.fleetId || '—',
         inspectionId: i.id,
         vehicleId: i.vehicleId,
         vendor: i.vendor || '—',
@@ -1373,7 +1371,7 @@ function CardDetailModal({
       })),
       // Real "not inspected" list: vans the tech flagged with a reason
       notInspectedVans: incomplete.map((i) => ({
-        id: i.fleetId || i.vehicleId,
+        id: i.fleetId || '—',
         reason:
           REASON_TO_LABEL[i.incompleteReason] ||
           i.incompleteReason ||
@@ -2717,7 +2715,6 @@ function RepairHistoryModal({ repairedWOs, user, onClose }) {
     ? sorted.filter((wo) => {
         const s = search.toLowerCase();
         return (
-          wo.vehicleId.toLowerCase().includes(s) ||
           (wo.fleetId || '').toLowerCase().includes(s) ||
           wo.description.toLowerCase().includes(s) ||
           (wo.assignedTechnician || '').toLowerCase().includes(s)
@@ -2843,7 +2840,7 @@ function RepairHistoryModal({ repairedWOs, user, onClose }) {
                       <div className="flex items-center gap-2 flex-wrap text-navy-300">
                         <span className="flex items-center gap-1"><Wrench size={10} className="text-accent-green" /> {wo.assignedTechnician || t('repairHistoryModal.emptyValue', '—')}</span>
                         <span className="text-navy-600">·</span>
-                        <span>{wo.fleetId || wo.vehicleId}</span>
+                        <span>{wo.fleetId || '—'}</span>
                         {turnaroundH !== null && (
                           <>
                             <span className="text-navy-600">·</span>
@@ -2890,7 +2887,7 @@ function RepairHistoryModal({ repairedWOs, user, onClose }) {
 
                           {/* Details grid */}
                           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
-                            <DetailBox label={t('repairHistoryModal.detailVan', 'Van')} value={wo.fleetId || wo.vehicleId} />
+                            <DetailBox label={t('repairHistoryModal.detailVan', 'Van')} value={wo.fleetId || '—'} />
                             <DetailBox label={t('repairHistoryModal.detailYearModel', 'Year/Model')} value={`${wo.year} ${wo.make} ${wo.model}`} />
                             <DetailBox label={t('repairHistoryModal.detailPlate', 'Plate')} value={wo.plate} mono />
                             <DetailBox label={t('repairHistoryModal.detailRoNumber', 'RO Number')} value={wo.roNumber} mono /><DetailBox label={t('repairHistoryModal.detailMileage', 'Mileage at completion')} value={wo.lastMileage ? `${wo.lastMileage.toLocaleString()} ${t('startInspectionModal.milesShort', 'mi')}` : t('repairHistoryModal.emptyValue', '—')} />
