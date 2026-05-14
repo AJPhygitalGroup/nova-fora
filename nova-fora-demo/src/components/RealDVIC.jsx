@@ -3221,10 +3221,15 @@ export default function RealDVIC({ user }) {
     { id: 'defects', label: "Today's Defects", icon: AlertTriangle },
   ];
 
-  // Who can launch the QC DVIC walkaround. Inspectors are the canonical
-  // case; technicians at vendors do post-repair inspections; managers
-  // and admins fill in when needed.
-  const canStartInspection = canInspect(user);
+  // Who SEES the home "Start a new QC DVIC" banner. We deliberately
+  // narrow this from `canInspect()` — DSP owners and managers can still
+  // technically launch a walkaround as a fallback (canInspect is true
+  // for them) but they don't belong on the DSP dashboard, which is for
+  // overseeing reported defects + work orders. The walkaround is the
+  // inspector's / technician's day-to-day workflow, so the banner only
+  // surfaces for those roles + site_admin.
+  const canStartInspection =
+    canInspect(user) && !['dsp_owner', 'dsp_manager'].includes(user?.role);
 
   // QC inspection banner: in production it appears automatically on
   // inspection day. For the demo we expose a barely-visible toggle in the
