@@ -713,10 +713,33 @@ function InspectedDetailRenderer({ data, onOpenVehicleReport }) {
 }
 
 // ============ Immediate Action Required — Approve / Reject per defect ============
-function ImmediateDetailRenderer({ items, onApprove, onReject }) {
+// Repair-type → display label. Mirrors the backend RepairType enum so the
+// filter chips show the same vocabulary that drives auto-routing on the
+// server side. AMR/CMR both fold into "Mechanical" since they share the
+// same workshop pool — billing distinction isn't surfaced here.
+const REPAIR_TYPE_LABELS = {
+  mechanical: 'Mechanical',
+  body:       'Body',
+  tires:      'Tires',
+  pm:         'PM',
+  cnmr:       'Compliance',
+  detailing:  'Detailing',
+  netradyne:  'Netradyne',
+};
+const REPAIR_TYPE_ORDER = ['mechanical', 'body', 'tires', 'pm', 'cnmr', 'detailing', 'netradyne'];
+
+function ImmediateDetailRenderer({ items, onApprove, onReject, onBulkApprove, onBulkReject }) {
   const { t } = useTranslation('dashboard');
   // Local state tracks which items were approved or rejected in this session
   const [actions, setActions] = useState({}); // { [label]: 'approved' | 'rejected' }
+  // Category filter: null = show all; otherwise a RepairType enum value.
+  const [categoryFilter, setCategoryFilter] = useState(null);
+  // Set of defectIds the user has ticked for bulk action. Survives across
+  // filter changes — switching from "Tires" back to "All" doesn't drop a
+  // selection the user made under the Tires filter.
+  const [selected, setSelected] = useState(() => new Set());
+  // Flag set while a bulk action is in flight so we can disable the bar.
+  const [bulkInFlight, setBulkInFlight] = useState(false);
 
   // Optimistic update — flip to approved/rejected immediately, then roll back
   // if the parent's async handler throws. The parent's onApprove/onReject
@@ -751,8 +774,112 @@ function ImmediateDetailRenderer({ items, onApprove, onReject }) {
   const approvedCount = Object.values(actions).filter((a) => a === 'approved').length;
   const rejectedCount = Object.values(actions).filter((a) => a === 'rejected').length;
 
+  // Bucket counts for the filter chips (only pending — processed items are
+  // already gone from the bulk-action universe).
+  const countsByCategory = pending.reduce((acc, it) => {
+    const k = it.repairType || 'mechanical';
+    acc[k] = (acc[k] || 0) + 1;
+    return acc;
+  }, {});
+
+  // Visible list after the category filter.
+  const visiblePending = categoryFilter
+    ? pending.filter((it) => (it.repairType || 'mechanical') === categoryFilter)
+    : pending;
+
+  const visiblePendingIds = visiblePending.map((it) => it.defectId).filter(Boolean);
+  const allVisibleSelected =
+    visiblePendingIds.length > 0 &&
+    visiblePendingIds.every((id) => selected.has(id));
+
+  const toggleSelected = (defectId) => {
+    if (!defectId) return;
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(defectId)) next.delete(defectId);
+      else next.add(defectId);
+      return next;
+    });
+  };
+
+  const toggleSelectAllVisible = () => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        visiblePendingIds.forEach((id) => next.delete(id));
+      } else {
+        visiblePendingIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  // Resolve `selected` (a set of defect ids) back to the full item objects
+  // so the bulk handlers can flip optimistic state by `it.label`.
+  const selectedItems = pending.filter((it) => it.defectId && selected.has(it.defectId));
+
+  const handleBulkApprove = async () => {
+    if (selectedItems.length === 0 || !onBulkApprove) return;
+    if (!window.confirm(
+      t('immediateRenderer.confirmBulkApproveFmt', {
+        count: selectedItems.length,
+        defaultValue: `Approve ${selectedItems.length} defect${selectedItems.length === 1 ? '' : 's'} and auto-route each to the appropriate vendor?`,
+      })
+    )) return;
+    setBulkInFlight(true);
+    // Optimistic: flip every selected item to 'approved' up front, roll
+    // back any individual failures by label.
+    setActions((a) => {
+      const next = { ...a };
+      selectedItems.forEach((it) => { next[it.label] = 'approved'; });
+      return next;
+    });
+    try {
+      const { failedLabels } = await onBulkApprove(selectedItems);
+      if (failedLabels && failedLabels.length > 0) {
+        setActions((a) => {
+          const next = { ...a };
+          failedLabels.forEach((label) => { delete next[label]; });
+          return next;
+        });
+      }
+      setSelected(new Set());
+    } finally {
+      setBulkInFlight(false);
+    }
+  };
+
+  const handleBulkReject = async () => {
+    if (selectedItems.length === 0 || !onBulkReject) return;
+    if (!window.confirm(
+      t('immediateRenderer.confirmBulkRejectFmt', {
+        count: selectedItems.length,
+        defaultValue: `Reject ${selectedItems.length} defect${selectedItems.length === 1 ? '' : 's'}?`,
+      })
+    )) return;
+    setBulkInFlight(true);
+    setActions((a) => {
+      const next = { ...a };
+      selectedItems.forEach((it) => { next[it.label] = 'rejected'; });
+      return next;
+    });
+    try {
+      const { failedLabels } = await onBulkReject(selectedItems);
+      if (failedLabels && failedLabels.length > 0) {
+        setActions((a) => {
+          const next = { ...a };
+          failedLabels.forEach((label) => { delete next[label]; });
+          return next;
+        });
+      }
+      setSelected(new Set());
+    } finally {
+      setBulkInFlight(false);
+    }
+  };
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 pb-20">
       {/* Summary band */}
       <div className="flex items-center gap-2 flex-wrap text-xs">
         <span className="text-navy-400">{t('immediateRenderer.summary', 'Defects awaiting your approval')}</span>
@@ -771,43 +898,121 @@ function ImmediateDetailRenderer({ items, onApprove, onReject }) {
         )}
       </div>
 
+      {/* Category filter chips — only show categories that actually have
+          pending defects. "All" stays first so the un-filtered view is one
+          click away. */}
       {pending.length > 0 && (
-        <div>
-          <h4 className="text-[10px] font-semibold text-accent-gold uppercase tracking-wide mb-2">
-            {t('immediateRenderer.pendingHeadingFmt', { count: pending.length, defaultValue: `Pending (${pending.length})` })}
-          </h4>
-          <div className="space-y-2">
-            {pending.map((it) => (
-              <div key={it.label} className="bg-navy-800/40 border border-navy-700/40 rounded-lg p-3">
-                <div className="flex items-start justify-between gap-3 mb-2">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <span className="text-sm font-semibold text-white font-mono">{it.label}</span>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <button
+            onClick={() => setCategoryFilter(null)}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all cursor-pointer ${
+              categoryFilter === null
+                ? 'bg-accent-blue/15 border-accent-blue/50 text-accent-blue'
+                : 'bg-navy-800/40 border-navy-700 text-navy-400 hover:text-white hover:border-navy-600'
+            }`}>
+            {t('immediateRenderer.filterAll', 'All')}
+            <span className="px-1 rounded bg-navy-700/50 text-navy-200">{pending.length}</span>
+          </button>
+          {REPAIR_TYPE_ORDER.filter((rt) => countsByCategory[rt] > 0).map((rt) => (
+            <button
+              key={rt}
+              onClick={() => setCategoryFilter(rt === categoryFilter ? null : rt)}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all cursor-pointer ${
+                categoryFilter === rt
+                  ? 'bg-accent-blue/15 border-accent-blue/50 text-accent-blue'
+                  : 'bg-navy-800/40 border-navy-700 text-navy-400 hover:text-white hover:border-navy-600'
+              }`}>
+              {t(`immediateRenderer.filter.${rt}`, REPAIR_TYPE_LABELS[rt] || rt)}
+              <span className="px-1 rounded bg-navy-700/50 text-navy-200">{countsByCategory[rt]}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
-                      {it.section && <Badge variant="gray">{it.section.split('. ')[1] || it.section}</Badge>}
-                    </div>
-                    <p className="text-sm text-navy-200">{it.title}</p>
-                    <p className="text-[11px] text-navy-400 mt-1">{it.meta}</p>
-                  </div>
-                  <Badge variant="gold" size="md">{t('immediateRenderer.pendingBadge', 'Pending')}</Badge>
-                </div>
-                <div className="flex items-center gap-1.5 pt-2 border-t border-navy-700/40">
-                  <button
-                    onClick={() => handleReject(it)}
-                    className="flex-1 flex items-center justify-center gap-1 px-3 py-2 rounded-md bg-accent-red/10 border border-accent-red/40 text-accent-red text-[11px] font-semibold hover:bg-accent-red/20 cursor-pointer"
-                  >
-                    <X size={11} /> {t('immediateRenderer.reject', 'Reject')}
-                  </button>
-                  <button
-                    onClick={() => handleApprove(it)}
-                    className="flex-1 flex items-center justify-center gap-1 px-3 py-2 rounded-md bg-accent-green text-white text-[11px] font-semibold hover:opacity-90 cursor-pointer shadow-lg shadow-accent-green/20"
-                  >
-                    <Check size={11} /> {t('immediateRenderer.approveAndCreateWO', 'Approve & Create WO')}
-                  </button>
-                </div>
-              </div>
-            ))}
+      {visiblePending.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-2 gap-2">
+            <h4 className="text-[10px] font-semibold text-accent-gold uppercase tracking-wide">
+              {t('immediateRenderer.pendingHeadingFmt', { count: visiblePending.length, defaultValue: `Pending (${visiblePending.length})` })}
+            </h4>
+            {visiblePendingIds.length > 0 && (
+              <label className="flex items-center gap-1.5 text-[11px] text-navy-300 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={allVisibleSelected}
+                  onChange={toggleSelectAllVisible}
+                  className="w-3.5 h-3.5 rounded cursor-pointer"
+                />
+                {allVisibleSelected
+                  ? t('immediateRenderer.deselectAll', 'Deselect all')
+                  : t('immediateRenderer.selectAllVisibleFmt', { count: visiblePendingIds.length, defaultValue: `Select all (${visiblePendingIds.length})` })}
+              </label>
+            )}
           </div>
+          <div className="space-y-2">
+            {visiblePending.map((it) => {
+              const isChecked = it.defectId ? selected.has(it.defectId) : false;
+              return (
+                <div key={it.label}
+                  className={`border rounded-lg p-3 transition-colors ${
+                    isChecked
+                      ? 'bg-accent-blue/5 border-accent-blue/40'
+                      : 'bg-navy-800/40 border-navy-700/40'
+                  }`}>
+                  <div className="flex items-start gap-3 mb-2">
+                    {it.defectId && (
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => toggleSelected(it.defectId)}
+                        className="w-4 h-4 mt-1 rounded cursor-pointer shrink-0"
+                        aria-label="Select defect for bulk action"
+                      />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <span className="text-sm font-semibold text-white font-mono">{it.label}</span>
+                        {it.section && <Badge variant="gray">{it.section.split('. ')[1] || it.section}</Badge>}
+                        {it.repairType && (
+                          <Badge variant="blue">{REPAIR_TYPE_LABELS[it.repairType] || it.repairType}</Badge>
+                        )}
+                      </div>
+                      <p className="text-sm text-navy-200">{it.title}</p>
+                      <p className="text-[11px] text-navy-400 mt-1">{it.meta}</p>
+                    </div>
+                    <Badge variant="gold" size="md">{t('immediateRenderer.pendingBadge', 'Pending')}</Badge>
+                  </div>
+                  <div className="flex items-center gap-1.5 pt-2 border-t border-navy-700/40">
+                    <button
+                      onClick={() => handleReject(it)}
+                      className="flex-1 flex items-center justify-center gap-1 px-3 py-2 rounded-md bg-accent-red/10 border border-accent-red/40 text-accent-red text-[11px] font-semibold hover:bg-accent-red/20 cursor-pointer"
+                    >
+                      <X size={11} /> {t('immediateRenderer.reject', 'Reject')}
+                    </button>
+                    <button
+                      onClick={() => handleApprove(it)}
+                      className="flex-1 flex items-center justify-center gap-1 px-3 py-2 rounded-md bg-accent-green text-white text-[11px] font-semibold hover:opacity-90 cursor-pointer shadow-lg shadow-accent-green/20"
+                    >
+                      <Check size={11} /> {t('immediateRenderer.approveAndCreateWO', 'Approve & Create WO')}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Empty-when-filtered hint — shows when the user picked a category
+          that has nothing pending (rare but reachable via stale selection). */}
+      {visiblePending.length === 0 && pending.length > 0 && (
+        <div className="text-center py-8 rounded-lg border border-dashed border-navy-700/60 bg-navy-800/20">
+          <p className="text-sm text-navy-300">{t('immediateRenderer.emptyForFilter', 'No defects in this category.')}</p>
+          <button
+            onClick={() => setCategoryFilter(null)}
+            className="mt-2 text-[11px] text-accent-blue hover:underline cursor-pointer">
+            {t('immediateRenderer.clearFilter', 'Show all categories')}
+          </button>
         </div>
       )}
 
@@ -841,6 +1046,46 @@ function ImmediateDetailRenderer({ items, onApprove, onReject }) {
         <div className="text-center py-10">
           <CheckCheck size={40} className="text-navy-600 mx-auto mb-3" />
           <p className="text-sm text-white">{t('immediateRenderer.emptyState', 'No defects pending approval')}</p>
+        </div>
+      )}
+
+      {/* Sticky bulk action bar — only renders when items are checked.
+          Approve uses auto-routing (no manual vendor pick) so the bulk
+          flow stays one-click; the single-row Approve button still opens
+          the VendorPickerModal for granular control. */}
+      {selected.size > 0 && (
+        <div className="fixed bottom-0 left-0 right-0 z-50 pointer-events-none flex justify-center p-4">
+          <motion.div
+            initial={{ y: 60, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            className="pointer-events-auto bg-navy-900 border border-navy-700 rounded-xl shadow-2xl px-4 py-3 flex items-center gap-3 flex-wrap max-w-xl w-full">
+            <span className="text-sm font-semibold text-white">
+              {t('immediateRenderer.bulkSelectedFmt', { count: selected.size, defaultValue: `${selected.size} selected` })}
+            </span>
+            <span className="text-[11px] text-navy-400 hidden sm:inline">
+              {t('immediateRenderer.bulkAutoRouteHint', 'Auto-routed to each defect’s preferred vendor')}
+            </span>
+            <div className="flex items-center gap-2 ml-auto">
+              <button
+                onClick={() => setSelected(new Set())}
+                disabled={bulkInFlight}
+                className="px-3 py-1.5 rounded-md text-[11px] text-navy-300 hover:text-white hover:bg-navy-800 cursor-pointer disabled:opacity-40">
+                {t('immediateRenderer.bulkClear', 'Clear')}
+              </button>
+              <button
+                onClick={handleBulkReject}
+                disabled={bulkInFlight}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-accent-red/15 border border-accent-red/40 text-accent-red text-[11px] font-semibold hover:bg-accent-red/25 cursor-pointer disabled:opacity-40">
+                <X size={11} /> {t('immediateRenderer.bulkReject', 'Reject selected')}
+              </button>
+              <button
+                onClick={handleBulkApprove}
+                disabled={bulkInFlight}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-accent-green text-white text-[11px] font-semibold hover:opacity-90 cursor-pointer shadow-lg shadow-accent-green/20 disabled:opacity-40">
+                <Check size={11} /> {t('immediateRenderer.bulkApprove', 'Approve selected')}
+              </button>
+            </div>
+          </motion.div>
         </div>
       )}
     </div>
@@ -1141,6 +1386,50 @@ function CardDetailModal({
                   alert(`Reject failed: ${err?.detail || err?.message || 'unknown'}`);
                   throw err;
                 }
+              }}
+              onBulkApprove={async (itemsToApprove) => {
+                // Bulk approve uses auto-routing (no vendor_workshop_id)
+                // so the action stays one click for the DSP. The single-row
+                // Approve button still opens the picker if they want manual
+                // control for a specific defect. Returns { failedLabels }
+                // so the renderer can roll back optimistic state for items
+                // that errored without nuking the whole batch.
+                const { defectReviews } = await import('../api/client');
+                const results = await Promise.allSettled(
+                  itemsToApprove.map((it) =>
+                    defectReviews.approve(it.defectId, {
+                      reason: 'Bulk-approved via Immediate Action panel',
+                    })
+                  )
+                );
+                const failedLabels = results
+                  .map((r, i) => (r.status === 'rejected' ? itemsToApprove[i].label : null))
+                  .filter(Boolean);
+                if (failedLabels.length > 0) {
+                  const failed = results.filter((r) => r.status === 'rejected').length;
+                  alert(`Bulk approve: ${failed} of ${itemsToApprove.length} failed. The successful ones were routed.`);
+                }
+                onQueueChanged?.();
+                return { failedLabels };
+              }}
+              onBulkReject={async (itemsToReject) => {
+                const { defectReviews } = await import('../api/client');
+                const results = await Promise.allSettled(
+                  itemsToReject.map((it) =>
+                    defectReviews.reject(it.defectId, {
+                      reason: 'Bulk-rejected via Immediate Action panel',
+                    })
+                  )
+                );
+                const failedLabels = results
+                  .map((r, i) => (r.status === 'rejected' ? itemsToReject[i].label : null))
+                  .filter(Boolean);
+                if (failedLabels.length > 0) {
+                  const failed = results.filter((r) => r.status === 'rejected').length;
+                  alert(`Bulk reject: ${failed} of ${itemsToReject.length} failed.`);
+                }
+                onQueueChanged?.();
+                return { failedLabels };
               }}
             />
           ) : data.scheduledItems ? (
