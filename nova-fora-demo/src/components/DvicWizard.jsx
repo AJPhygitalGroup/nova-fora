@@ -25,7 +25,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation, Trans } from 'react-i18next';
 import {
   ArrowLeft, ArrowRight, X, Check, AlertCircle, Loader2,
-  ChevronRight, ClipboardList, Trash2, Send, Camera,
+  ChevronRight, ClipboardList, Trash2, Send, Camera, Lock,
 } from 'lucide-react';
 import {
   dvicTemplate as dvicTemplateApi,
@@ -33,6 +33,46 @@ import {
   APIError,
 } from '../api/client';
 import PhotoUploader from './ui/PhotoUploader';
+
+// ─────────────────────────────────────────────────────
+// Inspection route — enforced section order across every vehicle class.
+//
+// The inspector must walk the vehicle in a predictable path so no zone
+// gets skipped: paperwork first (general), then climb into the cab,
+// then circle the truck starting from the front and ending on the
+// passenger side. Each section unlocks the next; backwards revisits
+// stay open so the inspector can correct a missed item.
+// ─────────────────────────────────────────────────────
+const SECTION_ROUTE = [
+  'general',
+  'in_cab',
+  'front_side',
+  'driver_side',
+  'back_side',
+  'passenger_side',
+];
+const SECTION_ROUTE_INDEX = Object.fromEntries(
+  SECTION_ROUTE.map((id, i) => [id, i]),
+);
+
+/**
+ * Sort the template's sections into the canonical inspection route.
+ * Anything not in the route (e.g. a future class-specific section like
+ * `ev_powertrain` or `air_brake`) appears AFTER the routed six in the
+ * order the backend returned, since gating doesn't apply to it.
+ */
+function orderSectionsByRoute(sections) {
+  const known = [];
+  const extras = [];
+  for (const s of sections || []) {
+    if (s.id in SECTION_ROUTE_INDEX) known.push(s);
+    else extras.push(s);
+  }
+  known.sort(
+    (a, b) => SECTION_ROUTE_INDEX[a.id] - SECTION_ROUTE_INDEX[b.id],
+  );
+  return [...known, ...extras];
+}
 
 
 /**
@@ -68,6 +108,12 @@ export default function DvicWizard({
 
   // Step 1..6
   const [step, setStep] = useState(1);
+
+  // Sections the inspector has opened during this session. Drives the
+  // route-gating in step 1: a section is unlocked iff every section that
+  // precedes it in SECTION_ROUTE has been visited. The set is intentionally
+  // local to one inspection — restarting the wizard resets the route.
+  const [visitedSections, setVisitedSections] = useState(() => new Set());
 
   // Selections
   const [section, setSection] = useState(null);   // section node from template
@@ -163,6 +209,15 @@ export default function DvicWizard({
     setPosition(null);
     setDetails({});
     setStep(2);
+    // Mark as visited so the next section in SECTION_ROUTE unlocks when
+    // the inspector returns to step 1. Sections outside the route are
+    // still tracked so the visual "visited" tick shows up on them too.
+    setVisitedSections((prev) => {
+      if (prev.has(s.id)) return prev;
+      const next = new Set(prev);
+      next.add(s.id);
+      return next;
+    });
   };
 
   const handleItemPick = (it) => {
@@ -353,8 +408,9 @@ export default function DvicWizard({
           {step === 1 && (
             <Pane key="1">
               <SectionPicker
-                sections={tpl.sections}
+                sections={orderSectionsByRoute(tpl.sections)}
                 value={section}
+                visited={visitedSections}
                 onChange={handleSectionPick}
               />
               <CommittedDefectsList
@@ -728,32 +784,91 @@ function Pane({ children }) {
 
 
 // ═════════════════════════════════════════════════════
-// Step 1 — Section picker (6 tiles, hide empty sections)
+// Step 1 — Section picker (6 tiles in canonical inspection route)
 // ═════════════════════════════════════════════════════
-function SectionPicker({ sections, value, onChange }) {
+function SectionPicker({ sections, value, visited, onChange }) {
   const { t } = useTranslation('wizard');
+  // The next route-section the inspector should open. Anything to its
+  // right in SECTION_ROUTE is locked until this one is visited. Computed
+  // from the visited set so revisits stay unlocked too.
+  const unlockedNextId = (() => {
+    for (const id of SECTION_ROUTE) {
+      if (!visited?.has(id)) return id;
+    }
+    return null;  // all six visited → nothing more to unlock
+  })();
+  const totalRouteCount = SECTION_ROUTE.length;
+  const visitedRouteCount = SECTION_ROUTE.filter((id) => visited?.has(id)).length;
+
   return (
     <div>
       <h3 className="text-sm font-semibold text-white mb-1">{t('dvic.section.heading')}</h3>
-      <p className="text-xs text-navy-400 mb-4">
+      <p className="text-xs text-navy-400 mb-2">
         {t('dvic.section.hint')}
       </p>
+      {/* Progress strip — surfaces the route + how far the inspector has
+          walked. Reads from the same visited Set the lock gate uses, so
+          the two can't disagree. */}
+      <div className="mb-4 flex items-center gap-2 text-[11px] text-navy-300">
+        <span className="font-semibold text-white">
+          {t('dvic.section.routeProgressFmt', {
+            visited: visitedRouteCount,
+            total: totalRouteCount,
+            defaultValue: `${visitedRouteCount} of ${totalRouteCount} sections inspected`,
+          })}
+        </span>
+        <div className="flex-1 h-1 rounded-full bg-navy-800 overflow-hidden">
+          <div
+            className="h-full bg-accent-blue transition-all"
+            style={{ width: `${(visitedRouteCount / totalRouteCount) * 100}%` }}
+          />
+        </div>
+      </div>
       <div className="grid grid-cols-2 gap-2">
         {sections.map((s) => {
           const selected = value?.id === s.id;
+          const isInRoute = s.id in SECTION_ROUTE_INDEX;
+          const isVisited = visited?.has(s.id);
+          // Lock only sections that participate in the route AND haven't
+          // been opened yet AND aren't the next-to-open. Extras outside
+          // the route stay free — they're class-specific add-ons, not
+          // part of the mandatory walk.
+          const locked = isInRoute && !isVisited && s.id !== unlockedNextId;
+          const stepNumber = isInRoute ? SECTION_ROUTE_INDEX[s.id] + 1 : null;
           return (
             <button
               key={s.id}
-              onClick={() => onChange(s)}
-              className={`rounded-xl border-2 p-3 text-left transition-all cursor-pointer ${
-                selected
-                  ? 'border-accent-blue bg-accent-blue/10'
-                  : 'border-navy-700 bg-navy-900/60 hover:border-navy-600'
+              onClick={() => { if (!locked) onChange(s); }}
+              disabled={locked}
+              aria-disabled={locked}
+              title={locked
+                ? t('dvic.section.lockedTooltip', 'Inspect the previous sections first')
+                : undefined}
+              className={`relative rounded-xl border-2 p-3 text-left transition-all ${
+                locked
+                  ? 'border-navy-800 bg-navy-900/40 opacity-50 cursor-not-allowed'
+                  : selected
+                    ? 'border-accent-blue bg-accent-blue/10 cursor-pointer'
+                    : 'border-navy-700 bg-navy-900/60 hover:border-navy-600 cursor-pointer'
               }`}
             >
+              {/* Status badge top-right: step number while locked, check when visited */}
+              {isInRoute && (
+                <span className={`absolute top-2 right-2 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold ${
+                  isVisited
+                    ? 'bg-accent-green text-white'
+                    : locked
+                      ? 'bg-navy-800 text-navy-500'
+                      : 'bg-accent-blue text-white ring-2 ring-accent-blue/30'
+                }`}>
+                  {isVisited ? <Check size={10} /> : stepNumber}
+                </span>
+              )}
               <div className="flex items-start gap-2 mb-1">
-                <span className="text-2xl shrink-0">{s.icon}</span>
-                <div className="min-w-0">
+                <span className="text-2xl shrink-0">
+                  {locked ? <Lock size={20} className="text-navy-600" /> : s.icon}
+                </span>
+                <div className="min-w-0 pr-5">
                   <div className="text-sm font-semibold text-white truncate">{s.label}</div>
                   <div className="text-[10px] text-navy-400">{t('dvic.section.checksCount', { count: s.itemCount })}</div>
                 </div>
