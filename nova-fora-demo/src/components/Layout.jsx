@@ -19,6 +19,8 @@ import Defects from './Defects';
 import NotificationsPanel from './NotificationsPanel';
 import RoleSwitcher from './ui/RoleSwitcher';
 import { rolePermissions, notificationsSeed } from '../data/mockData';
+import { vendorWorkshops as vendorWorkshopsApi } from '../api/client';
+import { isVendorRole } from '../lib/permissions';
 
 // View catalog — id, i18n key, icon, accent color, component.
 // Labels are looked up via t('layout:nav.<key>') and t('layout:subtitles.<key>')
@@ -55,11 +57,65 @@ export default function Layout({ user, onSwitchRole, onLogout, onImpersonate, im
   const navLabel = (key) => t(`nav.${key}`);
   const navSub = (key) => t(`subtitles.${key}`, '');
 
+  // For vendor users, the Body Repairs tab only belongs in the nav if the
+  // vendor's own workshop(s) actually do body work — a mechanical or tires
+  // shop has no business in that view. We fetch the workshop catalog (the
+  // endpoint is read-only for vendor_admin and below) and collect the
+  // repair_types for workshops that belong to this user's organization.
+  //
+  // States:
+  //   null  → not yet known (don't render the tab to avoid leakage)
+  //   true  → vendor does body work, show the tab
+  //   false → vendor doesn't do body work, hide the tab
+  // For non-vendor roles the value is `true` so the static tab list runs
+  // unfiltered (DSP admins, site_admin keep their Body tab as defined in
+  // rolePermissions).
+  const [vendorDoesBody, setVendorDoesBody] = useState(
+    isVendorRole(user) ? null : true,
+  );
+  useEffect(() => {
+    if (!isVendorRole(user)) {
+      setVendorDoesBody(true);
+      return;
+    }
+    let cancelled = false;
+    vendorWorkshopsApi
+      .list({ includeInactive: false })
+      .then((res) => {
+        if (cancelled) return;
+        // /auth/me serves orgId as the prefixed string ("V-006") — strip
+        // it back to the integer that vendor_workshops.organization_id
+        // carries so the filter actually matches.
+        const rawOrgId = user?.organizationId ?? user?.orgId;
+        const m = String(rawOrgId ?? '').match(/(\d+)/);
+        const myOrgIntId = m ? Number(m[1]) : null;
+        const mine = (res.items || []).filter(
+          (w) => myOrgIntId != null && Number(w.organizationId) === myOrgIntId,
+        );
+        const repairTypes = new Set(
+          mine.flatMap((w) => w.repairTypes || []),
+        );
+        setVendorDoesBody(repairTypes.has('body'));
+      })
+      .catch((err) => {
+        // On failure: leave the tab hidden so we don't accidentally
+        // surface a section the user has no business in. The user can
+        // reload if their workshop is actually body-typed.
+        console.warn('vendor workshop fetch (for body-tab gate) failed', err);
+        if (!cancelled) setVendorDoesBody(false);
+      });
+    return () => { cancelled = true; };
+  }, [user]);
+
   // Tabs are derived from the user's role. Views that belong to the
   // Dashboard dropdown collapse into a single virtual group entry placed
   // where the first of its children appeared in the role's permission list.
   const tabs = useMemo(() => {
-    const allowedIds = rolePermissions[user.role] || [];
+    let allowedIds = rolePermissions[user.role] || [];
+    if (isVendorRole(user) && !vendorDoesBody) {
+      // Drop 'body' until we confirm the vendor does body work.
+      allowedIds = allowedIds.filter((id) => id !== 'body');
+    }
     const decorate = (v) => ({
       ...v,
       label: navLabel(v.i18nKey),
@@ -91,8 +147,10 @@ export default function Layout({ user, onSwitchRole, onLogout, onImpersonate, im
     }
     return result;
     // i18n.language as dep so tabs re-build when the user toggles language.
+    // vendorDoesBody as dep so the Body tab is added once we confirm the
+    // vendor actually does body work (and removed if the answer flips).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user.role, t]);
+  }, [user.role, t, vendorDoesBody]);
 
   // Live notification count per user (computed from seed)
   const userNotifCount = useMemo(() => {
