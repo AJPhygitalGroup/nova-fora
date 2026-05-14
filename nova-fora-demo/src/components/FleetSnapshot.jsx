@@ -8,7 +8,13 @@ import {
   Wrench, Flame, FileText, ClipboardList, Zap, Info, Loader2
 } from 'lucide-react';
 import { fleetSnapshotVans, fleetSnapshotDefectDetails, availableVendors, SECTION_TO_SERVICES } from '../data/mockData';
-import { directory as dirApi, defectReviews, catalog, defects as defectsApi } from '../api/client';
+import {
+  directory as dirApi,
+  defectReviews,
+  catalog,
+  defects as defectsApi,
+  vehicles as vehiclesApi,
+} from '../api/client';
 import { isDspRole } from '../lib/permissions';
 import Badge from './ui/Badge';
 
@@ -623,6 +629,47 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
   const [isPM, setIsPM] = useState(false);
   const [pmType, setPmType] = useState('Oil Change');
 
+  // Internal fetch of the DSP's real fleet for the create-from-scratch flow.
+  // Different callers pass different `vans` props (FleetSnapshot still feeds
+  // the legacy heatmap mockup; Defects.jsx feeds a filtered list; RealDVIC
+  // now feeds real data). Rather than make each caller wire this up, the
+  // modal does it itself when the user is creating a defect from scratch —
+  // so wherever they open it from, they get their actual fleet.
+  const [fetchedVans, setFetchedVans] = useState(null);
+  useEffect(() => {
+    if (!isCreateFromScratch) return;
+    let alive = true;
+    vehiclesApi
+      .list({ perPage: 200 })
+      .then((res) => {
+        if (!alive) return;
+        const rows = (res.items || []).map((v) => ({
+          id: v.id,
+          fleetId: v.fleetId || null,
+          model: [v.year, v.make, v.model].filter(Boolean).join(' '),
+          plate: v.plate,
+          mileage: v.mileage,
+          dspId: v.dspId,
+          dsp: v.dspName || '',
+          defectCount: 0,
+          vehicleClass: v.vehicleClass,
+          vin: v.vin,
+          year: v.year,
+          make: v.make,
+        }));
+        setFetchedVans(rows);
+      })
+      .catch((err) => console.warn('Create WO: vehicle fetch failed', err));
+    return () => { alive = false; };
+  }, [isCreateFromScratch]);
+  // What the dropdown actually renders. In create-from-scratch mode prefer
+  // the live fetch; fall back to whatever the caller passed only if the
+  // fetch hasn't returned yet (so the user sees something rather than
+  // an empty dropdown for a moment).
+  const dropdownVans = isCreateFromScratch
+    ? (fetchedVans || vans || [])
+    : (vans || []);
+
   // Load the V2.2 defect catalog filtered by the selected vehicle's class.
   // Only applies in create-from-scratch mode; the existing approve-defect
   // paths don't need it. Cached per (vehicle_class, lang) on the API client
@@ -1019,7 +1066,7 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                       <>
                         <div className="fixed inset-0 z-10" onClick={() => setVanDropdownOpen(false)} />
                         <div className="absolute top-full left-0 right-0 mt-1 max-h-64 overflow-y-auto bg-navy-900 border border-navy-700 rounded-lg shadow-2xl z-20">
-                          {vans.map((v) => (
+                          {dropdownVans.map((v) => (
                             <button key={v.id} onClick={() => { setVan(v); setVanDropdownOpen(false); }}
                               className={`w-full flex items-center justify-between gap-2 px-4 py-3 text-left hover:bg-navy-800 transition-colors border-b border-navy-800/60 last:border-b-0 min-h-[56px] ${
                                 van?.id === v.id ? 'bg-navy-800' : ''
