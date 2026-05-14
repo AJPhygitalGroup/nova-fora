@@ -20,6 +20,7 @@ import {
   defectReviews as defectReviewsApi,
   workOrders as workOrdersApi,
 } from '../api/client';
+import { adaptWO } from '../api/woAdapter';
 
 const tierConfig = {
   1: { label: 'Tier 1', range: '1–25 defects', cash: '$1', bucks: '$1', color: '#3b82f6', bg: 'bg-accent-blue/10', border: 'border-accent-blue/30', pending: 1 },
@@ -2358,11 +2359,15 @@ function RepairHistoryModal({ repairedWOs, user, onClose }) {
   const sorted = [...repairedWOs].sort((a, b) => new Date(b.completedAt || 0) - new Date(a.completedAt || 0));
 
   const filtered = search
-    ? sorted.filter((wo) =>
-        wo.vehicleId.toLowerCase().includes(search.toLowerCase()) ||
-        wo.description.toLowerCase().includes(search.toLowerCase()) ||
-        (wo.assignedTechnician || '').toLowerCase().includes(search.toLowerCase())
-      )
+    ? sorted.filter((wo) => {
+        const s = search.toLowerCase();
+        return (
+          wo.vehicleId.toLowerCase().includes(s) ||
+          (wo.fleetId || '').toLowerCase().includes(s) ||
+          wo.description.toLowerCase().includes(s) ||
+          (wo.assignedTechnician || '').toLowerCase().includes(s)
+        );
+      })
     : sorted;
 
   // Stats
@@ -2483,7 +2488,7 @@ function RepairHistoryModal({ repairedWOs, user, onClose }) {
                       <div className="flex items-center gap-2 flex-wrap text-navy-300">
                         <span className="flex items-center gap-1"><Wrench size={10} className="text-accent-green" /> {wo.assignedTechnician || t('repairHistoryModal.emptyValue', '—')}</span>
                         <span className="text-navy-600">·</span>
-                        <span>{wo.vehicleId}</span>
+                        <span>{wo.fleetId || wo.vehicleId}</span>
                         {turnaroundH !== null && (
                           <>
                             <span className="text-navy-600">·</span>
@@ -2530,7 +2535,7 @@ function RepairHistoryModal({ repairedWOs, user, onClose }) {
 
                           {/* Details grid */}
                           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
-                            <DetailBox label={t('repairHistoryModal.detailVan', 'Van')} value={wo.vehicleId} />
+                            <DetailBox label={t('repairHistoryModal.detailVan', 'Van')} value={wo.fleetId || wo.vehicleId} />
                             <DetailBox label={t('repairHistoryModal.detailYearModel', 'Year/Model')} value={`${wo.year} ${wo.make} ${wo.model}`} />
                             <DetailBox label={t('repairHistoryModal.detailPlate', 'Plate')} value={wo.plate} mono />
                             <DetailBox label={t('repairHistoryModal.detailRoNumber', 'RO Number')} value={wo.roNumber} mono /><DetailBox label={t('repairHistoryModal.detailMileage', 'Mileage at completion')} value={wo.lastMileage ? `${wo.lastMileage.toLocaleString()} ${t('startInspectionModal.milesShort', 'mi')}` : t('repairHistoryModal.emptyValue', '—')} />
@@ -3098,12 +3103,28 @@ export default function RealDVIC({ user }) {
     if (wizardJustClosed) refreshTodayMetrics();
   }, [wizardJustClosed, refreshTodayMetrics]);
 
-  // Completed WOs filtered by DSP. DSP-side roles (owner / manager /
-  // inspector / viewer) see only their own org's WOs; vendor / site_admin
-  // see all (their queue spans many DSPs).
-  const repairedWOs = isDspRole(user)
-    ? workOrdersData.filter((wo) => wo.status === 'completed' && wo.dspId === user?.orgId)
-    : workOrdersData.filter((wo) => wo.status === 'completed');
+  // Completed WOs feeding the "Defects Repaired" metric card + history
+  // modal. Backend already scopes the list by role (DSP sees their own,
+  // vendor sees their own workshop, site_admin sees all) so we just ask
+  // for status=completed and run each row through the V2→V1 adapter so
+  // the modal's existing renderer reads the shape it expects.
+  const [repairedWOs, setRepairedWOs] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    workOrdersApi
+      .list({ status: 'completed', limit: 200 })
+      .then((res) => {
+        if (cancelled) return;
+        setRepairedWOs((res.items || []).map((wo) => adaptWO(wo)));
+      })
+      .catch((err) => console.warn('completed WO history fetch failed', err));
+    return () => { cancelled = true; };
+    // Refetch when the wizard closes (a newly-reported defect could
+    // trigger auto-routing). Completed WOs flip status on the vendor
+    // side; the DSP home doesn't drive that transition, so we don't
+    // need a tighter polling cycle here.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wizardJustClosed]);
   const repairedDefectsCount = repairedWOs.length;
   // "This week" = last 7 days
   const oneWeekAgo = new Date();
