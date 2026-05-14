@@ -65,8 +65,8 @@
       "tip": "Tip: primero toma una foto amplia para mostrar la ubicación del defecto, luego un acercamiento. La compresión ocurre localmente — la subida es rápida incluso en 4G."
     },
     "committedList": {
-      "emptyPart1": "Aún no agregaste defectos. Toca una sección arriba para empezar, o presiona",
-      "emptyPart2": "si todo está bien.",
+      "emptyPart1": "Aún no agregaste defectos. Recorre cada sección de arriba — una vez inspeccionadas las 6, presiona",
+      "emptyPart2": "si todo está en orden.",
       "headingFmt": "Defectos agregados ({{count}})",
       "removeTitle": "Quitar defecto"
     }

@@ -512,20 +512,50 @@ export default function DvicWizard({
             </button>
           )}
 
-          {step === 1 && onComplete && (
-            <button
-              onClick={onComplete}
-              disabled={submitting}
-              className="flex items-center gap-1.5 px-4 py-2.5 rounded-md bg-accent-green text-white font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-sm shadow-lg shadow-accent-green/20"
-            >
-              {submitting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-              {submitting
-                ? t('dvic.footer.submitting')
-                : (defects.length > 0
-                    ? t('dvic.footer.completeInspectionWithCount', { count: defects.length })
-                    : t('dvic.footer.completeInspection'))}
-            </button>
-          )}
+          {step === 1 && onComplete && (() => {
+            // The inspector must have walked all six SECTION_ROUTE sections
+            // before they can submit. Computed inline so it reuses the
+            // same visited Set the picker locks on — the two views can't
+            // get out of sync. Sections outside the route (e.g.
+            // class-specific add-ons) are NOT required.
+            const missingRoute = SECTION_ROUTE.filter(
+              (id) => !visitedSections.has(id),
+            );
+            const routeIncomplete = missingRoute.length > 0;
+            const routeBlocked = routeIncomplete;
+            const nextMissingLabel = (() => {
+              if (!routeIncomplete || !tpl) return null;
+              const nextId = missingRoute[0];
+              const sec = (tpl.sections || []).find((s) => s.id === nextId);
+              return sec?.label || nextId;
+            })();
+            return (
+              <button
+                onClick={onComplete}
+                disabled={submitting || routeBlocked}
+                title={routeBlocked
+                  ? t('dvic.footer.completeBlockedTooltipFmt', {
+                      count: missingRoute.length,
+                      next: nextMissingLabel,
+                      defaultValue: `${missingRoute.length} section${missingRoute.length === 1 ? '' : 's'} still pending — start with ${nextMissingLabel}`,
+                    })
+                  : undefined}
+                className="flex items-center gap-1.5 px-4 py-2.5 rounded-md bg-accent-green text-white font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-sm shadow-lg shadow-accent-green/20"
+              >
+                {submitting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                {submitting
+                  ? t('dvic.footer.submitting')
+                  : routeBlocked
+                    ? t('dvic.footer.completeBlockedFmt', {
+                        count: missingRoute.length,
+                        defaultValue: `${missingRoute.length} section${missingRoute.length === 1 ? '' : 's'} left`,
+                      })
+                    : (defects.length > 0
+                        ? t('dvic.footer.completeInspectionWithCount', { count: defects.length })
+                        : t('dvic.footer.completeInspection'))}
+              </button>
+            );
+          })()}
           {step > 1 && step < 5 && (
             <button
               onClick={goNext}

@@ -65,7 +65,7 @@
       "tip": "Tip: take a wide shot first so the location of the defect is obvious, then a close-up. Compression happens locally — uploads stay fast on 4G."
     },
     "committedList": {
-      "emptyPart1": "No defects added yet. Tap a section above to start, or hit",
+      "emptyPart1": "No defects added yet. Walk every section above — once all 6 are inspected, hit",
       "emptyPart2": "if everything checks out.",
       "headingFmt": "Defects added ({{count}})",
       "removeTitle": "Remove defect"
