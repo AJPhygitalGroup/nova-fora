@@ -730,8 +730,20 @@ const REPAIR_TYPE_ORDER = ['mechanical', 'body', 'tires', 'pm', 'cnmr', 'detaili
 
 function ImmediateDetailRenderer({ items, onApprove, onReject, onBulkApprove, onBulkReject }) {
   const { t } = useTranslation('dashboard');
+  // Each row's identity is the defect's database id when available. Items
+  // sourced from the live queue ALWAYS carry defectId; the mock fallback
+  // rows don't (in which case we fall back to label = fleet_id). The
+  // fallback isn't enough on its own — fleets routinely report multiple
+  // defects on the same van, so two rows can share label "12". Using a
+  // stable per-defect key here fixes two cascading bugs:
+  //   1. React keyed reconciliation kept stale DOM from a previous render
+  //      when keys collided, so a filtered list showed leftover rows.
+  //   2. The `actions` map was keyed by label too, meaning approving one
+  //      defect on van 12 silently marked all of van 12's defects approved.
+  const keyOf = (it) => (it.defectId != null ? `d${it.defectId}` : `l${it.label}`);
+
   // Local state tracks which items were approved or rejected in this session
-  const [actions, setActions] = useState({}); // { [label]: 'approved' | 'rejected' }
+  const [actions, setActions] = useState({}); // { [keyOf(it)]: 'approved' | 'rejected' }
   // Category filter: null = show all; otherwise a RepairType enum value.
   const [categoryFilter, setCategoryFilter] = useState(null);
   // Set of defectIds the user has ticked for bulk action. Survives across
@@ -745,32 +757,34 @@ function ImmediateDetailRenderer({ items, onApprove, onReject, onBulkApprove, on
   // if the parent's async handler throws. The parent's onApprove/onReject
   // now wraps the V2.0 defectReviews API and re-throws on failure.
   const handleApprove = async (it) => {
-    setActions((a) => ({ ...a, [it.label]: 'approved' }));
+    const k = keyOf(it);
+    setActions((a) => ({ ...a, [k]: 'approved' }));
     try {
       await onApprove?.(it);
     } catch {
       setActions((a) => {
         const c = { ...a };
-        delete c[it.label];
+        delete c[k];
         return c;
       });
     }
   };
   const handleReject = async (it) => {
-    setActions((a) => ({ ...a, [it.label]: 'rejected' }));
+    const k = keyOf(it);
+    setActions((a) => ({ ...a, [k]: 'rejected' }));
     try {
       await onReject?.(it);
     } catch {
       setActions((a) => {
         const c = { ...a };
-        delete c[it.label];
+        delete c[k];
         return c;
       });
     }
   };
 
-  const pending = items.filter((it) => !actions[it.label]);
-  const processed = items.filter((it) => actions[it.label]);
+  const pending = items.filter((it) => !actions[keyOf(it)]);
+  const processed = items.filter((it) => actions[keyOf(it)]);
   // Processed list ALSO respects the category filter — otherwise the
   // user filters to "Body", approves one, switches to "Mechanical", and
   // the processed Body defect is still visible, making it feel like the
@@ -829,7 +843,7 @@ function ImmediateDetailRenderer({ items, onApprove, onReject, onBulkApprove, on
   };
 
   // Resolve `selected` (a set of defect ids) back to the full item objects
-  // so the bulk handlers can flip optimistic state by `it.label`.
+  // so the bulk handlers can flip optimistic state by `keyOf(it)`.
   const selectedItems = pending.filter((it) => it.defectId && selected.has(it.defectId));
 
   const handleBulkApprove = async () => {
@@ -842,18 +856,19 @@ function ImmediateDetailRenderer({ items, onApprove, onReject, onBulkApprove, on
     )) return;
     setBulkInFlight(true);
     // Optimistic: flip every selected item to 'approved' up front, roll
-    // back any individual failures by label.
+    // back any individual failures by their per-defect key.
+    const itemKeys = selectedItems.map(keyOf);
     setActions((a) => {
       const next = { ...a };
-      selectedItems.forEach((it) => { next[it.label] = 'approved'; });
+      itemKeys.forEach((k) => { next[k] = 'approved'; });
       return next;
     });
     try {
-      const { failedLabels } = await onBulkApprove(selectedItems);
-      if (failedLabels && failedLabels.length > 0) {
+      const { failedKeys } = await onBulkApprove(selectedItems);
+      if (failedKeys && failedKeys.length > 0) {
         setActions((a) => {
           const next = { ...a };
-          failedLabels.forEach((label) => { delete next[label]; });
+          failedKeys.forEach((k) => { delete next[k]; });
           return next;
         });
       }
@@ -872,17 +887,18 @@ function ImmediateDetailRenderer({ items, onApprove, onReject, onBulkApprove, on
       })
     )) return;
     setBulkInFlight(true);
+    const itemKeys = selectedItems.map(keyOf);
     setActions((a) => {
       const next = { ...a };
-      selectedItems.forEach((it) => { next[it.label] = 'rejected'; });
+      itemKeys.forEach((k) => { next[k] = 'rejected'; });
       return next;
     });
     try {
-      const { failedLabels } = await onBulkReject(selectedItems);
-      if (failedLabels && failedLabels.length > 0) {
+      const { failedKeys } = await onBulkReject(selectedItems);
+      if (failedKeys && failedKeys.length > 0) {
         setActions((a) => {
           const next = { ...a };
-          failedLabels.forEach((label) => { delete next[label]; });
+          failedKeys.forEach((k) => { delete next[k]; });
           return next;
         });
       }
@@ -966,14 +982,6 @@ function ImmediateDetailRenderer({ items, onApprove, onReject, onBulkApprove, on
         </div>
       )}
 
-      {/* DEBUG strip — confirms the filter chain is actually wired. Remove
-          once the user has verified the filter is doing its job. Shows the
-          live state value + the count it produced from the items list. */}
-      {pending.length > 0 && (
-        <div className="text-[10px] text-navy-500 font-mono px-1">
-          debug · categoryFilter={String(categoryFilter)} · pending.length={pending.length} · visiblePending.length={visiblePending.length} · types=[{Array.from(new Set(pending.map((it) => normRT(it.repairType)))).join(',')}]
-        </div>
-      )}
 
       {visiblePending.length > 0 && (
         <div>
@@ -999,7 +1007,7 @@ function ImmediateDetailRenderer({ items, onApprove, onReject, onBulkApprove, on
             {visiblePending.map((it) => {
               const isChecked = it.defectId ? selected.has(it.defectId) : false;
               return (
-                <div key={it.label}
+                <div key={keyOf(it)}
                   className={`border rounded-lg p-3 transition-colors ${
                     isChecked
                       ? 'bg-accent-blue/5 border-accent-blue/40'
@@ -1069,9 +1077,9 @@ function ImmediateDetailRenderer({ items, onApprove, onReject, onBulkApprove, on
           </h4>
           <div className="space-y-1.5">
             {visibleProcessed.map((it) => {
-              const action = actions[it.label];
+              const action = actions[keyOf(it)];
               return (
-                <div key={it.label} className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 ${
+                <div key={keyOf(it)} className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 ${
                   action === 'approved' ? 'bg-accent-green/5 border-accent-green/30' : 'bg-accent-red/5 border-accent-red/30'
                 }`}>
                   <div className="flex items-center gap-2 min-w-0">
@@ -1437,9 +1445,11 @@ function CardDetailModal({
                 // Bulk approve uses auto-routing (no vendor_workshop_id)
                 // so the action stays one click for the DSP. The single-row
                 // Approve button still opens the picker if they want manual
-                // control for a specific defect. Returns { failedLabels }
-                // so the renderer can roll back optimistic state for items
-                // that errored without nuking the whole batch.
+                // control for a specific defect. Returns { failedKeys }
+                // (per-defect keys, NOT labels — fleet_ids collide when a
+                // van has multiple defects) so the renderer can roll back
+                // optimistic state for items that errored without nuking
+                // the whole batch.
                 const { defectReviews } = await import('../api/client');
                 const results = await Promise.allSettled(
                   itemsToApprove.map((it) =>
@@ -1448,15 +1458,18 @@ function CardDetailModal({
                     })
                   )
                 );
-                const failedLabels = results
-                  .map((r, i) => (r.status === 'rejected' ? itemsToApprove[i].label : null))
+                const failedKeys = results
+                  .map((r, i) => (r.status === 'rejected'
+                    ? (itemsToApprove[i].defectId != null
+                        ? `d${itemsToApprove[i].defectId}`
+                        : `l${itemsToApprove[i].label}`)
+                    : null))
                   .filter(Boolean);
-                if (failedLabels.length > 0) {
-                  const failed = results.filter((r) => r.status === 'rejected').length;
-                  alert(`Bulk approve: ${failed} of ${itemsToApprove.length} failed. The successful ones were routed.`);
+                if (failedKeys.length > 0) {
+                  alert(`Bulk approve: ${failedKeys.length} of ${itemsToApprove.length} failed. The successful ones were routed.`);
                 }
                 onQueueChanged?.();
-                return { failedLabels };
+                return { failedKeys };
               }}
               onBulkReject={async (itemsToReject) => {
                 const { defectReviews } = await import('../api/client');
@@ -1467,15 +1480,18 @@ function CardDetailModal({
                     })
                   )
                 );
-                const failedLabels = results
-                  .map((r, i) => (r.status === 'rejected' ? itemsToReject[i].label : null))
+                const failedKeys = results
+                  .map((r, i) => (r.status === 'rejected'
+                    ? (itemsToReject[i].defectId != null
+                        ? `d${itemsToReject[i].defectId}`
+                        : `l${itemsToReject[i].label}`)
+                    : null))
                   .filter(Boolean);
-                if (failedLabels.length > 0) {
-                  const failed = results.filter((r) => r.status === 'rejected').length;
-                  alert(`Bulk reject: ${failed} of ${itemsToReject.length} failed.`);
+                if (failedKeys.length > 0) {
+                  alert(`Bulk reject: ${failedKeys.length} of ${itemsToReject.length} failed.`);
                 }
                 onQueueChanged?.();
-                return { failedLabels };
+                return { failedKeys };
               }}
             />
           ) : data.scheduledItems ? (
