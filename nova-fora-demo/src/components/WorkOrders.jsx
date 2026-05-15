@@ -999,6 +999,32 @@ function WorkOrderCard({ wo, expanded, onToggle, userRole, currentUserId, onActi
                   (WO → RR → repair_request_defects → defect). Renders only
                   when there's at least one defect on the response; legacy
                   WOs without the new payload fall through cleanly. */}
+              {/* Line items (work units) — only after the WO has been accepted
+                  and `generate_line_items_on_accept` has populated them. Each
+                  row shows description + category + billing + status + price,
+                  and exposes per-row actions for the SW / tech in the
+                  pending state (Done / Defer / Decline). Defer specifically
+                  hits POST /line-items/{id}/defer which auto-spawns a
+                  follow-up RR via parent_repair_request_id. */}
+              {Array.isArray(wo.lineItems) && wo.lineItems.length > 0 && (
+                <div className="space-y-2">
+                  <div className="text-[10px] text-navy-400 uppercase tracking-wide flex items-center gap-1.5">
+                    <ClipboardList size={10} className="text-accent-purple" />
+                    {t('workOrders.card.lineItemsCountFmt', { count: wo.lineItems.length, defaultValue: `Line items (${wo.lineItems.length})` })}
+                  </div>
+                  {wo.lineItems.map((li) => (
+                    <LineItemRow
+                      key={li.id}
+                      li={li}
+                      canAct={(isDispatcher || (isTechnician && isMyWO)) && wo.status === 'in_progress'}
+                      onComplete={() => onAction('complete-li', { wo, li })}
+                      onDefer={() => onAction('defer-li', { wo, li })}
+                      onDecline={() => onAction('decline-li', { wo, li })}
+                    />
+                  ))}
+                </div>
+              )}
+
               {Array.isArray(wo.defects) && wo.defects.length > 0 && (
                 <div className="space-y-2">
                   <div className="text-[10px] text-navy-400 uppercase tracking-wide flex items-center gap-1.5">
@@ -1156,6 +1182,112 @@ function Field({ label, value, mono, small, warn }) {
     <div>
       <div className="text-[10px] text-navy-500 uppercase tracking-wide">{label}</div>
       <div className={`${small ? 'text-[11px]' : 'text-xs'} ${mono ? 'font-mono' : ''} ${warn ? 'text-accent-orange' : 'text-white'} truncate`}>{value || '—'}</div>
+    </div>
+  );
+}
+
+// ============================================================
+// Line item display + per-row actions (Stage 6 of the walkthrough)
+// ============================================================
+// Status → badge color. Mirrors the V2.0 line_item_status enum. The
+// `pending_cost_approval` and `pending_variance_reapproval` values are
+// schema-only in v2.0 (DORMANT per spec) but we map them anyway so the
+// row renders cleanly if any leak through from a future code path.
+const LI_STATUS_VARIANT = {
+  pending_scope_approval:      'gold',
+  pending_cost_approval:       'gold',
+  pending:                     'blue',
+  pending_variance_reapproval: 'gold',
+  done:                        'green',
+  deferred:                    'orange',
+  declined:                    'red',
+};
+const LI_CATEGORY_LABEL = {
+  defect_repair:    'Defect repair',
+  customer_request: 'Customer request',
+  vendor_addition:  'Vendor add',
+  recall:           'Recall',
+  overhead:         'Overhead',
+  uncategorized:    'Uncategorized',
+};
+
+function LineItemRow({ li, canAct, onComplete, onDefer, onDecline }) {
+  const { t } = useTranslation('dashboard');
+  const status = String(li.status || 'pending');
+  const isPending = status === 'pending'
+    || status === 'pending_scope_approval'
+    || status === 'pending_cost_approval'
+    || status === 'pending_variance_reapproval';
+  const showActions = canAct && isPending;
+  // Display the appropriate price for the row's lifecycle stage:
+  //   - Pending → estimate (price not yet final)
+  //   - Done    → final price (the actual)
+  //   - Deferred / Declined → estimate (final never landed)
+  const displayedPrice = status === 'done' ? li.finalPrice : li.estimatedPrice;
+  const priceLabel = displayedPrice != null
+    ? `$${Number(displayedPrice).toFixed(2)}`
+    : '—';
+
+  return (
+    <div className="rounded-lg bg-navy-800/40 border border-navy-700/40 p-3 space-y-2">
+      <div className="flex items-start gap-2 flex-wrap">
+        <div className="flex-1 min-w-0">
+          <div className="text-sm text-white">{li.description}</div>
+          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+            {li.category && (
+              <Badge variant="gray" size="md">
+                {t(`workOrders.lineItem.category.${li.category}`, LI_CATEGORY_LABEL[li.category] || li.category)}
+              </Badge>
+            )}
+            {li.billingType && (
+              <Badge variant={li.billingType === 'amr' ? 'green' : 'purple'} size="md">
+                {String(li.billingType).toUpperCase()}
+              </Badge>
+            )}
+            <Badge variant={LI_STATUS_VARIANT[status] || 'gray'} size="md">
+              {t(`workOrders.lineItem.statusBadge.${status}`, status.replace(/_/g, ' '))}
+            </Badge>
+            {li.declineReasonCode && (
+              <span className="text-[10px] font-mono text-accent-red/80">
+                {li.declineReasonCode}
+              </span>
+            )}
+          </div>
+          {li.statusReason && (
+            <div className="text-[11px] text-navy-300 italic mt-1">"{li.statusReason}"</div>
+          )}
+        </div>
+        <div className="text-right shrink-0">
+          <div className="text-[10px] text-navy-500 uppercase tracking-wide">
+            {status === 'done'
+              ? t('workOrders.lineItem.finalLabel', 'Final')
+              : t('workOrders.lineItem.estLabel', 'Est.')}
+          </div>
+          <div className="text-sm font-semibold text-white font-mono">{priceLabel}</div>
+        </div>
+      </div>
+      {showActions && (
+        <div className="flex items-center gap-1.5 pt-2 border-t border-navy-700/40">
+          <button
+            onClick={onComplete}
+            title={t('workOrders.lineItem.completeTitle', 'Mark this line item as Done (enter final price)')}
+            className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md bg-accent-green/15 border border-accent-green/40 text-accent-green text-[11px] font-semibold hover:bg-accent-green/25 cursor-pointer">
+            <CheckCircle2 size={11} /> {t('workOrders.lineItem.complete', 'Done')}
+          </button>
+          <button
+            onClick={onDefer}
+            title={t('workOrders.lineItem.deferTitle', 'Defer to a follow-up visit (parts unavailable, etc.). Auto-spawns a follow-up Repair Request when category=defect_repair.')}
+            className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md bg-accent-orange/15 border border-accent-orange/40 text-accent-orange text-[11px] font-semibold hover:bg-accent-orange/25 cursor-pointer">
+            <PauseCircle size={11} /> {t('workOrders.lineItem.defer', 'Defer')}
+          </button>
+          <button
+            onClick={onDecline}
+            title={t('workOrders.lineItem.declineTitle', 'Decline this line item — work won’t happen this visit')}
+            className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md bg-accent-red/15 border border-accent-red/40 text-accent-red text-[11px] font-semibold hover:bg-accent-red/25 cursor-pointer">
+            <XCircle size={11} /> {t('workOrders.lineItem.decline', 'Decline')}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1393,6 +1525,76 @@ export default function WorkOrders({ user }) {
         await applyDetail(wo.id);
       } catch (err) {
         alert(`Couldn't add RO: ${err?.detail || err?.message || 'unknown'}`);
+      }
+      return;
+    }
+    // Line-item-level actions — handled inline rather than via the WO-level
+    // modal queue. Each one re-fetches the WO detail on success so the row
+    // reflects the new status without a hard refresh.
+    if (type === 'complete-li') {
+      const { wo, li } = payload;
+      const raw = window.prompt(
+        t('workOrders.lineItem.promptFinalPrice', 'Final price for this line item (USD, e.g. 85.00):'),
+        li.estimatedPrice != null ? String(li.estimatedPrice) : '',
+      );
+      if (raw == null) return;  // cancelled
+      const parsed = Number(String(raw).replace(/[^0-9.\-]/g, ''));
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        alert(t('workOrders.lineItem.priceInvalid', 'Invalid price.'));
+        return;
+      }
+      try {
+        await woApi.patchLineItem(wo.id, li.id, { status: 'done', finalPrice: parsed });
+        await applyDetail(wo.id);
+      } catch (err) {
+        alert(`Couldn't complete line item: ${err?.detail || err?.message || 'unknown'}`);
+      }
+      return;
+    }
+    if (type === 'defer-li') {
+      const { wo, li } = payload;
+      const reason = window.prompt(
+        t('workOrders.lineItem.promptDeferReason',
+          'Why is this deferred? (leave blank for "parts unavailable")'),
+        '',
+      );
+      if (reason == null) return;  // cancelled
+      try {
+        const result = await woApi.deferLineItem(wo.id, li.id, {
+          reasonCode: 'parts_unavailable',
+          statusReason: reason.trim() || null,
+        });
+        await applyDetail(wo.id);
+        // Surface the auto-spawned follow-up RR so the DSP sees the chain.
+        if (result && result.id) {
+          alert(
+            t('workOrders.lineItem.deferOkFmt', {
+              defaultValue: 'Line item deferred. Backend auto-spawned a follow-up Repair Request for the brake-pads defect; it will appear in the DSP’s queue once parts arrive.',
+            })
+          );
+        }
+      } catch (err) {
+        alert(`Couldn't defer line item: ${err?.detail || err?.message || 'unknown'}`);
+      }
+      return;
+    }
+    if (type === 'decline-li') {
+      const { wo, li } = payload;
+      const reason = window.prompt(
+        t('workOrders.lineItem.promptDeclineReason',
+          'Why is this declined? (e.g. cost_too_high, safety_concern, customer_unreachable)'),
+        'cost_too_high',
+      );
+      if (reason == null) return;  // cancelled
+      const code = reason.trim() || 'other';
+      try {
+        await woApi.patchLineItem(wo.id, li.id, {
+          status: 'declined',
+          declineReasonCode: code,
+        });
+        await applyDetail(wo.id);
+      } catch (err) {
+        alert(`Couldn't decline line item: ${err?.detail || err?.message || 'unknown'}`);
       }
       return;
     }
