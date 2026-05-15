@@ -13,6 +13,7 @@ import { isDspRole, canInspect, canApproveDefects } from '../lib/permissions';
 import CreateInspectionWizard from './CreateInspectionWizard';
 import LiveInspectionReportCard from './LiveInspectionReportCard';
 import VendorPickerModal from './ui/VendorPickerModal';
+import ErrorBoundary from './ui/ErrorBoundary';
 import {
   inspections as inspectionsApi,
   vehicles as vehiclesApi,
@@ -4129,10 +4130,23 @@ export default function RealDVIC({ user }) {
         )}
         {showInspection && <InspectionReadinessModal onClose={() => setShowInspection(false)} />}
         {showStartInspection && (
-          <CreateInspectionWizard
-            user={user}
-            onClose={() => setShowStartInspection(false)}
-          />
+          // ErrorBoundary catches any unhandled render error inside the
+          // wizard subtree (PhotoUploader, DvicWizard, modal flows) and
+          // shows the user a recoverable error card with a "Try again"
+          // button instead of unmounting silently. Without this, an
+          // exception during e.g. the photo-commit render path causes
+          // React 18 to unmount the whole CreateInspectionWizard, which
+          // looks to the user like "the page kicked me to home" — the
+          // 2026-05-15 fire_extinguisher photo bug Jorge surfaced.
+          <ErrorBoundary
+            title={t('realDvic.wizardCrashTitle', 'Inspection wizard hit an unexpected error')}
+            body={t('realDvic.wizardCrashBody', "We caught it before it kicked you out. Try again to keep going where you left off, or close to start the inspection over.")}
+            onClose={() => setShowStartInspection(false)}>
+            <CreateInspectionWizard
+              user={user}
+              onClose={() => setShowStartInspection(false)}
+            />
+          </ErrorBoundary>
         )}
         {showRepairHistory && <RepairHistoryModal repairedWOs={repairedWOs} user={user} onClose={() => setShowRepairHistory(false)} />}
         {showFlexFleet && <FlexFleetModal onClose={() => setShowFlexFleet(false)} />}
