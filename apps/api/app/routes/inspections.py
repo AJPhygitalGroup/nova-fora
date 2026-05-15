@@ -10,7 +10,9 @@ embed defect-create payloads. The wizard flow:
 """
 from datetime import date, datetime, time, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import func, select
 
@@ -22,6 +24,10 @@ from app.models.inspection import (
     Inspection,
     InspectionResult,
     InspectionStatus,
+)
+from app.models.inspection_part_mark import (
+    InspectionPartMark,
+    InspectionPartMarkStatus,
 )
 from app.models.organization import Organization
 from app.models.photo import Photo, PhotoCategory
@@ -114,6 +120,23 @@ async def _build_inspection_response(
                 await _defect_response(session, d, vehicle, org, reporter)
             )
 
+    # Per-part pass/N/A marks for the new checklist UI. Returned as
+    # {part_value: status} so the client can compute each part's tile
+    # state in O(1) without a separate fetch.
+    mark_rows = (
+        await session.execute(
+            select(InspectionPartMark.part, InspectionPartMark.status).where(
+                InspectionPartMark.inspection_id == insp.id
+            )
+        )
+    ).all()
+    part_marks_map: dict[str, str] = {}
+    for part, status_val in mark_rows:
+        # status comes back as the enum or its raw value depending on driver;
+        # normalize to the string the client expects.
+        s = status_val.value if hasattr(status_val, "value") else str(status_val)
+        part_marks_map[str(part)] = s
+
     return InspectionResponse(
         id=insp.id_str,
         vehicle_id=vehicle.id_str if vehicle else "",
@@ -140,6 +163,7 @@ async def _build_inspection_response(
         submitted_at=insp.submitted_at,
         created_at=insp.created_at,
         defects=defect_items,
+        part_marks=part_marks_map,
     )
 
 
@@ -570,3 +594,222 @@ async def list_inspection_photos(
             )
         )
     return PhotoListResponse(items=items, total=len(items))
+
+
+# ─────────────────────────────────────────────────────
+# Part-mark endpoints — power the NOVABODY-style checklist UI.
+#
+# The walkaround tracks every part on the vehicle's catalog as one of:
+#   - "pass"   → explicit row in inspection_part_marks
+#   - "na"     → explicit row in inspection_part_marks
+#   - "defect" → implicit; computed from the defects table
+#
+# These two endpoints write the explicit pass/N/A marks. The defect
+# state is owned by POST /defects and read off Defect rows directly.
+# ─────────────────────────────────────────────────────
+
+
+class PartMarkRequest(BaseModel):
+    """Body for POST /inspections/{id}/part-marks — single-part toggle."""
+
+    part: str = Field(min_length=1, max_length=40)
+    status: InspectionPartMarkStatus
+
+    model_config = ConfigDict(use_enum_values=True, extra="forbid")
+
+
+class PassRemainingRequest(BaseModel):
+    """Body for POST /inspections/{id}/part-marks/pass-remaining.
+
+    Caller passes the full list of `parts` to consider for the bulk pass
+    (typically every part in the section the user is viewing). Server
+    inserts a `pass` mark for each part that doesn't already have a mark
+    or a defect on this inspection. Idempotent.
+    """
+
+    parts: list[str] = Field(min_length=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class PartMarkResponse(BaseModel):
+    inspection_id: str
+    part: str
+    status: str
+    marked_at: datetime
+    marked_by_id: int | None = None
+
+
+class PassRemainingResponse(BaseModel):
+    """Echo of which parts were written vs skipped, so the client can
+    flash a quick toast and update each affected row."""
+
+    inspection_id: str
+    inserted_parts: list[str]
+    skipped_parts: list[str]
+
+
+async def _load_inspection_for_writes(
+    session: AsyncSession, inspection_id: str, current: User
+) -> Inspection:
+    """Load + authz-check an inspection for write operations.
+
+    Rule: marks are mutable only while the inspection is DRAFT. Once
+    submitted the run is closed and the marks are historical. DSP_OWNER
+    can only touch their own org's inspections; site_admin sees all.
+    """
+    iid = _parse_inspection_id(inspection_id)
+    insp = (
+        await session.execute(select(Inspection).where(Inspection.id == iid))
+    ).scalar_one_or_none()
+    if insp is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "inspection not found")
+    insp_status_value = (
+        insp.status.value if hasattr(insp.status, "value") else str(insp.status)
+    )
+    if insp_status_value != InspectionStatus.DRAFT.value:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "cannot modify part marks on a submitted inspection",
+        )
+    if (
+        current.role == UserRole.DSP_OWNER
+        and insp.dsp_id != current.organization_id
+    ):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not your inspection")
+    return insp
+
+
+@router.post(
+    "/{inspection_id}/part-marks",
+    response_model=PartMarkResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Mark a single part as pass / N/A on an active inspection",
+)
+async def mark_inspection_part(
+    body: PartMarkRequest,
+    inspection_id: str = Path(..., examples=["INS-00042"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> PartMarkResponse:
+    """Upsert a (inspection_id, part, status) row.
+
+    Re-tapping the same part with a different status (e.g. pass → N/A)
+    overwrites the prior mark via Postgres ON CONFLICT DO UPDATE.
+    """
+    insp = await _load_inspection_for_writes(session, inspection_id, current)
+
+    # Reject any part that already has defects on this inspection —
+    # silently flipping a defected part to pass would mask real work.
+    has_defect = (
+        await session.execute(
+            select(func.count())
+            .select_from(Defect)
+            .where(Defect.inspection_id == insp.id)
+            .where(Defect.part == body.part)
+        )
+    ).scalar_one()
+    if has_defect:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"part {body.part!r} has defects on this inspection; remove them "
+            "before marking pass/na",
+        )
+
+    status_value = (
+        body.status.value if hasattr(body.status, "value") else str(body.status)
+    )
+
+    now = utc_now()
+    stmt = pg_insert(InspectionPartMark.__table__).values(
+        inspection_id=insp.id,
+        part=body.part,
+        status=status_value,
+        marked_at=now,
+        marked_by_id=current.id,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["inspection_id", "part"],
+        set_={
+            "status": stmt.excluded.status,
+            "marked_at": stmt.excluded.marked_at,
+            "marked_by_id": stmt.excluded.marked_by_id,
+        },
+    )
+    await session.execute(stmt)
+    await session.commit()
+
+    return PartMarkResponse(
+        inspection_id=insp.id_str,
+        part=body.part,
+        status=status_value,
+        marked_at=now,
+        marked_by_id=current.id,
+    )
+
+
+@router.post(
+    "/{inspection_id}/part-marks/pass-remaining",
+    response_model=PassRemainingResponse,
+    summary="Bulk-mark every still-unmarked part in the request as pass",
+)
+async def pass_remaining_parts(
+    body: PassRemainingRequest,
+    inspection_id: str = Path(..., examples=["INS-00042"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> PassRemainingResponse:
+    """Bulk-pass the unmarked parts of a section.
+
+    Server filters out parts that already have a mark OR a defect, then
+    bulk-inserts `pass` for the remainder. Returns inserted vs skipped
+    so the UI can update each affected row individually.
+    """
+    insp = await _load_inspection_for_writes(session, inspection_id, current)
+
+    requested = list(dict.fromkeys(body.parts))  # dedup, preserve order
+
+    existing_marks = (
+        await session.execute(
+            select(InspectionPartMark.part).where(
+                InspectionPartMark.inspection_id == insp.id
+            )
+        )
+    ).scalars().all()
+    marked_set = {str(p) for p in existing_marks}
+
+    defected = (
+        await session.execute(
+            select(Defect.part)
+            .where(Defect.inspection_id == insp.id)
+            .where(Defect.part.in_(requested))
+        )
+    ).scalars().all()
+    defected_set = {str(p) for p in defected}
+
+    inserted: list[str] = []
+    skipped: list[str] = []
+    now = utc_now()
+    for part in requested:
+        if part in marked_set or part in defected_set:
+            skipped.append(part)
+            continue
+        stmt = pg_insert(InspectionPartMark.__table__).values(
+            inspection_id=insp.id,
+            part=part,
+            status=InspectionPartMarkStatus.PASS.value,
+            marked_at=now,
+            marked_by_id=current.id,
+        ).on_conflict_do_nothing(index_elements=["inspection_id", "part"])
+        await session.execute(stmt)
+        inserted.append(part)
+
+    if inserted:
+        await session.commit()
+
+    return PassRemainingResponse(
+        inspection_id=insp.id_str,
+        inserted_parts=inserted,
+        skipped_parts=skipped,
+    )
+
