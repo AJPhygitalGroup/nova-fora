@@ -37,10 +37,6 @@ from app.models.inspection import (
     InspectionStatus,
     OdometerSource,
 )
-from app.models.inspection_part_mark import (
-    InspectionPartMark,
-    InspectionPartMarkStatus,
-)
 from app.models.invitation import Invitation, InvitationStatus
 from app.models.organization import OrgType, Organization
 from app.models.photo import Photo, PhotoCategory
@@ -94,8 +90,6 @@ __all__ = [
     "DvicTemplateItem",
     # Inspections
     "Inspection",
-    "InspectionPartMark",
-    "InspectionPartMarkStatus",
     "InspectionResult",
     "InspectionRule",
     "InspectionRuleLine",

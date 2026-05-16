@@ -384,38 +384,6 @@ export const inspections = {
   },
 
   /**
-   * POST /inspections/{id}/part-marks — mark a single part as pass/N/A.
-   * body: { part: 'headlight', status: 'pass' | 'na' }
-   * Re-tapping the same part with a different status overwrites the
-   * previous mark (UPSERT on the composite PK). Throws 409 if the part
-   * already has defects on this inspection — caller should remove the
-   * defects first.
-   */
-  markPart(id, body) {
-    return apiFetch(`/inspections/${encodeURIComponent(id)}/part-marks`, {
-      method: 'POST',
-      body: JSON.stringify(camelToSnake(body)),
-    });
-  },
-
-  /**
-   * POST /inspections/{id}/part-marks/pass-remaining — bulk-pass.
-   * body: { parts: ['headlight', 'tail_light', ...] }
-   * Server filters out parts that already have a mark or a defect, then
-   * inserts `pass` for the remainder. Returns:
-   *   { insertedParts: [...], skippedParts: [...] }
-   */
-  passRemainingParts(id, parts) {
-    return apiFetch(
-      `/inspections/${encodeURIComponent(id)}/part-marks/pass-remaining`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ parts }),
-      },
-    );
-  },
-
-  /**
    * POST /inspections — create.
    * If body.defects is empty/missing → DRAFT. Otherwise → SUBMITTED atomic.
    * The wizard always creates DRAFT, then incrementally adds defects+photos.
