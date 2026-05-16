@@ -241,21 +241,11 @@ export default function PhotoUploader({
 
   return (
     <div className="relative">
-      {/*
-        BUG MITIGATION (2026-05-15): removed `capture="environment"` to
-        stop Android Chrome from killing the WebView when the OS camera
-        intent fires. Reported on a Pixel-class Android: after taking
-        the odometer photo the page reloaded and the inspection wizard
-        landed back on the home view (state lost from RAM).
-
-        Without `capture`, mobile browsers show the standard picker
-        ("Take photo / Choose from gallery") which keeps the WebView
-        alive — one extra tap, but no eviction risk.
-      */}
       <input
         ref={inputRef}
         type="file"
         accept="image/*"
+        capture="environment"
         multiple
         hidden
         onChange={(e) => {
