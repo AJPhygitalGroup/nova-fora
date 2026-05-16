@@ -483,21 +483,23 @@ export default function InspectionChecklist({
             )}
 
             {pageTotal > 1 && (
-              <div className="mt-3 flex items-center justify-between text-[11px] text-navy-400">
+              <div className="mt-4 flex items-center justify-between gap-3">
                 <button
                   disabled={activePage === 0}
                   onClick={() => setPageBySection((m) => ({ ...m, [activeSection]: Math.max(0, activePage - 1) }))}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded text-navy-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-lg bg-navy-800 border border-navy-600 text-white text-sm font-semibold hover:bg-navy-700 hover:border-accent-blue/50 active:bg-navy-700 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors"
                 >
-                  <ChevronLeft size={12} /> {t('checklist.prev', 'Prev')}
+                  <ChevronLeft size={16} /> {t('checklist.prev', 'Prev')}
                 </button>
-                <span>{t('checklist.pageFmt', { page: activePage + 1, total: pageTotal, defaultValue: `Page ${activePage + 1} of ${pageTotal}` })}</span>
+                <span className="text-xs font-semibold text-navy-300 bg-navy-800/60 px-3 py-1.5 rounded-full">
+                  {t('checklist.pageFmt', { page: activePage + 1, total: pageTotal, defaultValue: `Page ${activePage + 1} of ${pageTotal}` })}
+                </span>
                 <button
                   disabled={activePage >= pageTotal - 1}
                   onClick={() => setPageBySection((m) => ({ ...m, [activeSection]: Math.min(pageTotal - 1, activePage + 1) }))}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded text-navy-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-lg bg-accent-blue text-white text-sm font-semibold hover:opacity-90 active:opacity-80 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-opacity shadow-md shadow-accent-blue/20"
                 >
-                  {t('checklist.next', 'Next')} <ChevronRight size={12} />
+                  {t('checklist.next', 'Next')} <ChevronRight size={16} />
                 </button>
               </div>
             )}
@@ -505,38 +507,49 @@ export default function InspectionChecklist({
         )}
       </div>
 
-      {/* Sticky complete bar — only visible when 100% marked */}
-      <AnimatePresence>
-        {allMarked && onComplete && (
-          <motion.div
-            initial={{ y: 80, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 80, opacity: 0 }}
-            className="fixed bottom-0 left-0 right-0 z-40 bg-navy-950/95 backdrop-blur border-t border-navy-800 px-4 py-3"
-          >
-            <div className="max-w-2xl mx-auto flex items-center gap-3">
-              <span className="text-[11px] text-navy-400 hidden sm:inline">
-                {t('checklist.allMarkedHint', 'All parts marked. Submit when ready.')}
-              </span>
-              <button
-                onClick={onComplete}
-                disabled={submitting}
-                className="ml-auto inline-flex items-center gap-2 px-5 py-2.5 rounded-md bg-accent-green text-white font-semibold text-sm hover:opacity-90 disabled:opacity-40 cursor-pointer shadow-lg shadow-accent-green/20"
-              >
-                {submitting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                {submitting
-                  ? t('checklist.submitting', 'Submitting…')
-                  : t('checklist.completeFmt', { marked: totalCount.marked, total: totalCount.total, defaultValue: `Complete inspection · ${totalCount.marked}/${totalCount.total}` })}
-              </button>
-            </div>
-            {submitError && (
-              <div className="mt-2 px-3 py-2 rounded-md bg-accent-red/10 border border-accent-red/40 text-[11px] text-accent-red max-w-2xl mx-auto">
-                {submitError}
+      {/* Sticky complete bar — ALWAYS visible so the inspector sees
+          progress + the final submit target. Disabled until every part
+          across every section has a pass / N/A / defect mark. */}
+      {onComplete && (
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-navy-950/95 backdrop-blur border-t border-navy-800 px-4 py-3">
+          <div className="max-w-2xl mx-auto flex items-center gap-3">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 text-[11px] text-navy-300 font-semibold uppercase tracking-wide mb-1">
+                <span>{t('checklist.progressLabel', 'Progress')}</span>
+                <span className="text-white">{totalCount.marked}/{totalCount.total}</span>
               </div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
+              <div className="h-1.5 rounded-full bg-navy-800 overflow-hidden">
+                <div
+                  className={`h-full transition-all duration-300 ${allMarked ? 'bg-accent-green' : 'bg-accent-blue'}`}
+                  style={{ width: totalCount.total > 0 ? `${(totalCount.marked / totalCount.total) * 100}%` : '0%' }}
+                />
+              </div>
+            </div>
+            <button
+              onClick={onComplete}
+              disabled={!allMarked || submitting}
+              className={`shrink-0 inline-flex items-center gap-2 px-5 py-3 rounded-lg font-semibold text-sm cursor-pointer shadow-lg transition-all ${
+                allMarked && !submitting
+                  ? 'bg-accent-green text-white hover:opacity-90 shadow-accent-green/30'
+                  : 'bg-navy-800 text-navy-500 cursor-not-allowed shadow-none'
+              }`}
+              title={!allMarked ? t('checklist.completeBlocked', { remaining: totalCount.total - totalCount.marked, defaultValue: `${totalCount.total - totalCount.marked} part(s) still need a check` }) : undefined}
+            >
+              {submitting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+              {submitting
+                ? t('checklist.submitting', 'Submitting…')
+                : allMarked
+                  ? t('checklist.submitReady', 'Submit inspection')
+                  : t('checklist.submitWaiting', { remaining: totalCount.total - totalCount.marked, defaultValue: `${totalCount.total - totalCount.marked} left` })}
+            </button>
+          </div>
+          {submitError && (
+            <div className="mt-2 px-3 py-2 rounded-md bg-accent-red/10 border border-accent-red/40 text-[11px] text-accent-red max-w-2xl mx-auto">
+              {submitError}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Defect detail sheet — slides up from the bottom on chip tap */}
       <AnimatePresence>
