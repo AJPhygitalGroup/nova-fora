@@ -53,9 +53,55 @@ function todayUtcDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// ─── Session persistence (Android Chrome WebView eviction recovery) ──
+// Mobile Chrome can kill the WebView when the camera intent launches, so
+// when the inspector returns from picking a defect photo the entire app
+// reloads and any wizard state held only in React memory is lost. We
+// snapshot the wizard's "in-flight" state to sessionStorage on every
+// meaningful change and restore it on mount. sessionStorage survives a
+// reload-within-the-same-tab but is wiped when the tab closes, so a
+// stale snapshot can't leak across unrelated sessions.
+//
+// Snapshots older than SS_TTL_MS are ignored — the inspector is unlikely
+// to genuinely return to a 30-minute-old wizard, and a stale snapshot
+// would just confuse them.
+const SS_KEY = 'nf-wizard-state';
+const SS_TTL_MS = 30 * 60 * 1000;  // 30 minutes
+
+function loadSavedWizardState() {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(SS_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data?.timestamp || Date.now() - data.timestamp > SS_TTL_MS) {
+      sessionStorage.removeItem(SS_KEY);
+      return null;
+    }
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+export function hasSavedWizardState() {
+  return !!loadSavedWizardState();
+}
+
+export function clearSavedWizardState() {
+  if (typeof window === 'undefined') return;
+  try { sessionStorage.removeItem(SS_KEY); } catch { /* ignore */ }
+}
+
 // ─────────────────────────────────────────────────────
 export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
   const { t } = useTranslation('wizard');
+
+  // Snapshot from the last session (if any) — used to lazily initialize
+  // the state hooks below so a reload mid-inspection lands the inspector
+  // back where they were instead of at step 1.
+  const _saved = useState(loadSavedWizardState)[0];
+
   // Phase-based state machine. Within `inspecting` phase, `step` 1-6 walks
   // through DSP/keys/vehicle/odometer/sections/review for ONE vehicle.
   // (Key recorder is step 2 — done ONCE per session and reused.)
@@ -63,12 +109,12 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
   //   - postSubmit: 3-action chooser (next van / switch DSP / complete fleet)
   //   - completeWarning: shown when user clicks Complete with vans pending
   //   - fleetDone: terminal celebration screen
-  const [phase, setPhase] = useState('inspecting');
+  const [phase, setPhase] = useState(_saved?.phase ?? 'inspecting');
   // 1=DSP, 2=keys, 3=vehicle, 4=start-or-skip gate, 5=odometer,
   // 6=DvicWizard (section hub + Complete Inspection submits the whole thing).
   // The dedicated review step was folded into the DvicWizard hub — the tech
   // sees the running defect list right there and submits in one tap.
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState(_saved?.step ?? 1);
 
   // Fleet data — fetched once at mount, refetched after submit so the
   // "remaining" calculation reflects the latest server state.
@@ -76,23 +122,23 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
   const [vehiclesLoading, setVehiclesLoading] = useState(true);
 
   // Per-inspection state (resets every time we start a new vehicle)
-  const [vehicle, setVehicle] = useState(null);
-  const [odometer, setOdometer] = useState('');
-  const [inspectionId, setInspectionId] = useState(null);
+  const [vehicle, setVehicle] = useState(_saved?.vehicle ?? null);
+  const [odometer, setOdometer] = useState(_saved?.odometer ?? '');
+  const [inspectionId, setInspectionId] = useState(_saved?.inspectionId ?? null);
   const [creatingDraft, setCreatingDraft] = useState(false);
   const [createError, setCreateError] = useState(null);
   // v2 schema: flat list of defects (no sections — they're derived from part).
   // Each item: { id, partLabel, partIcon, positionLabel, defectTypeLabel,
   //              defectTypeIcon, severity, photos: [], _v2: true }
-  const [defects, setDefects] = useState([]);
+  const [defects, setDefects] = useState(_saved?.defects ?? []);
   // (DvicWizard now renders inline at step 6 instead of as an on-demand
   // overlay — no separate "open" flag needed.)
 
   // Session-wide state (kept across multiple inspections in one shift)
-  const [dsp, setDsp] = useState(null);  // {id, numericId, name, count}
-  const [keysReceived, setKeysReceived] = useState('');  // string for input ergonomics
-  const [keysConfirmed, setKeysConfirmed] = useState(false);  // tech tapped 'Continue' on the keys step
-  const [inspectedSession, setInspectedSession] = useState([]); // {vehicleId, fleetId, defectCount, result}[]
+  const [dsp, setDsp] = useState(_saved?.dsp ?? null);  // {id, numericId, name, count}
+  const [keysReceived, setKeysReceived] = useState(_saved?.keysReceived ?? '');  // string for input ergonomics
+  const [keysConfirmed, setKeysConfirmed] = useState(_saved?.keysConfirmed ?? false);  // tech tapped 'Continue' on the keys step
+  const [inspectedSession, setInspectedSession] = useState(_saved?.inspectedSession ?? []); // {vehicleId, fleetId, defectCount, result}[]
 
   // Submit state
   const [submitting, setSubmitting] = useState(false);
@@ -121,6 +167,26 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
       .catch((err) => console.error('vehicles load failed', err))
       .finally(() => setVehiclesLoading(false));
   }, []);
+
+  // ─── Snapshot wizard state to sessionStorage on each change ───
+  // Skip persistence while phase has moved past 'inspecting' (the user
+  // already submitted — restoring would be confusing) and skip while
+  // there's literally nothing in flight (no DSP picked yet).
+  useEffect(() => {
+    if (phase !== 'inspecting') return;
+    if (!dsp && !vehicle && !inspectionId) return;
+    try {
+      sessionStorage.setItem(SS_KEY, JSON.stringify({
+        timestamp: Date.now(),
+        step, phase, dsp, vehicle, inspectionId,
+        keysReceived, keysConfirmed, odometer,
+        defects, inspectedSession,
+      }));
+    } catch (e) {
+      // QuotaExceeded or serialization failure — non-fatal.
+      console.warn('wizard state save failed', e);
+    }
+  }, [step, phase, dsp, vehicle, inspectionId, keysReceived, keysConfirmed, odometer, defects, inspectedSession]);
 
   // ─── Derive list of DSPs the user has access to ────
   // For now we derive from the vehicles list (any DSP with >=1 visible van).
@@ -371,6 +437,7 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
       ));
       if (!ok) return;
     }
+    clearSavedWizardState();
     onClose?.();
   }, [hasUnsavedProgress, onClose, t]);
 
@@ -399,6 +466,9 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
       // Server now has one more inspection today → refresh the cache so
       // the "remaining" count goes down before the postSubmit screen renders.
       await refreshTodayInspections();
+      // Inspection submitted — wipe the snapshot so a refresh doesn't
+      // bounce the user back into a stale draft.
+      clearSavedWizardState();
       setPhase('postSubmit');
       onSubmitted?.(final);
     } catch (err) {

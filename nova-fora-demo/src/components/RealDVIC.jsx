@@ -10,7 +10,7 @@ import Badge from './ui/Badge';
 import { FlexFleetModal, VehicleReportCard, CreateWorkOrderModal } from './FleetSnapshot';
 import { fleetSnapshotVans } from '../data/mockData';
 import { isDspRole, canInspect, canApproveDefects } from '../lib/permissions';
-import CreateInspectionWizard from './CreateInspectionWizard';
+import CreateInspectionWizard, { hasSavedWizardState } from './CreateInspectionWizard';
 import LiveInspectionReportCard from './LiveInspectionReportCard';
 import VendorPickerModal from './ui/VendorPickerModal';
 import {
@@ -3438,7 +3438,13 @@ export default function RealDVIC({ user }) {
   const [openCard, setOpenCard] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showInspection, setShowInspection] = useState(false);
-  const [showStartInspection, setShowStartInspection] = useState(false);
+  // Auto-reopen the wizard if the inspector got bounced out by an
+  // Android Chrome WebView eviction mid-inspection — the wizard
+  // snapshots its state to sessionStorage on every change, so a recent
+  // snapshot means "we were inspecting when the tab died, get back to
+  // it." See CreateInspectionWizard's SS_KEY block for the snapshot
+  // shape + TTL.
+  const [showStartInspection, setShowStartInspection] = useState(hasSavedWizardState);
   const [showRepairHistory, setShowRepairHistory] = useState(false);
   const [showFlexFleet, setShowFlexFleet] = useState(false);
   const [vehicleReportVan, setVehicleReportVan] = useState(null);

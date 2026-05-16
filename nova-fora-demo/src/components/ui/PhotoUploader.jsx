@@ -245,7 +245,15 @@ export default function PhotoUploader({
         ref={inputRef}
         type="file"
         accept="image/*"
-        capture="environment"
+        // NB: no `capture="environment"` — that attribute forces Android
+        // Chrome to launch the native camera intent directly, which is
+        // the main trigger of the WebView eviction that kills our
+        // wizard mid-inspection. Without it, the user still gets the
+        // OS picker that offers Camera + Gallery, so they can pick the
+        // less risky path on a memory-constrained phone. Wizard state
+        // also snapshots to sessionStorage now, so even if the camera
+        // path is taken and the WebView dies, the inspector lands back
+        // on the same step on reload.
         multiple
         hidden
         onChange={(e) => {
