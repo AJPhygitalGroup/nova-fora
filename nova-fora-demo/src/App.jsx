@@ -1,3 +1,8 @@
+// Build cache-buster: 2026-05-15 EDT — net code diff between 9fbad0c
+// and f81b82c is zero (added then reverted my changes), so Vite was
+// emitting the exact same bundle hash and EasyPanel kept serving the
+// old artifact. This comment forces a content-hash flip on the next
+// build so production picks up the redeploy.
 import { useState, useEffect } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import Layout from './components/Layout';
