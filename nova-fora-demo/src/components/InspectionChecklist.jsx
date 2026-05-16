@@ -482,7 +482,7 @@ export default function InspectionChecklist({
 // ═════════════════════════════════════════════════════
 function Shell({ title, children, onClose, onBack }) {
   return (
-    <div className="flex flex-col min-h-screen bg-navy-950">
+    <div className="fixed inset-0 z-[60] flex flex-col bg-navy-950 overflow-y-auto">
       <div className="sticky top-0 z-30 bg-navy-950/95 backdrop-blur border-b border-navy-800 px-4 py-3 flex items-center gap-3">
         {onBack && (
           <button
