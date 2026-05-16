@@ -245,15 +245,15 @@ export default function PhotoUploader({
         ref={inputRef}
         type="file"
         accept="image/*"
-        // NB: no `capture="environment"` — that attribute forces Android
-        // Chrome to launch the native camera intent directly, which is
-        // the main trigger of the WebView eviction that kills our
-        // wizard mid-inspection. Without it, the user still gets the
-        // OS picker that offers Camera + Gallery, so they can pick the
-        // less risky path on a memory-constrained phone. Wizard state
-        // also snapshots to sessionStorage now, so even if the camera
-        // path is taken and the WebView dies, the inspector lands back
-        // on the same step on reload.
+        // capture="environment" launches the rear camera directly on
+        // mobile. We keep it because the inspector's workflow requires
+        // a live photo (gallery uploads defeat the purpose of a
+        // walkaround inspection — they're proof you actually saw the
+        // defect at the van). The Android Chrome WebView eviction this
+        // sometimes triggers is now mitigated by CreateInspectionWizard's
+        // sessionStorage snapshot — on reload after eviction the wizard
+        // re-opens at the exact step the inspector left.
+        capture="environment"
         multiple
         hidden
         onChange={(e) => {
