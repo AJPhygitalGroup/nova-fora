@@ -158,40 +158,30 @@ export default function InspectionChecklist({
 
   // ─── Derived: parts per section ───────────────────────────────
   // The DVIC template lists each (section, category, item) tuple — each
-  // item references a part value. Collect distinct part values per
-  // section, then resolve them against the catalog to get full part
-  // objects (with appearances + defect_types). A part listed in multiple
-  // sections lands in the FIRST one it appears in (route order).
+  // item references a part value plus a position (e.g. "driver_front",
+  // "passenger_front"). Each section shows the DISTINCT parts the
+  // template lists for it — driver_side and passenger_side intentionally
+  // overlap (same wheel_nut, tire, side_mirror, etc.) because the
+  // inspector walks both sides physically and needs to confirm each.
+  //
+  // partMarks is still keyed by part value, so a Pass on tire@driver_side
+  // also marks tire@passenger_side as passed; per-position marking is a
+  // follow-up that would need a (part, position) composite key.
   const partsBySection = useMemo(() => {
     if (!cat || !tpl) return {};
-    const seen = new Set();
-    const partIdsBySection = {};
-    // Walk template sections in their route order so a part in driver +
-    // passenger sides lands in driver first.
-    const orderedTplSections = [...(tpl.sections || [])].sort((a, b) => {
-      const ai = SECTION_ROUTE_INDEX[a.id] ?? 999;
-      const bi = SECTION_ROUTE_INDEX[b.id] ?? 999;
-      return ai - bi;
-    });
-    for (const section of orderedTplSections) {
-      const ids = [];
+    const out = {};
+    for (const section of tpl.sections || []) {
+      const seen = new Set();  // dedupe within a single section only
+      const objs = [];
       for (const cat0 of section.categories || []) {
         for (const item of cat0.items || []) {
           if (!item.part || seen.has(item.part)) continue;
           seen.add(item.part);
-          ids.push(item.part);
+          const partObj = cat.parts.find((p) => p.id === item.part);
+          if (partObj) objs.push(partObj);
         }
       }
-      partIdsBySection[section.id] = ids;
-    }
-    // Resolve to part objects from the catalog (catalog has the
-    // appearances + defect_types that chips need).
-    const out = {};
-    for (const [secId, ids] of Object.entries(partIdsBySection)) {
-      const objs = ids
-        .map((pid) => cat.parts.find((p) => p.id === pid))
-        .filter(Boolean);
-      out[secId] = objs;
+      out[section.id] = objs;
     }
     return out;
   }, [cat, tpl]);
