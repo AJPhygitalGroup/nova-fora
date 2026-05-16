@@ -88,7 +88,14 @@ const NO_PHOTO_PARTS = new Set([
   'horn',
   'backup_alarm',
   'seatbelt_alarm',
-  'interior_cleanliness',  // covers both "Dirty" and "Odor" defect types
+]);
+
+// Finer-grained exemptions when an entire part is photo-required but
+// one specific defect_type isn't. Keyed as `${partId}/${defectTypeId}`.
+// Example: interior_cleanliness/Dirty still wants a photo (proof of the
+// mess), but interior_cleanliness/Odor obviously can't be photographed.
+const NO_PHOTO_DEFECT_PAIRS = new Set([
+  'interior_cleanliness/odor',
 ]);
 
 
@@ -709,8 +716,13 @@ function DefectDetailSheet({
   const positionRequired = !!defectType?.positionRequired;
   const allowNullPosition = defectType?.allowNullPosition !== false;
   // Override: sensory/audible parts (parking brake, A/C, horn, etc.)
-  // never need a photo, regardless of what the catalog says.
-  const requiresPhoto = NO_PHOTO_PARTS.has(partId)
+  // never need a photo, plus specific (part, defect_type) pairs like
+  // interior_cleanliness/Odor where the part overall can be
+  // photographed but this defect_type can't.
+  const requiresPhoto = (
+    NO_PHOTO_PARTS.has(partId)
+    || NO_PHOTO_DEFECT_PAIRS.has(`${partId}/${defectTypeId}`)
+  )
     ? false
     : defectType?.requiresPhoto !== false;  // default true
   const detailsSchema = defectType?.detailsSchema || {};
