@@ -55,24 +55,54 @@ import {
 import { orderPartsByWalkaround } from '../lib/walkaroundOrder';
 import PhotoUploader from './ui/PhotoUploader';
 
-// Inspection route — same order as DvicWizard's enforcement (the user
-// explicitly kept this on 2026-05-15: General → In Cab → Front → Driver
-// → Back → Passenger). Tabs render in this order; non-route systems
-// (ev_powertrain on EV, air_brake on DOT) appear at the END.
+// Virtual inspection route — the user's preferred 6-tab grouping
+// (2026-05-15): General → In Cab → Front → Driver → Back → Passenger.
+// The V2.2 catalog returns parts grouped by 15 functional systems
+// (tires_wheels, lights, interior, etc.), so each virtual section
+// aggregates parts from one or more catalog systems. Systems not
+// listed here fall back to an "Other" tab at the end (currently only
+// ev_powertrain for the EV class).
+//
+// Tabs with zero parts on the active vehicle class are hidden.
 const SECTION_ROUTE = [
-  'general',
-  'in_cab',
-  'front_side',
-  'driver_side',
-  'back_side',
-  'passenger_side',
+  {
+    id: 'general',
+    label: 'General',
+    systems: ['compliance', 'fluids_under_hood'],
+  },
+  {
+    id: 'in_cab',
+    label: 'In Cab',
+    systems: ['interior', 'hvac', 'brakes_steering', 'cameras_electronics', 'air_brake'],
+  },
+  {
+    id: 'front_side',
+    label: 'Front',
+    systems: ['lights', 'windshield_wipers', 'mirrors'],
+  },
+  {
+    id: 'driver_side',
+    label: 'Driver Side',
+    systems: ['tires_wheels', 'body_steps'],
+  },
+  {
+    id: 'back_side',
+    label: 'Back',
+    systems: ['doors_windows', 'under_vehicle'],
+  },
+  {
+    id: 'passenger_side',
+    label: 'Passenger Side',
+    systems: [],
+  },
 ];
 const PARTS_PER_PAGE = 5;
 
-// V2.2 system IDs that aren't in SECTION_ROUTE but exist in the catalog
-// for some classes. We render a tab for each that has parts on the
-// active vehicle class, after the route ones.
-const SECTION_ROUTE_SET = new Set(SECTION_ROUTE);
+// Flat set of all catalog system IDs covered by SECTION_ROUTE — used
+// to find any remaining systems that need an "Other" fallback tab.
+const SECTION_ROUTE_SYSTEM_SET = new Set(
+  SECTION_ROUTE.flatMap((s) => s.systems),
+);
 
 
 // ═════════════════════════════════════════════════════
@@ -100,7 +130,7 @@ export default function InspectionChecklist({
   const [catError, setCatError] = useState(null);
 
   // Active section tab + active page within that section.
-  const [activeSection, setActiveSection] = useState(SECTION_ROUTE[0]);
+  const [activeSection, setActiveSection] = useState(SECTION_ROUTE[0].id);
   const [pageBySection, setPageBySection] = useState({});  // {sectionId: pageIdx}
 
   // Local copy of part marks. Seeded from the inspection detail on mount;
@@ -143,31 +173,51 @@ export default function InspectionChecklist({
   }, [inspectionId]);
 
   // ─── Derived: parts per section ───────────────────────────────
-  // Build the visible-tabs list (route order first, then any non-route
-  // system that has parts on this class).
-  const tabs = useMemo(() => {
-    if (!cat) return [];
-    const inRoute = SECTION_ROUTE
-      .map((id) => cat.systems.find((s) => s.id === id))
-      .filter(Boolean);
-    const extras = cat.systems
-      .filter((s) => !SECTION_ROUTE_SET.has(s.id))
-      .filter((s) => (cat.partsBySystem?.[s.id] || []).length > 0);
-    return [...inRoute, ...extras];
-  }, [cat]);
-
-  // Map section_id → ordered list of part objects (curated walkaround
-  // order, fallback alphabetical).
+  // Map virtual section ID → ordered list of part objects, aggregating
+  // across the catalog systems each virtual section groups.
   const partsBySection = useMemo(() => {
     if (!cat) return {};
     const out = {};
+    // First pass: virtual sections from SECTION_ROUTE
+    for (const route of SECTION_ROUTE) {
+      const all = [];
+      for (const sysId of route.systems) {
+        const partIds = cat.partsBySystem?.[sysId] || [];
+        const partObjs = partIds
+          .map((pid) => cat.parts.find((p) => p.id === pid))
+          .filter(Boolean);
+        all.push(...orderPartsByWalkaround(partObjs, vehicleClass, sysId));
+      }
+      out[route.id] = all;
+    }
+    // Second pass: any catalog systems not covered by SECTION_ROUTE
+    // (e.g. ev_powertrain on EV class) get their own "_other_{sysId}" tab.
     for (const sys of cat.systems) {
+      if (SECTION_ROUTE_SYSTEM_SET.has(sys.id)) continue;
       const partIds = cat.partsBySystem?.[sys.id] || [];
-      const partObjs = partIds.map((pid) => cat.parts.find((p) => p.id === pid)).filter(Boolean);
-      out[sys.id] = orderPartsByWalkaround(partObjs, vehicleClass, sys.id);
+      if (partIds.length === 0) continue;
+      const partObjs = partIds
+        .map((pid) => cat.parts.find((p) => p.id === pid))
+        .filter(Boolean);
+      out[`_extra_${sys.id}`] = orderPartsByWalkaround(partObjs, vehicleClass, sys.id);
     }
     return out;
   }, [cat, vehicleClass]);
+
+  // Build the visible-tabs list. Hide route sections that have zero
+  // parts on this vehicle class; append any extra (non-route) systems
+  // as their own tabs at the end.
+  const tabs = useMemo(() => {
+    if (!cat) return [];
+    const routeTabs = SECTION_ROUTE
+      .filter((route) => (partsBySection[route.id] || []).length > 0)
+      .map((route) => ({ id: route.id, label: route.label }));
+    const extraTabs = cat.systems
+      .filter((s) => !SECTION_ROUTE_SYSTEM_SET.has(s.id))
+      .filter((s) => (cat.partsBySystem?.[s.id] || []).length > 0)
+      .map((s) => ({ id: `_extra_${s.id}`, label: s.label }));
+    return [...routeTabs, ...extraTabs];
+  }, [cat, partsBySection]);
 
   // Map: part value → 'unmarked' | 'pass' | 'na' | 'defect'
   const partStatus = useMemo(() => {
@@ -183,6 +233,16 @@ export default function InspectionChecklist({
     }
     return out;
   }, [defects, partMarks]);
+
+  // If the active section is no longer in the visible tabs (e.g. it
+  // had zero parts on this vehicle class), jump to the first visible
+  // tab so the pane has something to render.
+  useEffect(() => {
+    if (tabs.length === 0) return;
+    if (!tabs.some((t) => t.id === activeSection)) {
+      setActiveSection(tabs[0].id);
+    }
+  }, [tabs, activeSection]);
 
   // Per-section counts (used in tab badges + complete bar).
   const sectionCounts = useMemo(() => {
