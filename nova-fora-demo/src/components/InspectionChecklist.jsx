@@ -140,6 +140,11 @@ export default function InspectionChecklist({
   // Inline error band at the top of the active pane (pass/N/A failures).
   const [inlineError, setInlineError] = useState(null);
 
+  // Whether the running defect log (above the sticky progress bar) is
+  // expanded. Collapsed by default so the chip strip area isn't cramped
+  // on a phone; tapping the "N defects" pill flips it open.
+  const [defectsExpanded, setDefectsExpanded] = useState(false);
+
   // ─── Load catalog + DVIC template + initial part marks ────────
   // The catalog drives chip strips + defect detail (defect_types per part,
   // photo requirements, etc.). The DVIC template drives the section→parts
@@ -509,49 +514,110 @@ export default function InspectionChecklist({
 
       {/* Sticky bottom bar — progress is ALWAYS visible (any Pass / N/A /
           Defect bumps it up; defects count as inspected because the
-          inspector still had to look at the part to log them). The
-          Submit button only slides in once allMarked flips true so the
-          inspector doesn't see a disabled grey button taunting them. */}
+          inspector still had to look at the part to log them). Above
+          the bar sits the optional defects log: a collapsible list of
+          every defect committed in this session that mirrors what
+          DvicWizard used to show inline. The Submit button only slides
+          in once allMarked flips true so the inspector doesn't see a
+          disabled grey button taunting them. */}
       {onComplete && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 bg-navy-950/95 backdrop-blur border-t border-navy-800 px-4 py-3">
-          <div className="max-w-2xl mx-auto flex items-center gap-3">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 text-[11px] text-navy-300 font-semibold uppercase tracking-wide mb-1">
-                <span>{t('checklist.progressLabel', 'Progress')}</span>
-                <span className="text-white">{totalCount.marked}/{totalCount.total}</span>
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-navy-950/95 backdrop-blur border-t border-navy-800">
+          {/* Expanded defects log — slides up when the chip is tapped */}
+          <AnimatePresence initial={false}>
+            {defectsExpanded && defects && defects.length > 0 && (
+              <motion.div
+                key="defectslog"
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="overflow-hidden border-b border-navy-800"
+              >
+                <ul className="max-w-2xl mx-auto px-4 py-3 space-y-1.5 max-h-60 overflow-y-auto">
+                  {defects.map((d) => (
+                    <li
+                      key={d.id}
+                      className="flex items-start gap-2 px-2.5 py-2 rounded-md border border-accent-red/30 bg-accent-red/5"
+                    >
+                      <span className="text-base shrink-0">{d.partIcon || '🔧'}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs text-white truncate">
+                          <span className="font-semibold">{d.partLabel || d.part || '—'}</span>
+                          {d.positionLabel && (
+                            <span className="text-navy-400 font-normal"> ({d.positionLabel})</span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-navy-300 truncate">
+                          {d.defectTypeIcon} {d.defectTypeLabel || d.defectType || ''}
+                        </div>
+                      </div>
+                      {onRemoveDefect && (
+                        <button
+                          onClick={() => onRemoveDefect(d.id, d.part)}
+                          className="text-navy-400 hover:text-accent-red p-1 -mr-1 rounded shrink-0 cursor-pointer"
+                          title={t('checklist.removeDefect', 'Remove defect')}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </motion.div>
+            )}
+          </AnimatePresence>
+          <div className="px-4 py-3">
+            <div className="max-w-2xl mx-auto flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 text-[11px] text-navy-300 font-semibold uppercase tracking-wide mb-1">
+                  <span>{t('checklist.progressLabel', 'Progress')}</span>
+                  <span className="text-white">{totalCount.marked}/{totalCount.total}</span>
+                  {defects && defects.length > 0 && (
+                    <button
+                      onClick={() => setDefectsExpanded((v) => !v)}
+                      className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-accent-red/40 bg-accent-red/10 text-accent-red text-[10px] uppercase tracking-wide hover:bg-accent-red/20 cursor-pointer"
+                    >
+                      <AlertCircle size={11} />
+                      {t('checklist.defectsCountFmt', { count: defects.length, defaultValue: `${defects.length} defect${defects.length === 1 ? '' : 's'}` })}
+                      {defectsExpanded
+                        ? <ChevronLeft size={11} className="rotate-90" />
+                        : <ChevronRight size={11} className="rotate-90" />}
+                    </button>
+                  )}
+                </div>
+                <div className="h-1.5 rounded-full bg-navy-800 overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-300 ${allMarked ? 'bg-accent-green' : 'bg-accent-blue'}`}
+                    style={{ width: totalCount.total > 0 ? `${(totalCount.marked / totalCount.total) * 100}%` : '0%' }}
+                  />
+                </div>
               </div>
-              <div className="h-1.5 rounded-full bg-navy-800 overflow-hidden">
-                <div
-                  className={`h-full transition-all duration-300 ${allMarked ? 'bg-accent-green' : 'bg-accent-blue'}`}
-                  style={{ width: totalCount.total > 0 ? `${(totalCount.marked / totalCount.total) * 100}%` : '0%' }}
-                />
-              </div>
+              <AnimatePresence>
+                {allMarked && (
+                  <motion.button
+                    key="submit"
+                    initial={{ scale: 0.8, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0.8, opacity: 0 }}
+                    transition={{ type: 'spring', stiffness: 350, damping: 22 }}
+                    onClick={onComplete}
+                    disabled={submitting}
+                    className="shrink-0 inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-accent-green text-white font-semibold text-sm hover:opacity-90 disabled:opacity-40 cursor-pointer shadow-lg shadow-accent-green/30"
+                  >
+                    {submitting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                    {submitting
+                      ? t('checklist.submitting', 'Submitting…')
+                      : t('checklist.submitReady', 'Submit inspection')}
+                  </motion.button>
+                )}
+              </AnimatePresence>
             </div>
-            <AnimatePresence>
-              {allMarked && (
-                <motion.button
-                  key="submit"
-                  initial={{ scale: 0.8, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  exit={{ scale: 0.8, opacity: 0 }}
-                  transition={{ type: 'spring', stiffness: 350, damping: 22 }}
-                  onClick={onComplete}
-                  disabled={submitting}
-                  className="shrink-0 inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-accent-green text-white font-semibold text-sm hover:opacity-90 disabled:opacity-40 cursor-pointer shadow-lg shadow-accent-green/30"
-                >
-                  {submitting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                  {submitting
-                    ? t('checklist.submitting', 'Submitting…')
-                    : t('checklist.submitReady', 'Submit inspection')}
-                </motion.button>
-              )}
-            </AnimatePresence>
+            {submitError && (
+              <div className="mt-2 px-3 py-2 rounded-md bg-accent-red/10 border border-accent-red/40 text-[11px] text-accent-red max-w-2xl mx-auto">
+                {submitError}
+              </div>
+            )}
           </div>
-          {submitError && (
-            <div className="mt-2 px-3 py-2 rounded-md bg-accent-red/10 border border-accent-red/40 text-[11px] text-accent-red max-w-2xl mx-auto">
-              {submitError}
-            </div>
-          )}
         </div>
       )}
 
@@ -624,7 +690,7 @@ function PartRow({ part, status, defectsForPart, onMark, onOpenDefect }) {
 
   return (
     <div className={`rounded-lg border-2 p-3 transition-all ${
-      isDefect ? 'border-accent-red/50 bg-accent-red/5'
+      isDefect ? 'border-accent-red bg-accent-red/15 shadow-md shadow-accent-red/20'
         : isPass ? 'border-accent-green/40 bg-accent-green/5'
         : isNa ? 'border-navy-600 bg-navy-800/40'
         : 'border-navy-700 bg-navy-900/40'
