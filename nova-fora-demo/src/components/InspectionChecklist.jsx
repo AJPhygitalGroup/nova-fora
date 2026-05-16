@@ -75,6 +75,21 @@ const SECTION_ROUTE_INDEX = Object.fromEntries(
 
 const PARTS_PER_PAGE = 5;
 
+// Parts where reporting a defect doesn't need a photo. These are
+// audible / sensory checks (parking brake hold, A/C blows cold, horn
+// honks, alarms beep, heater warms up) — there's nothing to photograph
+// even when defective. Overrides the catalog's per-defect_type
+// requires_photo flag so the inspector can hit Done immediately after
+// filling position + notes. Confirmed by Jorge on 2026-05-16.
+const NO_PHOTO_PARTS = new Set([
+  'parking_brake',
+  'heater',
+  'ac',
+  'horn',
+  'backup_alarm',
+  'seatbelt_alarm',
+]);
+
 
 // ═════════════════════════════════════════════════════
 // Main checklist component
@@ -692,7 +707,11 @@ function DefectDetailSheet({
   const validPositions = defectType?.validPositions || [];
   const positionRequired = !!defectType?.positionRequired;
   const allowNullPosition = defectType?.allowNullPosition !== false;
-  const requiresPhoto = defectType?.requiresPhoto !== false;  // default true
+  // Override: sensory/audible parts (parking brake, A/C, horn, etc.)
+  // never need a photo, regardless of what the catalog says.
+  const requiresPhoto = NO_PHOTO_PARTS.has(partId)
+    ? false
+    : defectType?.requiresPhoto !== false;  // default true
   const detailsSchema = defectType?.detailsSchema || {};
 
   const [position, setPosition] = useState(existingDefect?.position || '');
