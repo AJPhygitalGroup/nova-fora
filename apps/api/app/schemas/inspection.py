@@ -87,6 +87,11 @@ class InspectionResponse(BaseModel):
     submitted_at: datetime | None
     created_at: datetime
     defects: list[DefectV2Response] = Field(default_factory=list)
+    # Per-part pass/N/A marks for the checklist UI. Map keyed by part
+    # value (e.g. "headlight"), value is "pass" or "na". Parts NOT in
+    # this map are either unmarked OR have at least one defect (which
+    # the client computes as "defect" status from the defects list).
+    part_marks: dict[str, str] = Field(default_factory=dict)
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -27,7 +27,7 @@ import {
   APIError,
 } from '../api/client';
 import PhotoUploader from './ui/PhotoUploader';
-import DvicWizard from './DvicWizard';
+import InspectionChecklist from './InspectionChecklist';
 
 // (Legacy 11-section taxonomy + free-text severity picker were deprecated
 // in v2 of the defect schema — replaced by the catalog-driven DefectWizard.)
@@ -538,18 +538,19 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
     );
   }
 
-  // ─── Step 6: hand off to DvicWizard ─────────────────
-  // The wizard renders its own full-screen Shell, so we early-return here
-  // and skip CreateInspectionWizard's outer Shell + footer to avoid stacking
-  // two fixed overlays. DvicWizard's section picker doubles as the running
-  // defect log, and its "Complete Inspection" button calls handleSubmit.
+  // ─── Step 6: hand off to InspectionChecklist (NOVABODY-style UI) ──
+  // The checklist renders its own full-screen Shell + sticky complete
+  // bar, so we early-return here and skip CreateInspectionWizard's
+  // outer Shell + footer to avoid stacking two fixed overlays.
+  // Replaced DvicWizard on 2026-05-15 with the checklist pattern (tabs
+  // + paginated panes + chip strips + slide-up defect sheet) per the
+  // NOVABODY/web mbk/wo-v2-claude-demo branch reference.
   if (step === 6 && phase === 'inspecting' && inspectionId) {
     return (
-      <DvicWizard
+      <InspectionChecklist
         inspectionId={inspectionId}
         vehicleId={vehicle?.id}
         vehicleClass={vehicle?.vehicleClass || 'regular_cargo_van'}
-        ownership={vehicle?.ownership || 'amazon_owned'}
         defects={defects}
         onCommitted={handleDefectCommitted}
         onRemoveDefect={handleRemoveDefect}
