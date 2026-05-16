@@ -48,68 +48,32 @@ import {
 } from 'lucide-react';
 import {
   catalog as catalogApi,
+  dvicTemplate as dvicTemplateApi,
   inspections as inspectionsApi,
   defects as defectsApi,
   APIError,
 } from '../api/client';
-import { orderPartsByWalkaround } from '../lib/walkaroundOrder';
 import PhotoUploader from './ui/PhotoUploader';
 
-// Virtual inspection route — the user's preferred 6-tab grouping
-// (2026-05-15): General → In Cab → Front → Driver → Back → Passenger.
-// The V2.2 catalog returns parts grouped by 15 functional systems
-// (tires_wheels, lights, interior, etc.), so each virtual section
-// aggregates parts from one or more catalog systems. Systems not
-// listed here fall back to an "Other" tab at the end (currently only
-// ev_powertrain for the EV class).
-//
-// Tabs with zero parts on the active vehicle class are hidden.
-const SECTION_ROUTE = [
-  {
-    id: 'general',
-    label: 'General',
-    systems: ['compliance', 'fluids_under_hood'],
-  },
-  {
-    id: 'in_cab',
-    label: 'In Cab',
-    systems: ['interior', 'hvac', 'brakes_steering', 'cameras_electronics', 'air_brake'],
-  },
-  {
-    id: 'front_side',
-    label: 'Front',
-    systems: ['lights', 'windshield_wipers', 'mirrors'],
-  },
-  {
-    id: 'driver_side',
-    label: 'Driver Side',
-    systems: ['tires_wheels', 'body_steps'],
-  },
-  {
-    id: 'back_side',
-    label: 'Back',
-    systems: ['doors_windows', 'under_vehicle'],
-  },
-  {
-    id: 'passenger_side',
-    label: 'Passenger Side',
-    systems: [],
-  },
+// User's preferred walkaround order (2026-05-15): General → In Cab →
+// Front → Driver → Back → Passenger. Sections returned by /dvic-template
+// are rendered in this order; sections returned by the template that
+// aren't in this list (future class-specific ones) get appended at the
+// end. Sections in this list that the template doesn't return for the
+// active vehicle class are hidden.
+const SECTION_ROUTE_ORDER = [
+  'general',
+  'in_cab',
+  'front_side',
+  'driver_side',
+  'back_side',
+  'passenger_side',
 ];
-const PARTS_PER_PAGE = 5;
-
-// Flat set of all catalog system IDs covered by SECTION_ROUTE — used
-// to find any remaining systems that need an "Other" fallback tab.
-const SECTION_ROUTE_SYSTEM_SET = new Set(
-  SECTION_ROUTE.flatMap((s) => s.systems),
+const SECTION_ROUTE_INDEX = Object.fromEntries(
+  SECTION_ROUTE_ORDER.map((id, i) => [id, i]),
 );
 
-// The catalog response shape is filtered through keysToCamel on the
-// client, so `parts_by_system` keys become camelCase even though the
-// system IDs inside `systems[].id` stay snake_case (those are values,
-// not object keys). Convert snake_case system IDs to camelCase to look
-// up partsBySystem.
-const snakeToCamel = (s) => s.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+const PARTS_PER_PAGE = 5;
 
 
 // ═════════════════════════════════════════════════════
@@ -133,11 +97,12 @@ export default function InspectionChecklist({
   const closeHandler = onClose || onCancel;
 
   const [cat, setCat] = useState(null);
+  const [tpl, setTpl] = useState(null);
   const [catLoading, setCatLoading] = useState(true);
   const [catError, setCatError] = useState(null);
 
   // Active section tab + active page within that section.
-  const [activeSection, setActiveSection] = useState(SECTION_ROUTE[0].id);
+  const [activeSection, setActiveSection] = useState(SECTION_ROUTE_ORDER[0]);
   const [pageBySection, setPageBySection] = useState({});  // {sectionId: pageIdx}
 
   // Local copy of part marks. Seeded from the inspection detail on mount;
@@ -151,14 +116,26 @@ export default function InspectionChecklist({
   // Inline error band at the top of the active pane (pass/N/A failures).
   const [inlineError, setInlineError] = useState(null);
 
-  // ─── Load catalog + initial part marks ─────────────────────────
+  // ─── Load catalog + DVIC template + initial part marks ────────
+  // The catalog drives chip strips + defect detail (defect_types per part,
+  // photo requirements, etc.). The DVIC template drives the section→parts
+  // grouping (general / in_cab / front_side / driver_side / back_side /
+  // passenger_side) so the checklist matches the canonical walkaround the
+  // inspector already learned from DvicWizard.
   useEffect(() => {
     if (!vehicleClass) return undefined;
     let alive = true;
     setCatLoading(true);
     setCatError(null);
-    catalogApi.load(vehicleClass)
-      .then((res) => { if (alive) setCat(res); })
+    Promise.all([
+      catalogApi.load(vehicleClass),
+      dvicTemplateApi.load(vehicleClass),
+    ])
+      .then(([catRes, tplRes]) => {
+        if (!alive) return;
+        setCat(catRes);
+        setTpl(tplRes);
+      })
       .catch((err) => {
         if (!alive) return;
         setCatError(err?.detail || err?.message || 'Failed to load catalog');
@@ -180,51 +157,60 @@ export default function InspectionChecklist({
   }, [inspectionId]);
 
   // ─── Derived: parts per section ───────────────────────────────
-  // Map virtual section ID → ordered list of part objects, aggregating
-  // across the catalog systems each virtual section groups.
+  // The DVIC template lists each (section, category, item) tuple — each
+  // item references a part value. Collect distinct part values per
+  // section, then resolve them against the catalog to get full part
+  // objects (with appearances + defect_types). A part listed in multiple
+  // sections lands in the FIRST one it appears in (route order).
   const partsBySection = useMemo(() => {
-    if (!cat) return {};
-    const out = {};
-    // First pass: virtual sections from SECTION_ROUTE
-    for (const route of SECTION_ROUTE) {
-      const all = [];
-      for (const sysId of route.systems) {
-        const partIds = cat.partsBySystem?.[snakeToCamel(sysId)] || [];
-        const partObjs = partIds
-          .map((pid) => cat.parts.find((p) => p.id === pid))
-          .filter(Boolean);
-        all.push(...orderPartsByWalkaround(partObjs, vehicleClass, sysId));
+    if (!cat || !tpl) return {};
+    const seen = new Set();
+    const partIdsBySection = {};
+    // Walk template sections in their route order so a part in driver +
+    // passenger sides lands in driver first.
+    const orderedTplSections = [...(tpl.sections || [])].sort((a, b) => {
+      const ai = SECTION_ROUTE_INDEX[a.id] ?? 999;
+      const bi = SECTION_ROUTE_INDEX[b.id] ?? 999;
+      return ai - bi;
+    });
+    for (const section of orderedTplSections) {
+      const ids = [];
+      for (const cat0 of section.categories || []) {
+        for (const item of cat0.items || []) {
+          if (!item.part || seen.has(item.part)) continue;
+          seen.add(item.part);
+          ids.push(item.part);
+        }
       }
-      out[route.id] = all;
+      partIdsBySection[section.id] = ids;
     }
-    // Second pass: any catalog systems not covered by SECTION_ROUTE
-    // (e.g. ev_powertrain on EV class) get their own "_other_{sysId}" tab.
-    for (const sys of cat.systems) {
-      if (SECTION_ROUTE_SYSTEM_SET.has(sys.id)) continue;
-      const partIds = cat.partsBySystem?.[snakeToCamel(sys.id)] || [];
-      if (partIds.length === 0) continue;
-      const partObjs = partIds
+    // Resolve to part objects from the catalog (catalog has the
+    // appearances + defect_types that chips need).
+    const out = {};
+    for (const [secId, ids] of Object.entries(partIdsBySection)) {
+      const objs = ids
         .map((pid) => cat.parts.find((p) => p.id === pid))
         .filter(Boolean);
-      out[`_extra_${sys.id}`] = orderPartsByWalkaround(partObjs, vehicleClass, sys.id);
+      out[secId] = objs;
     }
     return out;
-  }, [cat, vehicleClass]);
+  }, [cat, tpl]);
 
-  // Build the visible-tabs list. Hide route sections that have zero
-  // parts on this vehicle class; append any extra (non-route) systems
-  // as their own tabs at the end.
+  // Build the visible-tabs list. Route-order sections first (only those
+  // that the template actually returned for this vehicle class), then
+  // any non-route sections the template returned, appended at the end.
   const tabs = useMemo(() => {
-    if (!cat) return [];
-    const routeTabs = SECTION_ROUTE
-      .filter((route) => (partsBySection[route.id] || []).length > 0)
-      .map((route) => ({ id: route.id, label: route.label }));
-    const extraTabs = cat.systems
-      .filter((s) => !SECTION_ROUTE_SYSTEM_SET.has(s.id))
-      .filter((s) => (cat.partsBySystem?.[snakeToCamel(s.id)] || []).length > 0)
-      .map((s) => ({ id: `_extra_${s.id}`, label: s.label }));
+    if (!tpl) return [];
+    const byId = Object.fromEntries((tpl.sections || []).map((s) => [s.id, s]));
+    const routeTabs = SECTION_ROUTE_ORDER
+      .filter((id) => byId[id] && (partsBySection[id] || []).length > 0)
+      .map((id) => ({ id, label: byId[id].label }));
+    const extraTabs = (tpl.sections || [])
+      .filter((s) => !(s.id in SECTION_ROUTE_INDEX))
+      .filter((s) => (partsBySection[s.id] || []).length > 0)
+      .map((s) => ({ id: s.id, label: s.label }));
     return [...routeTabs, ...extraTabs];
-  }, [cat, partsBySection]);
+  }, [tpl, partsBySection]);
 
   // Map: part value → 'unmarked' | 'pass' | 'na' | 'defect'
   const partStatus = useMemo(() => {
