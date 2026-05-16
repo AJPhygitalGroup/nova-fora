@@ -88,6 +88,7 @@ const NO_PHOTO_PARTS = new Set([
   'horn',
   'backup_alarm',
   'seatbelt_alarm',
+  'interior_cleanliness',  // covers both "Dirty" and "Odor" defect types
 ]);
 
 
