@@ -507,49 +507,41 @@ export default function InspectionChecklist({
         )}
       </div>
 
-      {/* Sticky complete bar — ALWAYS visible so the inspector sees
-          progress + the final submit target. Disabled until every part
-          across every section has a pass / N/A / defect mark. */}
-      {onComplete && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 bg-navy-950/95 backdrop-blur border-t border-navy-800 px-4 py-3">
-          <div className="max-w-2xl mx-auto flex items-center gap-3">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 text-[11px] text-navy-300 font-semibold uppercase tracking-wide mb-1">
-                <span>{t('checklist.progressLabel', 'Progress')}</span>
-                <span className="text-white">{totalCount.marked}/{totalCount.total}</span>
-              </div>
-              <div className="h-1.5 rounded-full bg-navy-800 overflow-hidden">
-                <div
-                  className={`h-full transition-all duration-300 ${allMarked ? 'bg-accent-green' : 'bg-accent-blue'}`}
-                  style={{ width: totalCount.total > 0 ? `${(totalCount.marked / totalCount.total) * 100}%` : '0%' }}
-                />
-              </div>
+      {/* Sticky complete bar — only renders when every part across every
+          section has a mark (pass / N/A / defect). allMarked already
+          counts defects as marks via partStatus, so the bar appears the
+          moment the walkaround is genuinely complete. */}
+      <AnimatePresence>
+        {allMarked && onComplete && (
+          <motion.div
+            initial={{ y: 80, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 80, opacity: 0 }}
+            className="fixed bottom-0 left-0 right-0 z-40 bg-navy-950/95 backdrop-blur border-t border-navy-800 px-4 py-3"
+          >
+            <div className="max-w-2xl mx-auto flex items-center gap-3">
+              <span className="text-xs text-navy-300 font-semibold hidden sm:inline">
+                {t('checklist.allMarkedHint', { marked: totalCount.marked, total: totalCount.total, defaultValue: `All ${totalCount.total} parts checked — ready to submit.` })}
+              </span>
+              <button
+                onClick={onComplete}
+                disabled={submitting}
+                className="ml-auto inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-accent-green text-white font-semibold text-sm hover:opacity-90 disabled:opacity-40 cursor-pointer shadow-lg shadow-accent-green/30"
+              >
+                {submitting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                {submitting
+                  ? t('checklist.submitting', 'Submitting…')
+                  : t('checklist.submitReady', 'Submit inspection')}
+              </button>
             </div>
-            <button
-              onClick={onComplete}
-              disabled={!allMarked || submitting}
-              className={`shrink-0 inline-flex items-center gap-2 px-5 py-3 rounded-lg font-semibold text-sm cursor-pointer shadow-lg transition-all ${
-                allMarked && !submitting
-                  ? 'bg-accent-green text-white hover:opacity-90 shadow-accent-green/30'
-                  : 'bg-navy-800 text-navy-500 cursor-not-allowed shadow-none'
-              }`}
-              title={!allMarked ? t('checklist.completeBlocked', { remaining: totalCount.total - totalCount.marked, defaultValue: `${totalCount.total - totalCount.marked} part(s) still need a check` }) : undefined}
-            >
-              {submitting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-              {submitting
-                ? t('checklist.submitting', 'Submitting…')
-                : allMarked
-                  ? t('checklist.submitReady', 'Submit inspection')
-                  : t('checklist.submitWaiting', { remaining: totalCount.total - totalCount.marked, defaultValue: `${totalCount.total - totalCount.marked} left` })}
-            </button>
-          </div>
-          {submitError && (
-            <div className="mt-2 px-3 py-2 rounded-md bg-accent-red/10 border border-accent-red/40 text-[11px] text-accent-red max-w-2xl mx-auto">
-              {submitError}
-            </div>
-          )}
-        </div>
-      )}
+            {submitError && (
+              <div className="mt-2 px-3 py-2 rounded-md bg-accent-red/10 border border-accent-red/40 text-[11px] text-accent-red max-w-2xl mx-auto">
+                {submitError}
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Defect detail sheet — slides up from the bottom on chip tap */}
       <AnimatePresence>
