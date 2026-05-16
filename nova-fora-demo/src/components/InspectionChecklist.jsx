@@ -83,6 +83,7 @@ export default function InspectionChecklist({
   inspectionId,
   vehicleId,
   vehicleClass,
+  ownership,
   onCommitted,
   defects = [],
   onRemoveDefect,
@@ -129,7 +130,7 @@ export default function InspectionChecklist({
     setCatError(null);
     Promise.all([
       catalogApi.load(vehicleClass),
-      dvicTemplateApi.load(vehicleClass),
+      dvicTemplateApi.load(vehicleClass, ownership || null),
     ])
       .then(([catRes, tplRes]) => {
         if (!alive) return;
@@ -142,7 +143,7 @@ export default function InspectionChecklist({
       })
       .finally(() => { if (alive) setCatLoading(false); });
     return () => { alive = false; };
-  }, [vehicleClass]);
+  }, [vehicleClass, ownership]);
 
   useEffect(() => {
     if (!inspectionId) return undefined;
@@ -359,6 +360,24 @@ export default function InspectionChecklist({
         <div className="px-4 py-12 text-center text-sm text-navy-300">
           <AlertCircle size={28} className="text-accent-red mx-auto mb-3" />
           <p>{catError}</p>
+        </div>
+      </Shell>
+    );
+  }
+  // No template seeded for this vehicle class yet (e.g. electric_vehicle
+  // as of 2026-05-15). Render a clear "no checklist" notice so the user
+  // doesn't see a blank screen and can still close the wizard.
+  if (!tpl?.sections?.length) {
+    return (
+      <Shell title={cat?.vehicleClassLabel || vehicleClass} onClose={closeHandler} onBack={onBack}>
+        <div className="px-4 py-12 text-center text-sm text-navy-300 max-w-md mx-auto">
+          <AlertCircle size={28} className="text-accent-amber mx-auto mb-3" />
+          <p className="font-semibold text-white mb-2">
+            {t('checklist.noTemplateTitle', 'No checklist for this vehicle yet')}
+          </p>
+          <p>
+            {t('checklist.noTemplateBody', { label: cat?.vehicleClassLabel || vehicleClass, defaultValue: `The inspection template for ${cat?.vehicleClassLabel || vehicleClass} hasn't been published yet. Contact your admin or close this inspection.` })}
+          </p>
         </div>
       </Shell>
     );
