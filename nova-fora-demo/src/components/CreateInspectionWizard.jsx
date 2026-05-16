@@ -391,11 +391,19 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
       ...prev,
       {
         id: created.id,
+        // Raw part + defect_type values — REQUIRED by InspectionChecklist
+        // to compute partStatus[part]='defect' and to filter defectsForPart
+        // (without these the part row never turns red and the progress bar
+        // doesn't increment when a defect is registered).
+        part: created.part,
+        defectType: created.defectType,
+        position: created.position,
         partLabel: created.partLabel,
         partIcon: created.partIcon,
         positionLabel: created.positionLabel,
         defectTypeLabel: created.defectTypeLabel,
         defectTypeIcon: created.defectTypeIcon,
+        classification: created.classification,
         // Backend mirror columns (used by photo uploader + reviews)
         section: created.section,
         description: created.description,
