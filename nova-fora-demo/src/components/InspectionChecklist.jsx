@@ -104,6 +104,13 @@ const SECTION_ROUTE_SYSTEM_SET = new Set(
   SECTION_ROUTE.flatMap((s) => s.systems),
 );
 
+// The catalog response shape is filtered through keysToCamel on the
+// client, so `parts_by_system` keys become camelCase even though the
+// system IDs inside `systems[].id` stay snake_case (those are values,
+// not object keys). Convert snake_case system IDs to camelCase to look
+// up partsBySystem.
+const snakeToCamel = (s) => s.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+
 
 // ═════════════════════════════════════════════════════
 // Main checklist component
@@ -182,7 +189,7 @@ export default function InspectionChecklist({
     for (const route of SECTION_ROUTE) {
       const all = [];
       for (const sysId of route.systems) {
-        const partIds = cat.partsBySystem?.[sysId] || [];
+        const partIds = cat.partsBySystem?.[snakeToCamel(sysId)] || [];
         const partObjs = partIds
           .map((pid) => cat.parts.find((p) => p.id === pid))
           .filter(Boolean);
@@ -194,7 +201,7 @@ export default function InspectionChecklist({
     // (e.g. ev_powertrain on EV class) get their own "_other_{sysId}" tab.
     for (const sys of cat.systems) {
       if (SECTION_ROUTE_SYSTEM_SET.has(sys.id)) continue;
-      const partIds = cat.partsBySystem?.[sys.id] || [];
+      const partIds = cat.partsBySystem?.[snakeToCamel(sys.id)] || [];
       if (partIds.length === 0) continue;
       const partObjs = partIds
         .map((pid) => cat.parts.find((p) => p.id === pid))
@@ -214,7 +221,7 @@ export default function InspectionChecklist({
       .map((route) => ({ id: route.id, label: route.label }));
     const extraTabs = cat.systems
       .filter((s) => !SECTION_ROUTE_SYSTEM_SET.has(s.id))
-      .filter((s) => (cat.partsBySystem?.[s.id] || []).length > 0)
+      .filter((s) => (cat.partsBySystem?.[snakeToCamel(s.id)] || []).length > 0)
       .map((s) => ({ id: `_extra_${s.id}`, label: s.label }));
     return [...routeTabs, ...extraTabs];
   }, [cat, partsBySection]);
