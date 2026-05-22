@@ -16,8 +16,12 @@ RUN npm ci --no-audit --no-fund
 COPY . .
 
 # VITE_API_BASE_URL must be present at BUILD TIME — Vite inlines import.meta.env.*
-# EasyPanel lets you set build-time args on App services.
-ARG VITE_API_BASE_URL=https://nova-fora-api.vamj8y.easypanel.host
+# Default points to the current production API host on EasyPanel; if you
+# deploy this image to a different host, pass --build-arg VITE_API_BASE_URL=...
+# to override. (The newer EasyPanel UI we're on doesn't expose a build-args
+# panel separately, so the default carries the value used by every prod
+# build — keep it pointed at the live API host.)
+ARG VITE_API_BASE_URL=https://nova-fora-api.xzlnys.easypanel.host
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 
 RUN npm run build
