@@ -508,6 +508,43 @@ async def list_vehicle_notes(
     ]
 
 
+@router.delete(
+    "/{vehicle_id}/notes/{note_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a vehicle note (own author or site_admin only)",
+)
+async def delete_vehicle_note(
+    vehicle_id: str = Path(...),
+    note_id: int = Path(..., ge=1),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Jorge note #1: SW can delete their own notes. Site admin can
+    delete anyone's. Everyone else (including the DSP if the note was
+    DSP-authored — they delete their own) follows the same own-author
+    rule. Author NULL (legacy / system) = only site_admin deletes.
+    """
+    vid = _parse_vehicle_id(vehicle_id)
+    note = (
+        await session.execute(
+            select(VehicleNote)
+            .where(VehicleNote.id == note_id)
+            .where(VehicleNote.vehicle_id == vid)
+        )
+    ).scalar_one_or_none()
+    if note is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "note not found")
+    is_owner = note.author_id is not None and note.author_id == current.id
+    if not is_owner and current.role != UserRole.SITE_ADMIN:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "you can only delete your own notes (site_admin can delete any)",
+        )
+    await session.delete(note)
+    await session.commit()
+    return None
+
+
 @router.post(
     "/{vehicle_id}/notes",
     response_model=VehicleNoteResponse,

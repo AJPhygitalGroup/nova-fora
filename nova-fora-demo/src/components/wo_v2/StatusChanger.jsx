@@ -300,10 +300,13 @@ export default function StatusChanger({
         return;
       }
 
-      // READY TO SCHEDULE: close any open sub-state + open the calendar
-      // modal so the SW pins scheduled_at + repair_bucket. That slot
-      // feeds the DSP and technician "Scheduled Repairs" cards via
-      // /work-orders?scheduled_within_hours=36.
+      // READY TO SCHEDULE: close any open sub-state so the WO drops
+      // into the ready bucket. Jorge#10: this does NOT auto-open the
+      // schedule modal anymore — the SW sets the status, then clicks
+      // a separate "Schedule pickup" action (in the RO modal / row)
+      // when they're ready to actually pin a date. John mentioned
+      // availability can change between "parts arrived" and "let's
+      // pick a slot".
       if (target === 'readyToSchedule') {
         const { ro } = await ensureAcceptedWithRo(live);
         if (ro.submittedToFmcAt && !ro.fmcApprovedAt) {
@@ -313,11 +316,7 @@ export default function StatusChanger({
           await woApi.roSyncEvent(live.id, ro.id, { event: 'parts_received' });
         }
         setOpen(false);
-        if (onOpenScheduleModal) {
-          onOpenScheduleModal({ ...live, status: 'accepted' });
-        } else {
-          onAfter && onAfter();
-        }
+        onAfter && onAfter();
         return;
       }
 

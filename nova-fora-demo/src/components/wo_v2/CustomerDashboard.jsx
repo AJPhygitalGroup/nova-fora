@@ -37,6 +37,11 @@ import { StatusPill, STATUS_OPTIONS, deriveStatusKey } from './StatusChanger';
 // ─────────────────────────────────────────────────────
 const STATUS_FILTERS = [
   { id: 'all',  label: 'All vans',          test: () => true },
+  // Jorge#C3: the two cost-/review-tile filters match WOs that have
+  // pending DSP action (counters surfaced inline by the backend in
+  // pendingCostCount / pendingReviewCount).
+  { id: 'approve_cost',    label: 'Awaiting cost approval',    test: (wo) => (wo.pendingCostCount ?? 0) > 0 },
+  { id: 'approve_defects', label: 'Awaiting defect approval',  test: (wo) => (wo.pendingReviewCount ?? 0) > 0 },
   ...STATUS_OPTIONS.map((o) => ({
     id: o.key,
     label: o.label,
@@ -132,7 +137,9 @@ export default function CustomerDashboard({ user }) {
 
   return (
     <>
-      {/* ── KPI tiles ─────────────────────────────── */}
+      {/* ── KPI tiles (Jorge#C3: also act as filters) ─────────
+          Click a tile to set the table filter to the matching bucket.
+          Click again (or "All vans") to clear. */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
         <KpiTile
           label="Vans in service"
@@ -142,6 +149,8 @@ export default function CustomerDashboard({ user }) {
           bg="bg-navy-800"
           border="border-navy-700"
           loading={!counters && !counterError}
+          active={statusFilter === 'all'}
+          onClick={() => setStatusFilter('all')}
         />
         <KpiTile
           label="$ Approve cost"
@@ -151,6 +160,8 @@ export default function CustomerDashboard({ user }) {
           bg="bg-accent-red/10"
           border="border-accent-red/40"
           loading={!counters && !counterError}
+          active={statusFilter === 'approve_cost'}
+          onClick={() => setStatusFilter(statusFilter === 'approve_cost' ? 'all' : 'approve_cost')}
         />
         <KpiTile
           label="Approve defects"
@@ -160,6 +171,8 @@ export default function CustomerDashboard({ user }) {
           bg="bg-accent-gold/10"
           border="border-accent-gold/40"
           loading={!counters && !counterError}
+          active={statusFilter === 'approve_defects'}
+          onClick={() => setStatusFilter(statusFilter === 'approve_defects' ? 'all' : 'approve_defects')}
         />
         <KpiTile
           label="Confirm pickup"
@@ -169,6 +182,8 @@ export default function CustomerDashboard({ user }) {
           bg="bg-accent-blue/10"
           border="border-accent-blue/40"
           loading={!counters && !counterError}
+          active={statusFilter === 'awaitingCustomer'}
+          onClick={() => setStatusFilter(statusFilter === 'awaitingCustomer' ? 'all' : 'awaitingCustomer')}
         />
         <KpiTile
           label="In progress"
@@ -178,6 +193,8 @@ export default function CustomerDashboard({ user }) {
           bg="bg-accent-green/10"
           border="border-accent-green/40"
           loading={!counters && !counterError}
+          active={statusFilter === 'inProgress'}
+          onClick={() => setStatusFilter(statusFilter === 'inProgress' ? 'all' : 'inProgress')}
         />
       </div>
 
@@ -284,10 +301,19 @@ export default function CustomerDashboard({ user }) {
 // ─────────────────────────────────────────────────────
 // Sub-views
 // ─────────────────────────────────────────────────────
-function KpiTile({ label, value, icon: Icon, color, bg, border, loading }) {
+function KpiTile({ label, value, icon: Icon, color, bg, border, loading, active, onClick }) {
+  // Tiles act as one-click filters (Jorge#C3). Active tile gets a
+  // ring so the DSP can see which one is currently filtering.
+  const interactive = !!onClick;
   return (
-    <div className={`rounded-lg border ${border} ${bg} px-4 py-3 flex flex-col`}>
-      <div className="flex items-center justify-between">
+    <button
+      type={interactive ? 'button' : undefined}
+      onClick={onClick}
+      className={`rounded-lg border ${border} ${bg} px-4 py-3 flex flex-col text-left transition-all ${
+        interactive ? 'cursor-pointer hover:brightness-110' : ''
+      } ${active ? 'ring-2 ring-offset-2 ring-offset-navy-950 ring-current' : ''}`}
+    >
+      <div className="flex items-center justify-between w-full">
         <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">
           {label}
         </span>
@@ -296,7 +322,7 @@ function KpiTile({ label, value, icon: Icon, color, bg, border, loading }) {
       <div className={`text-3xl font-bold mt-1 ${color}`}>
         {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : (value ?? 0)}
       </div>
-    </div>
+    </button>
   );
 }
 

@@ -393,6 +393,11 @@ export const vehicles = {
       body: JSON.stringify({ body }),
     });
   },
+  deleteNote(id, noteId) {
+    return apiFetch(`/vehicles/${encodeURIComponent(id)}/notes/${encodeURIComponent(noteId)}`, {
+      method: 'DELETE',
+    });
+  },
 
   // ── WO V2: aggregated van detail ──
   // Returns { vehicleIdStr, fleetId, plate, ... kpis, activeWork[], serviceHistory[], defectTimeline[] }.

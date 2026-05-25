@@ -24,6 +24,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   ArrowLeft, Loader2, AlertTriangle, ClipboardList, PlayCircle,
   CheckCircle2, AlertCircle, Activity, FileText, Clock, ChevronRight,
+  Trash2, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { vehicles as vehiclesApi } from '../../api/client';
 import SwWoActions from './SwWoActions';
@@ -228,14 +229,11 @@ function NotesPanel({ vehicleId, notes, onRefresh }) {
       {notes.length > 0 && (
         <ul className="mb-3 space-y-2">
           {notes.map((n) => (
-            <li key={n.id} className="rounded-md border border-navy-800 bg-navy-800/40 px-3 py-2">
-              <div className="text-sm text-text-strong whitespace-pre-wrap">{n.body}</div>
-              <div className="text-[10px] text-text-muted mt-1 flex items-center gap-2">
-                <span>{n.authorName || 'system'}</span>
-                <span>·</span>
-                <span>{new Date(n.createdAt).toLocaleString()}</span>
-              </div>
-            </li>
+            <NoteRow key={n.id} note={n} vehicleId={vehicleId} onDeleted={() => {
+              vehiclesApi.listNotes(vehicleId).then((fresh) => {
+                onRefresh(Array.isArray(fresh) ? fresh : (fresh.items || []));
+              }).catch(() => {});
+            }} />
           ))}
         </ul>
       )}
@@ -251,7 +249,7 @@ function NotesPanel({ vehicleId, notes, onRefresh }) {
           type="button"
           onClick={submit}
           disabled={posting || !draft.trim()}
-          className="px-4 py-2 rounded-md bg-text-strong text-navy-950 font-semibold text-sm hover:opacity-90 disabled:opacity-40 self-end"
+          className="px-4 py-2 rounded-md bg-white text-navy-950 font-semibold text-sm hover:bg-white/90 disabled:opacity-40 self-end"
         >
           {posting ? '…' : 'Add note'}
         </button>
@@ -263,6 +261,50 @@ function NotesPanel({ vehicleId, notes, onRefresh }) {
         </div>
       )}
     </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// NoteRow — single SW note with delete (Jorge#1)
+// Owner-or-admin delete is enforced server-side; the trash icon
+// is rendered for every row and the API returns 403 otherwise.
+// ─────────────────────────────────────────────────────
+function NoteRow({ note, vehicleId, onDeleted }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const remove = async () => {
+    if (!window.confirm('Delete this note? This cannot be undone.')) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await vehiclesApi.deleteNote(vehicleId, note.id);
+      onDeleted && onDeleted();
+    } catch (e) {
+      setErr(e.detail || e.message || 'Failed');
+      setBusy(false);
+    }
+  };
+  return (
+    <li className="rounded-md border border-navy-800 bg-navy-800/40 px-3 py-2 group">
+      <div className="flex items-start justify-between gap-2">
+        <div className="text-sm text-text-strong whitespace-pre-wrap flex-1">{note.body}</div>
+        <button
+          type="button"
+          onClick={remove}
+          disabled={busy}
+          className="opacity-0 group-hover:opacity-100 text-text-muted hover:text-accent-red p-1 -mr-1 transition-opacity disabled:opacity-40"
+          title="Delete note (you can only delete your own)"
+        >
+          {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+        </button>
+      </div>
+      <div className="text-[10px] text-text-muted mt-1 flex items-center gap-2">
+        <span>{note.authorName || 'system'}</span>
+        <span>·</span>
+        <span>{new Date(note.createdAt).toLocaleString()}</span>
+      </div>
+      {err && <div className="mt-1 text-[10px] text-accent-red">{err}</div>}
+    </li>
   );
 }
 
@@ -295,21 +337,34 @@ function ActiveWorkSection({ rows, vehicleClass, onChanged }) {
 // SERVICE HISTORY section — terminal WOs (completed/cancelled/declined)
 // ─────────────────────────────────────────────────────
 function ServiceHistorySection({ rows }) {
+  // Jorge#9: completed/cancelled ROs are collapsed by default so the
+  // van view stays focused on ACTIVE work. SW can expand to see history.
+  const [expanded, setExpanded] = useState(false);
   return (
     <section className="rounded-lg border border-navy-700 bg-navy-900 p-4 mb-4">
-      <div className="flex items-center gap-2 mb-3">
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center gap-2 mb-3 cursor-pointer text-left"
+      >
         <Clock className="w-3.5 h-3.5 text-text-muted" />
         <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">
           Service History
         </span>
         <span className="text-xs text-text-muted">· {rows.length}</span>
-      </div>
-      {rows.length === 0 && (
-        <p className="text-xs text-text-muted">No completed or cancelled ROs yet.</p>
+        <span className="ml-auto text-text-muted">
+          {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        </span>
+      </button>
+      {expanded && (
+        rows.length === 0 ? (
+          <p className="text-xs text-text-muted">No completed or cancelled ROs yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {rows.map((r) => <RoCard key={r.workOrderId} row={r} terminal />)}
+          </div>
+        )
       )}
-      <div className="space-y-3">
-        {rows.map((r) => <RoCard key={r.workOrderId} row={r} terminal />)}
-      </div>
     </section>
   );
 }

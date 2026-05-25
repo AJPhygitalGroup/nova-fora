@@ -636,10 +636,10 @@ function ConfirmedPickupStrip({ pickups, onOpen }) {
                 <span className="text-sm font-bold text-text-strong">
                   Van {vanLabel(wo)}
                 </span>
-                <span className="text-xs text-text-muted truncate">{wo.id}</span>
+                <span className="text-xs text-text-muted truncate" title={wo.id}>{primaryRoLabel(wo)}</span>
               </div>
               <div className="text-xs text-text-muted mb-1">
-                {[wo.vehicleYear, wo.vehicleMake, wo.vehicleModel].filter(Boolean).join(' ')}
+                {vehicleShortLabel(wo)}
               </div>
               {r?.scheduledStartAt && (
                 <div className="text-sm font-medium text-accent-green">
@@ -735,8 +735,13 @@ function SwWoRow({ wo, onOpen, onDecline, onComplete, onSchedule, onAfter }) {
             </span>
           )}
         </div>
-        <div className="text-xs text-text-muted">
-          {[wo.vehicleYear, wo.vehicleMake, wo.vehicleModel].filter(Boolean).join(' ') || (wo.vehiclePlate ? `Plate ${wo.vehiclePlate}` : '')}
+        {/* Jorge#8: drop the full model name (was running ~80 chars).
+            Show just make + plate so the row stays compact. */}
+        <div
+          className="text-xs text-text-muted truncate"
+          title={[wo.vehicleYear, wo.vehicleMake, wo.vehicleModel].filter(Boolean).join(' ')}
+        >
+          {vehicleShortLabel(wo) || (wo.vehiclePlate ? `Plate ${wo.vehiclePlate}` : '')}
         </div>
       </button>
       <div className="col-span-2 text-text-strong truncate">
@@ -765,6 +770,22 @@ function SwWoRow({ wo, onOpen, onDecline, onComplete, onSchedule, onAfter }) {
         )}
       </div>
       <div className="col-span-2 flex items-center justify-end gap-1">
+        {/* Jorge#10: when status is Ready to Schedule, SW gets a
+            discrete button to open the ScheduleModal. Setting the
+            status no longer auto-opens it. */}
+        {wo.status === 'accepted' && r && !r.scheduledStartAt
+          && !r.pickupType
+          && !(r.partsOrderedAt && !r.partsReceivedAt)
+          && !(r.submittedToFmcAt && !r.fmcApprovedAt) && (
+          <button
+            type="button"
+            onClick={() => onSchedule(wo)}
+            title="Schedule pickup — pick date / time / bucket"
+            className="px-2 py-1 rounded-md text-[10px] font-semibold bg-accent-green/15 text-accent-green hover:bg-accent-green/25 flex items-center gap-1"
+          >
+            Schedule
+          </button>
+        )}
         <button
           type="button"
           onClick={onOpen}
@@ -851,4 +872,20 @@ function parseOrgInt(raw) {
 // prefixed id_str (VAN-NNNN) so we never render "Van undefined".
 function vanLabel(wo) {
   return wo?.vehicleFleetId || wo?.vehicleIdStr || wo?.vehicleId || '—';
+}
+
+// Jorge#8: "2019 Mercedes-Benz Sprinter 4x2 2500 3dr 170 in. WB High
+// Roof Cargo Van (3.0L V6)" → just the make. Keep year if compact.
+function vehicleShortLabel(wo) {
+  // Make alone is short enough and still useful (Ford / Sprinter / Ram).
+  return [wo?.vehicleYear, wo?.vehicleMake].filter(Boolean).join(' ');
+}
+
+// Jorge#2: WO list/cards primary label is the vendor RO# (RO-44936)
+// not the Nova Fora WO# (WO-00026). Falls back to WO# when no RO
+// is attached yet (e.g., before /accept generates the placeholder).
+function primaryRoLabel(wo) {
+  const r = wo?.primaryRo
+    || (Array.isArray(wo?.ros) ? wo.ros.find((x) => x.isPrimary) : null);
+  return r?.roNumber || wo?.id || '—';
 }
