@@ -25,6 +25,8 @@ import {
   dashboards as dashboardsApi,
 } from '../../api/client';
 import VanDetailModal from './VanDetailModal';
+import VanDetailView from './VanDetailView';
+import RoModal from './RoModal';
 import ApproveCostModal from './ApproveCostModal';
 import ApproveDefectsModal from './ApproveDefectsModal';
 import { StatusPill, STATUS_OPTIONS, deriveStatusKey } from './StatusChanger';
@@ -81,6 +83,9 @@ export default function CustomerDashboard({ user }) {
   const [costModalWoId, setCostModalWoId] = useState(null);
   const [defectsModalWoId, setDefectsModalWoId] = useState(null);
   const [openWoId, setOpenWoId] = useState(null);
+  // Jorge#C1: customer-side mirrors of the SW patterns.
+  const [openVehicleId, setOpenVehicleId] = useState(null);   // Customer Van detail
+  const [openRoWoId, setOpenRoWoId] = useState(null);          // Focused RO modal
 
   // Counters load — single fetch, ~5 fields back
   const loadCounters = useCallback(() => {
@@ -134,6 +139,19 @@ export default function CustomerDashboard({ user }) {
   const openWo = openWoId
     ? wos.find((w) => w.id === openWoId || w.workOrderId === openWoId)
     : null;
+
+  // Jorge#C2: drill-down to the customer-side Van detail (re-uses
+  // VanDetailView; the SW action buttons are simply absent for DSP
+  // users — the Manage RO button opens the focused RO modal which
+  // exposes only customer-valid actions).
+  if (openVehicleId != null) {
+    return (
+      <VanDetailView
+        vehicleId={openVehicleId}
+        onBack={() => { setOpenVehicleId(null); refreshAll(); }}
+      />
+    );
+  }
 
   return (
     <>
@@ -261,14 +279,31 @@ export default function CustomerDashboard({ user }) {
           <WoRow
             key={wo.id}
             wo={wo}
-            onOpen={() => setOpenWoId(wo.id)}
+            // Jorge#C2: row click → customer Van detail page (not the
+            // old VanDetailModal which had spotty data — Jorge#C4).
+            onOpen={() => setOpenVehicleId(wo.vehicleId)}
+            // Jorge#C1: RO# click → focused RO modal (same component
+            // the SW uses; actions gate by role server-side).
+            onOpenRo={() => setOpenRoWoId(wo.id)}
             onApproveCost={() => setCostModalWoId(wo.id)}
             onApproveDefects={() => setDefectsModalWoId(wo.id)}
           />
         ))}
       </div>
 
-      {/* ── Detail modal ───────────────────────────── */}
+      {/* ── RO Modal — focused per-RO actions (Jorge#C1) ── */}
+      {openRoWoId && (
+        <RoModal
+          woId={openRoWoId}
+          onClose={() => setOpenRoWoId(null)}
+          onAfterChange={refreshAll}
+          onOpenVan={(vehicleId) => { setOpenRoWoId(null); setOpenVehicleId(vehicleId); }}
+        />
+      )}
+
+      {/* ── Legacy VanDetailModal kept for the existing Confirm
+          pickup flow until the RO modal absorbs it. Only opens
+          when the dedicated Confirm pickup action is fired. */}
       {openWo && (
         <VanDetailModal
           wo={openWo}
@@ -326,7 +361,7 @@ function KpiTile({ label, value, icon: Icon, color, bg, border, loading, active,
   );
 }
 
-function WoRow({ wo, onOpen, onApproveCost, onApproveDefects }) {
+function WoRow({ wo, onOpen, onOpenRo, onApproveCost, onApproveDefects }) {
   const ro = primaryRo(wo);
   const showConfirm = ro && ro.pickupType && !ro.scheduledStartAt;
   const isActive = !ALL_TERMINAL.has(wo.status);
@@ -355,12 +390,24 @@ function WoRow({ wo, onOpen, onApproveCost, onApproveDefects }) {
         <div className="text-sm font-medium text-text-strong">
           Van {wo.vehicleFleetId || wo.vehicleIdStr || wo.vehicleId}
         </div>
-        <div className="text-xs text-text-muted">
-          {[wo.vehicleYear, wo.vehicleMake, wo.vehicleModel].filter(Boolean).join(' ')}
+        <div className="text-xs text-text-muted truncate" title={[wo.vehicleYear, wo.vehicleMake, wo.vehicleModel].filter(Boolean).join(' ')}>
+          {/* Jorge#8: drop the full model verbose name on customer side too */}
+          {[wo.vehicleYear, wo.vehicleMake].filter(Boolean).join(' ')}
         </div>
-        {wo.vehiclePlate && (
-          <div className="text-xs text-text-muted">Plate {wo.vehiclePlate}</div>
-        )}
+        {/* Jorge#C1: RO# clickable opens the focused RO modal. */}
+        {(() => {
+          const ro = primaryRo(wo);
+          return ro?.roNumber ? (
+            <button
+              type="button"
+              onClick={stop(onOpenRo)}
+              className="text-xs text-accent-blue hover:underline font-medium mt-1"
+              title="Open RO actions"
+            >
+              {ro.roNumber}
+            </button>
+          ) : null;
+        })()}
       </div>
       <div className="col-span-2 text-sm text-text-strong">
         {wo.workshopName || '—'}

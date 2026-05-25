@@ -39,6 +39,7 @@ import CompleteModal from './CompleteModal';
 import ScheduleModal from './ScheduleModal';
 import ReviewRequestModal from './ReviewRequestModal';
 import CreateWoWizard from './CreateWoWizard';
+import RoModal from './RoModal';
 import StatusChanger from './StatusChanger';
 
 // ─────────────────────────────────────────────────────
@@ -85,6 +86,9 @@ export default function ServiceWriterDashboard({ user }) {
   // navigates by vehicle, not by RO. The lifecycle action buttons (accept /
   // decline / start / complete) still live on the row itself.
   const [openVehicleId, setOpenVehicleId] = useState(null);
+  // Jorge#4: a separate state for the RO modal — opening an RO via
+  // the RO# link doesn't navigate away from the dashboard.
+  const [openRoWoId, setOpenRoWoId] = useState(null);
   const [actionModal, setActionModal] = useState(null);   // { kind: 'decline'|'complete', wo }
   const [error, setError] = useState(null);
 
@@ -552,6 +556,7 @@ export default function ServiceWriterDashboard({ user }) {
             key={wo.id}
             wo={wo}
             onOpen={() => setOpenVehicleId(wo.vehicleId)}
+            onOpenRo={(w) => setOpenRoWoId((w || wo).id)}
             onDecline={(w) => setActionModal({ kind: 'decline', wo: w || wo })}
             onComplete={(w) => setActionModal({ kind: 'complete', wo: w || wo })}
             onSchedule={(w) => setActionModal({ kind: 'schedule', wo: w || wo })}
@@ -559,6 +564,19 @@ export default function ServiceWriterDashboard({ user }) {
           />
         ))}
       </div>
+
+      {/* RO Modal — opened from the RO# link in any row (Jorge#4) */}
+      {openRoWoId && (
+        <RoModal
+          woId={openRoWoId}
+          onClose={() => setOpenRoWoId(null)}
+          onAfterChange={refreshAll}
+          onOpenSchedule={(w) => { setOpenRoWoId(null); setActionModal({ kind: 'schedule', wo: w }); }}
+          onOpenComplete={(w) => { setOpenRoWoId(null); setActionModal({ kind: 'complete', wo: w }); }}
+          onOpenDecline={(w) => { setOpenRoWoId(null); setActionModal({ kind: 'decline', wo: w }); }}
+          onOpenVan={(vehicleId) => { setOpenRoWoId(null); setOpenVehicleId(vehicleId); }}
+        />
+      )}
 
       {/* Modals */}
       {actionModal?.kind === 'decline' && (
@@ -717,7 +735,7 @@ function IncomingRequestsPanel({ wos, onReview }) {
 // ─────────────────────────────────────────────────────
 // Main table row
 // ─────────────────────────────────────────────────────
-function SwWoRow({ wo, onOpen, onDecline, onComplete, onSchedule, onAfter }) {
+function SwWoRow({ wo, onOpen, onOpenRo, onDecline, onComplete, onSchedule, onAfter }) {
   const r = primaryRo(wo);
 
   return (
@@ -756,8 +774,23 @@ function SwWoRow({ wo, onOpen, onDecline, onComplete, onSchedule, onAfter }) {
           onOpenScheduleModal={onSchedule}
         />
       </div>
-      <div className="col-span-2 text-text-muted text-xs truncate">
-        {r?.roNumber || (wo.status === 'pending_acceptance' ? 'awaiting' : '—')}
+      <div className="col-span-2 text-xs truncate">
+        {/* Jorge#4: clicking the RO# opens the RO modal where ALL the
+            RO-specific actions live (status / sync / cost / notes / etc). */}
+        {r?.roNumber ? (
+          <button
+            type="button"
+            onClick={() => onOpenRo && onOpenRo(wo)}
+            className="text-accent-blue hover:underline font-medium"
+            title="Open RO actions"
+          >
+            {r.roNumber}
+          </button>
+        ) : (
+          <span className="text-text-muted">
+            {wo.status === 'pending_acceptance' ? 'awaiting' : '—'}
+          </span>
+        )}
       </div>
       <div className="col-span-2 text-text-muted text-xs truncate flex items-center gap-1">
         {wo.assignedTechnicianName ? (

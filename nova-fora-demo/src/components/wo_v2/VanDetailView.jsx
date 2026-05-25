@@ -27,13 +27,15 @@ import {
   Trash2, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { vehicles as vehiclesApi } from '../../api/client';
-import SwWoActions from './SwWoActions';
+import RoModal from './RoModal';
 
 export default function VanDetailView({ vehicleId, onBack }) {
   const [summary, setSummary] = useState(null);
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // Jorge#5: per-row "Manage RO" button opens the focused RO modal.
+  const [openRoWoId, setOpenRoWoId] = useState(null);
 
   const loadSummary = useCallback(() => {
     setLoading(true);
@@ -100,9 +102,20 @@ export default function VanDetailView({ vehicleId, onBack }) {
         rows={summary.activeWork || []}
         vehicleClass={summary.vehicleClass}
         onChanged={loadSummary}
+        onOpenRo={(woIdStr) => setOpenRoWoId(woIdStr)}
       />
       <ServiceHistorySection rows={summary.serviceHistory || []} />
       <DefectTimelineSection timeline={summary.defectTimeline || []} />
+
+      {/* Per-row "Manage RO" opens the focused RO modal (Jorge#4/#5). */}
+      {openRoWoId && (
+        <RoModal
+          woId={openRoWoId}
+          onClose={() => setOpenRoWoId(null)}
+          onAfterChange={loadSummary}
+          onOpenVan={() => setOpenRoWoId(null)}
+        />
+      )}
     </div>
   );
 }
@@ -311,7 +324,7 @@ function NoteRow({ note, vehicleId, onDeleted }) {
 // ─────────────────────────────────────────────────────
 // ACTIVE WORK section — non-terminal WOs grouped by RO
 // ─────────────────────────────────────────────────────
-function ActiveWorkSection({ rows, vehicleClass, onChanged }) {
+function ActiveWorkSection({ rows, vehicleClass, onChanged, onOpenRo }) {
   return (
     <section className="rounded-lg border border-navy-700 bg-navy-900 p-4 mb-4">
       <div className="flex items-center gap-2 mb-3">
@@ -326,7 +339,7 @@ function ActiveWorkSection({ rows, vehicleClass, onChanged }) {
       )}
       <div className="space-y-3">
         {rows.map((r) => (
-          <RoCard key={r.workOrderId} row={r} vehicleClass={vehicleClass} onChanged={onChanged} />
+          <RoCard key={r.workOrderId} row={r} vehicleClass={vehicleClass} onChanged={onChanged} onOpenRo={onOpenRo} />
         ))}
       </div>
     </section>
@@ -372,7 +385,7 @@ function ServiceHistorySection({ rows }) {
 // ─────────────────────────────────────────────────────
 // RO card (used in both Active Work and Service History)
 // ─────────────────────────────────────────────────────
-function RoCard({ row, terminal, vehicleClass, onChanged }) {
+function RoCard({ row, terminal, vehicleClass, onChanged, onOpenRo }) {
   return (
     <div className={`rounded-md border-l-4 ${roBorder(row.woStatus)} bg-navy-800/30 px-3 py-2`}>
       <div className="flex items-center gap-2 flex-wrap mb-2">
@@ -424,14 +437,18 @@ function RoCard({ row, terminal, vehicleClass, onChanged }) {
           ))}
         </div>
       )}
-      {/* SW action panel — only on active WOs. Terminal rows stay read-only. */}
-      {!terminal && (
-        <SwWoActions
-          row={row}
-          workshopOrgId={row.vendorWorkshopOrgId}
-          vehicleClass={vehicleClass}
-          onChanged={onChanged}
-        />
+      {/* Jorge#5: RO-specific actions live in the RoModal now.
+          Van view just exposes a "Manage RO" button per active row. */}
+      {!terminal && onOpenRo && (
+        <div className="mt-3 pt-3 border-t border-navy-800 flex justify-end">
+          <button
+            type="button"
+            onClick={() => onOpenRo(row.workOrderIdStr || row.workOrderId)}
+            className="px-3 py-1.5 rounded-md text-xs font-semibold bg-accent-blue/15 text-accent-blue hover:bg-accent-blue/25 flex items-center gap-1"
+          >
+            Manage RO →
+          </button>
+        </div>
       )}
     </div>
   );
