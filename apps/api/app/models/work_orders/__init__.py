@@ -51,7 +51,7 @@ from app.models.work_orders.work_order_line_item import WorkOrderLineItem
 from app.models.work_orders.work_order_line_item_resolution import (
     WorkOrderLineItemResolution,
 )
-from app.models.work_orders.work_order_note import WorkOrderNote
+from app.models.work_orders.work_order_note import WorkOrderNote, WorkOrderNoteChannel
 from app.models.work_orders.work_order_photo import WorkOrderPhoto, WorkOrderPhotoStage
 from app.models.work_orders.work_order_ro import WorkOrderRo
 
@@ -70,6 +70,7 @@ __all__ = [
     "RepairType",
     "StatusTrackingMode",
     "WoActivityLogEntityType",
+    "WorkOrderNoteChannel",
     "WorkOrderPhotoStage",
     "WorkOrderStatus",
     # Tables

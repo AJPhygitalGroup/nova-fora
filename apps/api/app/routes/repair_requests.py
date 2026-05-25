@@ -31,17 +31,26 @@ from app.auth.dependencies import get_current_user
 from app.db import get_session
 from app.i18n_errors import E, tr_error
 from app.i18n_helpers import get_request_language
+from app.models.defect import Defect, DefectSource
 from app.models.user import User, UserRole
 from app.models.work_orders import (
+    DefectResolution,
+    DefectResolutionStatus,
     RepairRequest,
     RepairRequestDefect,
     RepairRequestStatus,
+    RepairType,
     VendorWorkshop,
     WoActivityLogEntityType,
     WorkOrder,
     WorkOrderStatus,
 )
-from app.services.wo_activity_log import log_status_change
+from app.services.defect_validation import (
+    DefectValidationError,
+    validate_defect_write,
+)
+from app.services.pubsub import publish_defect_created
+from app.services.wo_activity_log import log_event, log_status_change
 from app.services.wo_router import route_repair_request
 
 router = APIRouter(prefix="/repair-requests", tags=["repair-requests"])
@@ -409,3 +418,434 @@ async def cancel_rr(
     defect_ids = await _list_defect_ids(session, rr.id)
     wo_ids = await _list_wo_ids(session, rr.id)
     return RepairRequestResponse.from_rows(rr, defect_ids, wo_ids)
+
+
+# ═════════════════════════════════════════════════════
+# WO V2 iter-1 — mid-find (spec §7.C)
+# ═════════════════════════════════════════════════════
+
+# Roles that can surface a mid-visit defect: SW (recording on behalf of
+# the tech), tech (direct from the bay), vendor admin, plus site_admin.
+# Customer-side roles can't add a defect mid-visit — they don't physically
+# see the vehicle.
+_MID_FIND_ROLES = (
+    UserRole.SERVICE_WRITER,
+    UserRole.VENDOR_ADMIN,
+    UserRole.TECHNICIAN,
+    UserRole.SITE_ADMIN,
+)
+
+
+class MidFindCreateRequest(BaseModel):
+    """Body for POST /repair-requests/{id}/add-defect.
+
+    Mirrors DefectV2Create with three server-side constraints applied
+    automatically:
+      - source is forced to 'shop_finding'
+      - inspection_id is forced to NULL
+      - vehicle_id is read from the RR (UI sends nothing)
+    Only (part, defect_type, position, details, notes) are the inspector's
+    inputs.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    part: str = Field(..., max_length=40, description="DefectPart enum value, e.g. 'headlight'")
+    defect_type: str = Field(..., max_length=40, description="DefectType enum value, e.g. 'not_working'")
+    position: str | None = Field(default=None, max_length=30)
+    details: dict = Field(default_factory=dict)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class MidFindCreateResponse(BaseModel):
+    """Response — minimal acknowledgement so the SW UI can append to the
+    running defect list and the customer side can pulse the "needs scope
+    approval" chip. Frontend fetches the full defect via GET /defects/{id}.
+    """
+
+    defect_id: int
+    repair_request_id: str
+    active_wo_id: int | None = Field(
+        default=None,
+        description="The currently-active WO on this RR (if any). Helpful for "
+                    "UI badges like 'Found during RO-12345'.",
+    )
+    reported_by_role: str = Field(
+        ..., description="Role of the actor (UI uses this to label MID-FIND badges).",
+    )
+
+
+@router.post(
+    "/{rr_id}/add-defect",
+    response_model=MidFindCreateResponse,
+    summary="SW / Tech: log a defect discovered mid-visit (spec §7.C)",
+)
+async def add_mid_find_defect(
+    payload: MidFindCreateRequest,
+    request: Request,
+    rr_id: str = Path(..., description="RR-XXXXX or bare int"),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> MidFindCreateResponse:
+    """Insert a defects row with source='shop_finding', link to the RR
+    via repair_request_defects, log mid_finding_added. The customer then
+    sees the defect with a MID-FIND badge on their scope-approval queue.
+
+    Constraints enforced:
+      - RR must be active (status in 'open', 'accepted').
+      - Caller must be a vendor-side role with visibility on the RR
+        (mirrors _can_view_rr's vendor branch).
+      - The defect's (vehicle, part, defect_type, position) cannot
+        duplicate an existing defects row — the functional unique
+        index on the defects table raises IntegrityError → 409.
+    """
+    from sqlalchemy.exc import IntegrityError  # local import (only used here)
+
+    lang = get_request_language(request)
+
+    if current.role not in _MID_FIND_ROLES:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"role {current.role.value} cannot record mid-visit findings",
+        )
+
+    rrid = _parse_rr_id(rr_id)
+    rr = await _load_rr_or_404(session, rrid, lang)
+
+    if rr.status not in (RepairRequestStatus.OPEN, RepairRequestStatus.ACCEPTED):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"repair request status is {rr.status.value}; mid-find requires open or accepted",
+        )
+
+    if not await _can_view_rr(session, rr, current):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "no access to this repair request")
+
+    try:
+        await validate_defect_write(
+            session,
+            vehicle_id=rr.vehicle_id,
+            part=payload.part,
+            defect_type=payload.defect_type,
+            position=payload.position,
+            details=payload.details,
+        )
+    except DefectValidationError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
+
+    new_defect = Defect(
+        vehicle_id=rr.vehicle_id,
+        inspection_id=None,
+        source=DefectSource.SHOP_FINDING,
+        part=payload.part,
+        defect_type=payload.defect_type,
+        position=payload.position,
+        details=payload.details,
+        notes=payload.notes,
+        reported_by_id=current.id,
+    )
+    session.add(new_defect)
+    try:
+        await session.flush()
+    except IntegrityError as e:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "an identical defect already exists on this vehicle",
+        ) from e
+
+    session.add(
+        RepairRequestDefect(
+            repair_request_id=rrid,
+            defect_id=new_defect.id,
+        )
+    )
+
+    active_wo_id: int | None = (
+        await session.execute(
+            select(WorkOrder.id)
+            .where(WorkOrder.repair_request_id == rrid)
+            .where(
+                WorkOrder.status.in_(
+                    [
+                        WorkOrderStatus.PENDING_ACCEPTANCE,
+                        WorkOrderStatus.ACCEPTED,
+                        WorkOrderStatus.IN_PROGRESS,
+                    ]
+                )
+            )
+            .order_by(WorkOrder.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    await log_event(
+        session,
+        entity_type=WoActivityLogEntityType.REPAIR_REQUEST,
+        entity_id=rrid,
+        action="mid_finding_added",
+        actor_id=current.id,
+        details={
+            "defect_id": new_defect.id,
+            "active_wo_id": active_wo_id,
+            "reported_by_role": current.role.value,
+            "part": payload.part,
+            "defect_type": payload.defect_type,
+            "position": payload.position,
+        },
+    )
+
+    await session.commit()
+    await session.refresh(new_defect)
+
+    try:
+        await publish_defect_created({
+            "event": "defect_created",
+            "defect_id": new_defect.id,
+            "vehicle_id": rr.vehicle_id,
+            "dsp_id": rr.dsp_id,
+            "source": DefectSource.SHOP_FINDING.value,
+            "mid_find": True,
+            "repair_request_id": rrid,
+        })
+    except Exception:  # noqa: BLE001
+        pass
+
+    return MidFindCreateResponse(
+        defect_id=new_defect.id,
+        repair_request_id=rr.id_str,
+        active_wo_id=active_wo_id,
+        reported_by_role=current.role.value,
+    )
+
+
+# ═════════════════════════════════════════════════════
+# WO V2 iter-1 — Defer-with-clone (spec §7.H)
+# ═════════════════════════════════════════════════════
+#
+# When SW realises a defect can't be completed on the current visit
+# (parts pending, vendor mismatch, fmc declined, etc.) the defect spawns
+# a follow-up RR linked to the original via parent_repair_request_id.
+# Spec §7.H semantics:
+#   1. Source DefectResolution.status → DEFERRED (per WO that has it).
+#   2. New RR created, parent_repair_request_id = source RR.
+#   3. SAME defect linked to new RR via RepairRequestDefect.
+#         (Defect is SHARED, not moved — the defect row itself doesn't
+#          carry an RR pointer.)
+#   4. Router picks vendor for new RR → spawns new WO automatically.
+#   5. wo_activity_log:defect_moved on the SOURCE RR.
+#
+# Different from `defer_line_item` (which exists for the line-item flow
+# we keep dormant in iter-1). This one is defect-level.
+
+
+class DeferDefectBody(BaseModel):
+    """Body for POST /repair-requests/{rr_id}/defer-defect."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    defect_id: int = Field(..., description="ID of the defect to spin off into a follow-up RR.")
+    reason: str = Field(
+        ..., min_length=1, max_length=500,
+        description="Free-text reason. Becomes the DR.notes + the activity-log details payload.",
+    )
+    repair_type: str | None = Field(
+        default=None,
+        description="Override the source RR's repair_type for the new RR (e.g., spec'd "
+                    "as 'mechanical' originally but the follow-up is body work). Defaults "
+                    "to source RR's repair_type.",
+    )
+    target_workshop_id: int | None = Field(
+        default=None,
+        description="Force-route the follow-up to this workshop (DSP override on the "
+                    "router's auto-pick). The workshop must handle the new RR's repair_type.",
+    )
+    exclude_workshop_ids: list[int] = Field(
+        default_factory=list,
+        description="Workshops to skip when auto-picking the follow-up vendor. Useful when "
+                    "the source vendor is the one that can't do the work.",
+    )
+
+
+class DeferDefectResponse(BaseModel):
+    source_repair_request_id: str
+    new_repair_request_id: str
+    new_work_order_id: str | None = Field(
+        default=None,
+        description="None when routing found no eligible vendor — the new RR exists in 'open' "
+                    "status, awaiting an operator to add a vendor or re-route manually.",
+    )
+    defect_id: int
+    deferred_defect_resolution_ids: list[int] = Field(
+        ..., description="DefectResolution rows on source-RR child WOs that were flipped to DEFERRED.",
+    )
+
+
+@router.post(
+    "/{rr_id}/defer-defect",
+    response_model=DeferDefectResponse,
+    summary="SW / Tech: defer a defect to a follow-up RR (spec §7.H)",
+)
+async def defer_defect_to_followup(
+    payload: DeferDefectBody,
+    request: Request,
+    rr_id: str = Path(..., description="Source RR (RR-XXXXX or bare int)"),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> DeferDefectResponse:
+    """Spawn a follow-up RR for a defect that can't be completed on the
+    current visit. Source-side DefectResolutions for the defect flip to
+    DEFERRED; the same defect is re-linked to the new RR (shared, not
+    moved); router picks a vendor for the follow-up.
+
+    Auth: vendor-side roles only (DSP cannot defer — that's a "we can't
+    do this today" call that lives with the SW / tech).
+    """
+    from app.services.wo_rr_status import refresh_rr_status  # local import
+    from app.services.wo_router import route_repair_request  # already imported above
+
+    lang = get_request_language(request)
+
+    if current.role not in _MID_FIND_ROLES:  # same vendor-side set as mid-find
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"role {current.role.value} cannot defer a defect",
+        )
+
+    src_rrid = _parse_rr_id(rr_id)
+    src_rr = await _load_rr_or_404(session, src_rrid, lang)
+
+    if src_rr.status not in (RepairRequestStatus.OPEN, RepairRequestStatus.ACCEPTED):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"source RR status is {src_rr.status.value}; defer requires open or accepted",
+        )
+    if not await _can_view_rr(session, src_rr, current):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "no access to this repair request")
+
+    # Defect must actually be linked to this RR.
+    link_exists = (
+        await session.execute(
+            select(RepairRequestDefect)
+            .where(RepairRequestDefect.repair_request_id == src_rrid)
+            .where(RepairRequestDefect.defect_id == payload.defect_id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if link_exists is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"defect {payload.defect_id} is not on repair request {src_rr.id_str}",
+        )
+
+    # Determine the new RR's repair_type. Validate enum on override.
+    if payload.repair_type is not None:
+        try:
+            new_type = RepairType(payload.repair_type)
+        except ValueError:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"unknown repair_type {payload.repair_type!r}",
+            ) from None
+    else:
+        new_type = src_rr.repair_type
+
+    # Step 1 — flip source-side DefectResolutions for this defect.
+    src_wo_ids = await _list_wo_ids(session, src_rrid)
+    deferred_dr_ids: list[int] = []
+    if src_wo_ids:
+        src_drs = list(
+            (
+                await session.execute(
+                    select(DefectResolution)
+                    .where(DefectResolution.work_order_id.in_(src_wo_ids))
+                    .where(DefectResolution.defect_id == payload.defect_id)
+                )
+            ).scalars()
+        )
+        for dr in src_drs:
+            if dr.status == DefectResolutionStatus.RESOLVED:
+                # Already done on this visit — skip (don't flip to deferred,
+                # would be a data lie). Most paths won't hit this since SW
+                # only defers from in-progress visits.
+                continue
+            dr.status = DefectResolutionStatus.DEFERRED
+            # Append-not-overwrite: preserve existing notes.
+            dr.notes = (
+                f"{dr.notes}\n[deferred] {payload.reason}"
+                if dr.notes else f"[deferred] {payload.reason}"
+            )
+            session.add(dr)
+            deferred_dr_ids.append(dr.id)
+
+    # Step 2 — create the new RR with parent pointer.
+    new_rr = RepairRequest(
+        vehicle_id=src_rr.vehicle_id,
+        dsp_id=src_rr.dsp_id,
+        repair_type=new_type,
+        status=RepairRequestStatus.OPEN,
+        is_rush=src_rr.is_rush,  # carry the rush flag forward
+        parent_repair_request_id=src_rrid,
+        created_by_id=current.id,
+    )
+    session.add(new_rr)
+    await session.flush()  # populate new_rr.id
+
+    # Step 3 — link the SAME defect to the new RR. Composite PK so it's
+    # either inserted or 409 (which would be a logic bug — we just made
+    # the RR).
+    session.add(
+        RepairRequestDefect(
+            repair_request_id=new_rr.id,
+            defect_id=payload.defect_id,
+        )
+    )
+    await session.flush()
+
+    # Step 4 — route the new RR (creates its WO).
+    new_wo = await route_repair_request(
+        session,
+        repair_request_id=new_rr.id,
+        actor_id=current.id,
+        exclude_workshop_ids=payload.exclude_workshop_ids or None,
+        target_workshop_id=payload.target_workshop_id,
+    )
+    # new_wo can be None (no eligible vendor) — the router already emitted
+    # `no_eligible_vendor`. We still return success; operator handles it.
+
+    # Step 5 — defect_moved on the SOURCE RR for audit lineage.
+    await log_event(
+        session,
+        entity_type=WoActivityLogEntityType.REPAIR_REQUEST,
+        entity_id=src_rrid,
+        action="defect_moved",
+        actor_id=current.id,
+        details={
+            "defect_id": payload.defect_id,
+            "source_rr_id": src_rrid,
+            "destination_rr_id": new_rr.id,
+            "destination_wo_id": new_wo.id if new_wo else None,
+            "reason": payload.reason,
+            "repair_type": new_type.value,
+            "deferred_defect_resolution_ids": deferred_dr_ids,
+            "by_role": current.role.value,
+        },
+    )
+
+    # Step 6 — RR status refresh on the source (deferred DRs don't change
+    # WO status, so the source rollup typically stays at 'accepted').
+    await refresh_rr_status(
+        session, repair_request_id=src_rrid, actor_id=current.id
+    )
+
+    await session.commit()
+    await session.refresh(new_rr)
+
+    return DeferDefectResponse(
+        source_repair_request_id=src_rr.id_str,
+        new_repair_request_id=new_rr.id_str,
+        new_work_order_id=(
+            f"WO-{new_wo.id:05d}" if new_wo and new_wo.id is not None else None
+        ),
+        defect_id=payload.defect_id,
+        deferred_defect_resolution_ids=deferred_dr_ids,
+    )

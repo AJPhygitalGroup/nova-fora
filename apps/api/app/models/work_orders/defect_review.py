@@ -95,6 +95,19 @@ class DefectReview(SQLModel, table=True):
     )
     reason: str | None = Field(default=None)
 
+    is_rush: bool = Field(
+        default=False,
+        sa_column=Column(
+            "is_rush",
+            sa.Boolean,
+            nullable=False,
+            server_default=sa.false(),
+        ),
+        description="Promoted from the iter-1 demo: surfaces a rush-priority "
+                    "filter on the customer's review queue. Set when the parent "
+                    "repair_request.is_rush is true at review-creation time.",
+    )
+
     created_at: datetime = Field(
         default_factory=utc_now,
         sa_column=Column(

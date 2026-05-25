@@ -16,10 +16,11 @@ Properties:
     columns beyond `notes`.
 """
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
 
 import sqlalchemy as sa
-from sqlalchemy import CheckConstraint, Column
+from sqlalchemy import CheckConstraint, Column, Numeric
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
@@ -59,6 +60,13 @@ class Defect(SQLModel, table=True):
             "(source = 'inspection' AND inspection_id IS NOT NULL) "
             "OR (source <> 'inspection' AND inspection_id IS NULL)",
             name="defects_source_inspection_consistency",
+        ),
+        # WO V2 iter-1 cost-approval gate (spec §3.15). cost_decision is
+        # NULL until SW sets a cost; once set it must resolve to one of two
+        # terminal values.
+        CheckConstraint(
+            "cost_decision IS NULL OR cost_decision IN ('approved', 'rejected')",
+            name="defects_cost_decision_chk",
         ),
     )
 
@@ -130,6 +138,47 @@ class Defect(SQLModel, table=True):
             nullable=False,
             index=True,
         ),
+    )
+
+    # ── Cost approval (WO V2 iter-1 substitute for line-item cost gate) ──
+    # Spec §7.A and §3.15. The Service Writer sets estimated_cost on a
+    # scope-approved defect; the customer must approve when the CMR
+    # threshold is exceeded or when AMR's FMC cap falls below the vendor
+    # estimate (AMR shortfall). fmc_capped_at carries Amazon's cap so the
+    # UI can render "FMC approved $700 of $950 — cover the remaining $250?"
+    # When iter-2 lights up the line_item.status='pending_cost_approval'
+    # flow these columns stay around for AMR-shortfall (per-defect, not
+    # per-line) and historical visibility.
+    estimated_cost: Decimal | None = Field(
+        default=None,
+        sa_column=Column("estimated_cost", Numeric(10, 2), nullable=True),
+        description="SW's quote for repairing this defect (USD). NULL until set.",
+    )
+    cost_set_at: datetime | None = Field(
+        default=None,
+        sa_column=Column("cost_set_at", sa.DateTime(timezone=True), nullable=True),
+    )
+    cost_set_by: int | None = Field(
+        default=None, foreign_key="users.id",
+        description="SW user who entered the estimate.",
+    )
+    cost_decision: str | None = Field(
+        default=None, max_length=10,
+        description="'approved' or 'rejected' (CHECK constraint); NULL while pending or auto-eligible.",
+    )
+    cost_decided_at: datetime | None = Field(
+        default=None,
+        sa_column=Column("cost_decided_at", sa.DateTime(timezone=True), nullable=True),
+    )
+    cost_decided_by: int | None = Field(
+        default=None, foreign_key="users.id",
+        description="Customer user who approved/rejected. NULL when decision_method is auto.",
+    )
+    fmc_capped_at: Decimal | None = Field(
+        default=None,
+        sa_column=Column("fmc_capped_at", Numeric(10, 2), nullable=True),
+        description="Amazon FMC reimbursement cap for AMR defects. When set AND "
+                    "below estimated_cost, the customer sees the shortfall ping.",
     )
 
     # ── Audit ──

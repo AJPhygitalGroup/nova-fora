@@ -17,9 +17,11 @@ then commit metadata via this route.
 """
 import json
 from datetime import date, datetime, time, timezone
+from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -44,6 +46,7 @@ from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
 from app.models.work_orders import (
     DefectReview,
+    DefectReviewDecision,
     RepairRequest,
     RepairRequestDefect,
     WorkOrder,
@@ -65,7 +68,12 @@ from app.services.defect_validation import (
 )
 from app.services.pubsub import (
     publish_defect_created,
+    publish_defect_review_event,
     subscribe_defect_created,
+)
+from app.services.wo_defect_costs import (
+    customer_cost_decision,
+    set_defect_cost,
 )
 from app.storage.s3 import delete_object, generate_download_url
 
@@ -729,3 +737,284 @@ async def delete_defect_photo(
     delete_object(photo.storage_key)
     await session.commit()
     return None
+
+
+# ═════════════════════════════════════════════════════
+# WO V2 iter-1 cost approval — see services/wo_defect_costs.py
+# and the spec §7.A for the full state machine.
+# ═════════════════════════════════════════════════════
+
+# Roles allowed to write a cost estimate. SW + vendor_admin are the
+# obvious ones; site_admin can act for support / debugging.
+_SW_COST_ROLES = (UserRole.SERVICE_WRITER, UserRole.VENDOR_ADMIN, UserRole.SITE_ADMIN)
+
+# Roles allowed to approve/reject a customer-facing cost. Anyone with
+# scope-approval authority on the DSP can also approve cost — that's
+# the same set we use for /defect-reviews approve/reject.
+_CUSTOMER_COST_ROLES = (
+    UserRole.DSP_OWNER,
+    UserRole.DSP_MANAGER,
+    UserRole.SITE_ADMIN,
+)
+
+
+class DefectCostSetRequest(BaseModel):
+    """Body for POST /defects/{id}/cost (Service Writer action)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    estimated_cost: Decimal = Field(
+        ..., gt=0, le=Decimal("999999.99"),
+        description="Vendor's quoted total for repairing this defect (USD). Must be > 0.",
+    )
+    fmc_capped_at: Decimal | None = Field(
+        default=None, ge=0, le=Decimal("999999.99"),
+        description="Amazon FMC's reimbursement cap when this is an AMR defect "
+                    "and the cap is below the vendor estimate (AMR-shortfall). "
+                    "Leave NULL for CMR defects or when FMC covers the full estimate.",
+    )
+
+
+class DefectCostSetResponse(BaseModel):
+    """Response for POST /defects/{id}/cost."""
+
+    defect_id: int = Field(..., description="Echoed for client cache invalidation.")
+    estimated_cost: Decimal
+    fmc_capped_at: Decimal | None
+    billing_type: str = Field(..., description="'amr' or 'cmr' — derived from defect_group.")
+    auto_approved: bool = Field(
+        ..., description="True if the cost passed auto-thresholds; false if customer must decide.",
+    )
+    auto_approve_reason: str | None = Field(
+        default=None,
+        description="'below_cmr_threshold' | 'no_amr_shortfall' | null. Useful for SW toast copy.",
+    )
+    cost_decision: str | None = Field(
+        ..., description="'approved' (when auto-approved) or null (pending customer decision).",
+    )
+
+
+class DefectCostDecisionRequest(BaseModel):
+    """Body for POST /defects/{id}/cost-decision (customer action)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    decision: str = Field(
+        ..., description="'approved' or 'rejected'.",
+    )
+    reason: str | None = Field(
+        default=None, max_length=500,
+        description="Optional free text. Required by UX on rejection but not enforced server-side.",
+    )
+
+
+class DefectCostDecisionResponse(BaseModel):
+    """Response for POST /defects/{id}/cost-decision."""
+
+    defect_id: int
+    decision: str
+    reviewed_at: datetime
+    estimated_cost: Decimal
+    fmc_capped_at: Decimal | None
+
+
+async def _load_defect_with_vehicle(
+    session: AsyncSession, defect_id: int
+) -> tuple[Defect, Vehicle]:
+    """Fetch a defect + its vehicle, 404 if either missing."""
+    defect = (
+        await session.execute(select(Defect).where(Defect.id == defect_id))
+    ).scalar_one_or_none()
+    if defect is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "defect not found")
+    vehicle = (
+        await session.execute(select(Vehicle).where(Vehicle.id == defect.vehicle_id))
+    ).scalar_one_or_none()
+    if vehicle is None:
+        # Defect with a dangling vehicle — would be a data-integrity bug.
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"defect {defect_id} references non-existent vehicle {defect.vehicle_id}",
+        )
+    return defect, vehicle
+
+
+def _ensure_role(user: User, allowed: tuple[UserRole, ...], action: str) -> None:
+    if user.role not in allowed:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"role {user.role.value} is not allowed to {action}",
+        )
+
+
+async def _ensure_dsp_authority(
+    session: AsyncSession, user: User, vehicle: Vehicle
+) -> None:
+    """Customer-side action: the user must belong to the vehicle's DSP
+    (or be site_admin). Vendor users have no cost-decision authority.
+    """
+    if user.role == UserRole.SITE_ADMIN:
+        return
+    if user.organization_id != vehicle.dsp_id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "you can only act on defects on your own DSP's vehicles",
+        )
+
+
+def _latest_review_approved(reviews: list[DefectReview]) -> bool:
+    """Check the latest review row (by reviewed_at) — True iff approved.
+
+    Used to gate cost-set: SW shouldn't be able to quote on a defect the
+    customer hasn't yet approved the scope of.
+    """
+    if not reviews:
+        return False
+    latest = max(reviews, key=lambda r: r.reviewed_at)
+    return latest.decision == DefectReviewDecision.APPROVED
+
+
+@router.post(
+    "/{defect_id}/cost",
+    response_model=DefectCostSetResponse,
+    summary="Service Writer: set estimated cost on a scope-approved defect (iter-1)",
+)
+async def set_cost(
+    payload: DefectCostSetRequest,
+    defect_id: str = Path(..., description="FD-XXX or bare int"),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> DefectCostSetResponse:
+    """Spec §7.A — Service Writer records the cost estimate on a defect
+    whose scope has been approved. Auto-approves under thresholds; else
+    surfaces a customer cost-approval chip.
+
+    Idempotent-ish: re-quoting on the same defect overwrites the estimate
+    and resets cost_decision to NULL (customer sees the new number).
+    """
+    _ensure_role(current, _SW_COST_ROLES, "set defect cost")
+
+    did = _parse_defect_id(defect_id)
+    defect, vehicle = await _load_defect_with_vehicle(session, did)
+
+    # Gate: cost can only be set on scope-approved defects. Load all
+    # reviews and check the latest. (defect_review rows are append-only;
+    # a rejected scope can be re-approved later, but until then SW can't
+    # quote.)
+    reviews = list(
+        (
+            await session.execute(
+                select(DefectReview).where(DefectReview.defect_id == did)
+            )
+        ).scalars()
+    )
+    if not _latest_review_approved(reviews):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "defect scope is not approved yet — cost cannot be set",
+        )
+
+    try:
+        result = await set_defect_cost(
+            session,
+            defect_id=did,
+            estimated_cost=payload.estimated_cost,
+            fmc_capped_at=payload.fmc_capped_at,
+            actor_id=current.id,
+        )
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
+
+    await session.commit()
+    await session.refresh(result.defect)
+
+    # Best-effort SSE — readers listening on the review-event channel get
+    # an immediate cue to refetch.
+    try:
+        await publish_defect_review_event({
+            "event": "cost_set",
+            "defect_id": did,
+            "dsp_id": vehicle.dsp_id,
+            "auto_approved": result.auto_approved,
+        })
+    except Exception:  # noqa: BLE001
+        pass
+
+    return DefectCostSetResponse(
+        defect_id=did,
+        estimated_cost=result.defect.estimated_cost,
+        fmc_capped_at=result.defect.fmc_capped_at,
+        billing_type=result.billing_type,
+        auto_approved=result.auto_approved,
+        auto_approve_reason=result.auto_approve_reason,
+        cost_decision=result.defect.cost_decision,
+    )
+
+
+@router.post(
+    "/{defect_id}/cost-decision",
+    response_model=DefectCostDecisionResponse,
+    summary="Customer (DSP): approve or reject a pending defect cost (iter-1)",
+)
+async def cost_decision(
+    payload: DefectCostDecisionRequest,
+    defect_id: str = Path(..., description="FD-XXX or bare int"),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> DefectCostDecisionResponse:
+    """Spec §7.A — DSP owner / manager clicks Approve $X or Decline on a
+    cost chip. Writes defects.cost_decision + a defect_reviews audit row.
+
+    Rejecting does NOT cancel the defect; the SW can re-quote with a
+    different number.
+    """
+    _ensure_role(current, _CUSTOMER_COST_ROLES, "decide on defect cost")
+
+    decision_str = payload.decision.strip().lower()
+    if decision_str not in ("approved", "rejected"):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "decision must be 'approved' or 'rejected'",
+        )
+    decision_enum = (
+        DefectReviewDecision.APPROVED
+        if decision_str == "approved"
+        else DefectReviewDecision.REJECTED
+    )
+
+    did = _parse_defect_id(defect_id)
+    defect, vehicle = await _load_defect_with_vehicle(session, did)
+    await _ensure_dsp_authority(session, current, vehicle)
+
+    try:
+        review = await customer_cost_decision(
+            session,
+            defect_id=did,
+            decision=decision_enum,
+            actor_id=current.id,
+            reason=payload.reason,
+        )
+    except ValueError as e:
+        # Either no cost set yet, or it was auto-approved — surface as 409.
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e)) from e
+
+    await session.commit()
+    await session.refresh(defect)
+
+    try:
+        await publish_defect_review_event({
+            "event": "cost_decided",
+            "defect_id": did,
+            "decision": decision_str,
+            "dsp_id": vehicle.dsp_id,
+        })
+    except Exception:  # noqa: BLE001
+        pass
+
+    return DefectCostDecisionResponse(
+        defect_id=did,
+        decision=decision_str,
+        reviewed_at=review.reviewed_at,
+        estimated_cost=defect.estimated_cost,
+        fmc_capped_at=defect.fmc_capped_at,
+    )

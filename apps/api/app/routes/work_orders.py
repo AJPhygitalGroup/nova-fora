@@ -63,6 +63,7 @@ from app.models.work_orders import (
     WorkOrder,
     WorkOrderLineItem,
     WorkOrderNote,
+    WorkOrderNoteChannel,
     WorkOrderPhoto,
     WorkOrderPhotoStage,
     WorkOrderRo,
@@ -70,6 +71,7 @@ from app.models.work_orders import (
 )
 from app.services.wo_activity_log import log_event, log_status_change
 from app.services.wo_defect_resolutions import sync_all_drs_for_wo
+from app.services.wo_rr_status import refresh_rr_status
 from app.services.wo_line_items import (
     add_mid_repair_line_item,
     defer_line_item_with_followup_rr,
@@ -337,6 +339,10 @@ class NoteResp(BaseModel):
     work_order_id: int
     author_id: int | None = None
     author_role: str
+    channel: str = Field(
+        default="internal",
+        description="'internal' (vendor team only) or 'customer' (bilateral SW ↔ DSP thread).",
+    )
     body: str
     created_at: datetime
 
@@ -347,6 +353,7 @@ class NoteResp(BaseModel):
             work_order_id=n.work_order_id,
             author_id=n.author_id,
             author_role=n.author_role.value if hasattr(n.author_role, "value") else n.author_role,
+            channel=n.channel.value if hasattr(n.channel, "value") else (n.channel or "internal"),
             body=n.body,
             created_at=n.created_at,
         )
@@ -514,6 +521,10 @@ class RoPatchBody(BaseModel):
 class NoteBody(BaseModel):
     body: str = Field(..., min_length=1)
     author_role: NoteAuthorRole = NoteAuthorRole.ADMIN
+    channel: WorkOrderNoteChannel = Field(
+        default=WorkOrderNoteChannel.INTERNAL,
+        description="'internal' (vendor team only) or 'customer' (visible to DSP).",
+    )
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
 
@@ -1085,8 +1096,20 @@ async def accept_wo(
         to_status=WorkOrderStatus.ACCEPTED.value,
         actor_id=current.id,
     )
+    # Spec catalog also wants the friendly verb (analytics readability).
+    await log_event(
+        session,
+        entity_type=WoActivityLogEntityType.WORK_ORDER,
+        entity_id=wo.id,
+        action="accepted",
+        actor_id=current.id,
+        details={"prev_status": prev},
+    )
     await generate_line_items_on_accept(
         session, work_order_id=wo.id, actor_id=current.id
+    )
+    await refresh_rr_status(
+        session, repair_request_id=wo.repair_request_id, actor_id=current.id
     )
     await session.commit()
     await session.refresh(wo)
@@ -1155,6 +1178,12 @@ async def decline_wo(
             exclude_workshop_ids=[declining_workshop_id],
         )
 
+    # Refresh AFTER any re-route — if a new WO got spawned, the rollup
+    # picks it up and keeps the RR in 'accepted' instead of flipping to
+    # 'cancelled' just because the prior WO is now declined.
+    await refresh_rr_status(
+        session, repair_request_id=wo.repair_request_id, actor_id=current.id
+    )
     await session.commit()
     await session.refresh(wo)
     await _publish_wo_changed(wo, "declined")
@@ -1198,6 +1227,17 @@ async def start_wo(
         from_status=prev,
         to_status=WorkOrderStatus.IN_PROGRESS.value,
         actor_id=current.id,
+    )
+    await log_event(
+        session,
+        entity_type=WoActivityLogEntityType.WORK_ORDER,
+        entity_id=wo.id,
+        action="started",
+        actor_id=current.id,
+        details={"prev_status": prev},
+    )
+    await refresh_rr_status(
+        session, repair_request_id=wo.repair_request_id, actor_id=current.id
     )
     await session.commit()
     await session.refresh(wo)
@@ -1345,8 +1385,23 @@ async def complete_wo(
         to_status=WorkOrderStatus.COMPLETED.value,
         actor_id=current.id,
     )
+    await log_event(
+        session,
+        entity_type=WoActivityLogEntityType.WORK_ORDER,
+        entity_id=wo.id,
+        action="completed",
+        actor_id=current.id,
+        details={
+            "prev_status": prev,
+            "last_mileage": body.last_mileage,
+            "finalized_line_items": finalized_count,
+        },
+    )
     # Sync DR statuses now that line items are terminal
     await sync_all_drs_for_wo(session, work_order_id=wo.id, actor_id=current.id)
+    await refresh_rr_status(
+        session, repair_request_id=wo.repair_request_id, actor_id=current.id
+    )
     await session.commit()
     await session.refresh(wo)
     await _publish_wo_changed(wo, "completed")
@@ -1404,6 +1459,21 @@ async def cancel_wo(
         from_status=prev,
         to_status=WorkOrderStatus.CANCELLED.value,
         actor_id=current.id,
+    )
+    await log_event(
+        session,
+        entity_type=WoActivityLogEntityType.WORK_ORDER,
+        entity_id=wo.id,
+        action="cancelled",
+        actor_id=current.id,
+        details={
+            "prev_status": prev,
+            "reason": wo.cancelled_reason,
+            "by_role": current.role.value,
+        },
+    )
+    await refresh_rr_status(
+        session, repair_request_id=wo.repair_request_id, actor_id=current.id
     )
     await session.commit()
     await session.refresh(wo)
@@ -1956,10 +2026,30 @@ async def add_note(
         if isinstance(body.author_role, str)
         else body.author_role
     )
+    channel = (
+        WorkOrderNoteChannel(body.channel)
+        if isinstance(body.channel, str)
+        else body.channel
+    )
+    # Authorization: only vendor-side roles can write 'internal'; customers
+    # can post only to 'customer'. (site_admin bypass.)
+    if current.role != UserRole.SITE_ADMIN:
+        if channel == WorkOrderNoteChannel.INTERNAL and current.role in (
+            UserRole.DSP_OWNER,
+            UserRole.DSP_MANAGER,
+            UserRole.DSP_INSPECTOR,
+            UserRole.DSP_VIEWER,
+        ):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "DSP users cannot post to the internal vendor thread",
+            )
+
     note = WorkOrderNote(
         work_order_id=wo.id,
         author_id=current.id,
         author_role=role,
+        channel=channel,
         body=body.body,
     )
     session.add(note)
@@ -1970,8 +2060,552 @@ async def add_note(
         entity_id=note.id,
         action="note_added",
         actor_id=current.id,
-        details={"work_order_id": wo.id, "author_role": role.value},
+        details={
+            "work_order_id": wo.id,
+            "author_role": role.value,
+            "channel": channel.value,
+        },
     )
     await session.commit()
     await session.refresh(note)
     return NoteResp.from_model(note)
+
+
+@router.get(
+    "/{wo_id}/notes",
+    response_model=list[NoteResp],
+    summary="List notes on a WO, optionally filtered by channel (iter-1)",
+)
+async def list_notes(
+    request: Request,
+    wo_id: str = Path(..., examples=["WO-00001"]),
+    channel: str | None = Query(
+        default=None,
+        description="Optional filter: 'internal' or 'customer'. Omit to return both.",
+    ),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[NoteResp]:
+    """Spec §3.11 — clients fetch a specific note channel (internal-only
+    for the vendor's private thread, customer-only for the SW ↔ DSP
+    surface) without having to filter the embedded notes from the WO
+    detail response.
+
+    DSP users are limited to channel='customer' regardless of the query
+    param; vendor users can request either side.
+    """
+    lang = get_request_language(request)
+    wo = await _load_wo_or_404(session, _parse_wo_id(wo_id), lang)
+    if not await _can_view_wo(session, wo, current):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, tr_error(E.NOT_YOUR_WORK_ORDER, lang)
+        )
+
+    # Validate channel param if given.
+    if channel is not None and channel not in ("internal", "customer"):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "channel must be 'internal' or 'customer'",
+        )
+
+    # DSP-side users can't read 'internal' notes regardless of what they ask for.
+    is_dsp_side = current.role in (
+        UserRole.DSP_OWNER,
+        UserRole.DSP_MANAGER,
+        UserRole.DSP_INSPECTOR,
+        UserRole.DSP_VIEWER,
+    )
+    effective_channel = channel
+    if is_dsp_side:
+        effective_channel = "customer"
+
+    q = select(WorkOrderNote).where(WorkOrderNote.work_order_id == wo.id)
+    if effective_channel is not None:
+        q = q.where(WorkOrderNote.channel == WorkOrderNoteChannel(effective_channel))
+    q = q.order_by(WorkOrderNote.created_at.desc())
+
+    rows = list((await session.execute(q)).scalars().all())
+    return [NoteResp.from_model(n) for n in rows]
+
+
+# ═════════════════════════════════════════════════════
+# WO V2 iter-1 — vehicle-scoped pickup (spec §7.D)
+# ═════════════════════════════════════════════════════
+#
+# Pickup is a vehicle-level event, NOT a per-RO event: one truck trip
+# covers every ready RO on the same van. Spec invariant: SW sends a
+# pickup request → write pickup_requested_at + pickup_type +
+# pickup_duration_text to EVERY ready primary RO on the vehicle in one
+# UPDATE. Same on customer confirm — write scheduled_start_at +
+# pickup_location + key_location + pickup_notes to every ready RO and
+# flip the affected WOs to in_progress.
+#
+# Don't refactor to per-RO scheduling without explicit SW + DSP signoff
+# (see project_wo_v2_status.md memory and the spec for the rationale).
+
+
+def _wo_can_request_pickup(wo: WorkOrder) -> bool:
+    """A WO is pickup-eligible iff vendor accepted it (so an RO# is
+    attached or about to be) and the work hasn't yet started."""
+    return wo.status == WorkOrderStatus.ACCEPTED
+
+
+class PickupRequestBody(BaseModel):
+    """Body for POST /work-orders/{id}/pickup-request — SW action."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pickup_type: str = Field(
+        ...,
+        description="'overnight_rush' or 'in_shop' (CHECK constraint on work_order_ros).",
+    )
+    pickup_duration_text: str | None = Field(
+        default=None, max_length=120,
+        description="Human ETA the SW shares with the DSP (e.g. '2-3 business days').",
+    )
+
+
+class PickupRequestResponse(BaseModel):
+    work_order_id: str
+    vehicle_id: int
+    updated_ro_ids: list[int] = Field(
+        ..., description="Every primary RO that was updated in the vehicle-scoped fan-out.",
+    )
+    updated_work_order_ids: list[int] = Field(
+        ..., description="Every WO whose RO was touched (siblings on the same vehicle).",
+    )
+
+
+class ConfirmPickupBody(BaseModel):
+    """Body for POST /work-orders/{id}/confirm-pickup — customer (DSP) action."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scheduled_start_at: datetime = Field(
+        ..., description="When the DSP commits the vehicle will be ready for pickup.",
+    )
+    pickup_location: str = Field(..., min_length=1, max_length=200)
+    key_location: str | None = Field(default=None, max_length=200)
+    pickup_notes: str | None = Field(default=None)
+
+
+class ConfirmPickupResponse(BaseModel):
+    work_order_id: str
+    vehicle_id: int
+    updated_ro_ids: list[int]
+    in_progress_work_order_ids: list[int] = Field(
+        ..., description="WOs that flipped to in_progress as part of this confirmation.",
+    )
+
+
+async def _ready_primary_ros_for_vehicle(
+    session: AsyncSession,
+    *,
+    vehicle_id: int,
+    require_pickup_requested: bool = False,
+) -> list[tuple[WorkOrderRo, WorkOrder]]:
+    """Return (ro, wo) pairs for every PRIMARY RO whose WO is accepted on
+    this vehicle (and, optionally, already has pickup_requested_at set).
+
+    Used by both pickup endpoints to fan out the same write to every
+    sibling RO on the same vehicle in one query (the spec invariant).
+    """
+    q = (
+        select(WorkOrderRo, WorkOrder)
+        .join(WorkOrder, WorkOrder.id == WorkOrderRo.work_order_id)
+        .where(WorkOrder.vehicle_id == vehicle_id)
+        .where(WorkOrder.status == WorkOrderStatus.ACCEPTED)
+        .where(WorkOrderRo.is_primary.is_(True))
+    )
+    if require_pickup_requested:
+        q = q.where(WorkOrderRo.pickup_requested_at.is_not(None))
+    rows = (await session.execute(q)).all()
+    return [(row[0], row[1]) for row in rows]
+
+
+@router.post(
+    "/{wo_id}/pickup-request",
+    response_model=PickupRequestResponse,
+    summary="SW: ask the customer to drop off the vehicle (spec §7.D, vehicle-scoped)",
+)
+async def send_pickup_request(
+    body: PickupRequestBody,
+    request: Request,
+    wo_id: str = Path(..., examples=["WO-00001"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> PickupRequestResponse:
+    """Vehicle-scoped fan-out: writes pickup_requested_at + pickup_type +
+    pickup_duration_text to EVERY accepted WO's primary RO on the vehicle.
+
+    The triggering WO must be accepted with a primary RO. If a sibling
+    WO on the same vehicle is also accepted, the SW's ask covers all of
+    them — they share the truck trip.
+    """
+    lang = get_request_language(request)
+
+    if body.pickup_type not in ("overnight_rush", "in_shop"):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "pickup_type must be 'overnight_rush' or 'in_shop'",
+        )
+
+    wo = await _load_wo_or_404(session, _parse_wo_id(wo_id), lang)
+    await _ensure_can_act(
+        session,
+        wo=wo,
+        user=current,
+        allowed_roles=(UserRole.SITE_ADMIN, UserRole.VENDOR_ADMIN, UserRole.SERVICE_WRITER),
+        lang=lang,
+    )
+
+    if not _wo_can_request_pickup(wo):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"work order status is {wo.status.value}; pickup requires 'accepted'",
+        )
+
+    pairs = await _ready_primary_ros_for_vehicle(session, vehicle_id=wo.vehicle_id)
+    if not pairs:
+        # Spec's no-RO# guardrail: SW must set a primary RO# before sending pickup.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "no accepted WO on this vehicle has a primary RO# — set one first",
+        )
+
+    now = utc_now()
+    updated_ro_ids: list[int] = []
+    updated_wo_ids: list[int] = []
+    for ro, sibling_wo in pairs:
+        ro.pickup_requested_at = now
+        ro.pickup_type = body.pickup_type
+        ro.pickup_duration_text = body.pickup_duration_text
+        session.add(ro)
+        updated_ro_ids.append(ro.id)
+        updated_wo_ids.append(sibling_wo.id)
+        await log_event(
+            session,
+            entity_type=WoActivityLogEntityType.RO,
+            entity_id=ro.id,
+            action="pickup_requested",
+            actor_id=current.id,
+            details={
+                "vehicle_id": wo.vehicle_id,
+                "work_order_id": sibling_wo.id,
+                "pickup_type": body.pickup_type,
+                "pickup_duration_text": body.pickup_duration_text,
+                "triggering_work_order_id": wo.id,
+                "sibling_count": len(pairs) - 1,
+            },
+        )
+
+    await session.commit()
+
+    # SSE fan-out so every affected WO's dashboard row refreshes, not
+    # just the triggering one. Best-effort.
+    for sibling_wo in (p[1] for p in pairs):
+        try:
+            await _publish_wo_changed(sibling_wo, "pickup_requested")
+        except Exception:  # noqa: BLE001
+            pass
+
+    return PickupRequestResponse(
+        work_order_id=wo.id_str,
+        vehicle_id=wo.vehicle_id,
+        updated_ro_ids=updated_ro_ids,
+        updated_work_order_ids=updated_wo_ids,
+    )
+
+
+@router.post(
+    "/{wo_id}/confirm-pickup",
+    response_model=ConfirmPickupResponse,
+    summary="Customer (DSP): confirm pickup, flips affected WOs to in_progress (spec §7.D)",
+)
+async def confirm_pickup(
+    body: ConfirmPickupBody,
+    request: Request,
+    wo_id: str = Path(..., examples=["WO-00001"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> ConfirmPickupResponse:
+    """Vehicle-scoped fan-out: writes scheduled_start_at + pickup_location
+    + key_location + pickup_notes to EVERY accepted WO's primary RO on
+    the vehicle that already had a pickup_requested_at, AND flips those
+    WOs to status='in_progress'.
+
+    Customer-side action: DSP owner / manager (or site_admin), scoped to
+    the vehicle's DSP.
+    """
+    lang = get_request_language(request)
+
+    wo = await _load_wo_or_404(session, _parse_wo_id(wo_id), lang)
+    await _ensure_can_act(
+        session,
+        wo=wo,
+        user=current,
+        allowed_roles=(UserRole.SITE_ADMIN, UserRole.DSP_OWNER, UserRole.DSP_MANAGER),
+        lang=lang,
+    )
+
+    pairs = await _ready_primary_ros_for_vehicle(
+        session, vehicle_id=wo.vehicle_id, require_pickup_requested=True
+    )
+    if not pairs:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "no accepted WO on this vehicle has a pending pickup request",
+        )
+
+    now = utc_now()
+    updated_ro_ids: list[int] = []
+    in_progress_wo_ids: list[int] = []
+    for ro, sibling_wo in pairs:
+        ro.scheduled_start_at = body.scheduled_start_at
+        ro.pickup_location = body.pickup_location
+        ro.key_location = body.key_location
+        ro.pickup_notes = body.pickup_notes
+        session.add(ro)
+        updated_ro_ids.append(ro.id)
+
+        prev = sibling_wo.status.value if hasattr(sibling_wo.status, "value") else str(sibling_wo.status)
+        sibling_wo.status = WorkOrderStatus.IN_PROGRESS
+        sibling_wo.in_progress_at = now
+        session.add(sibling_wo)
+        in_progress_wo_ids.append(sibling_wo.id)
+
+        await log_event(
+            session,
+            entity_type=WoActivityLogEntityType.RO,
+            entity_id=ro.id,
+            action="pickup_confirmed",
+            actor_id=current.id,
+            details={
+                "vehicle_id": wo.vehicle_id,
+                "work_order_id": sibling_wo.id,
+                "pickup_location": body.pickup_location,
+                "key_location": body.key_location,
+                "scheduled_start_at": body.scheduled_start_at.isoformat(),
+                "triggering_work_order_id": wo.id,
+                "sibling_count": len(pairs) - 1,
+            },
+        )
+        await log_status_change(
+            session,
+            entity_type=WoActivityLogEntityType.WORK_ORDER,
+            entity_id=sibling_wo.id,
+            from_status=prev,
+            to_status=WorkOrderStatus.IN_PROGRESS.value,
+            actor_id=current.id,
+        )
+        # Friendly verb (spec catalog): visit physically started.
+        await log_event(
+            session,
+            entity_type=WoActivityLogEntityType.WORK_ORDER,
+            entity_id=sibling_wo.id,
+            action="started",
+            actor_id=current.id,
+            details={
+                "prev_status": prev,
+                "via": "pickup_confirmed",
+                "triggering_work_order_id": wo.id,
+            },
+        )
+
+    # Vehicle-scoped pickup can touch sibling WOs across different RRs
+    # (rare but possible — two RRs on the same vehicle, both with
+    # accepted WOs at the same shop). Refresh every unique parent RR.
+    rr_ids_touched = {p[1].repair_request_id for p in pairs}
+    for rr_id in rr_ids_touched:
+        await refresh_rr_status(
+            session, repair_request_id=rr_id, actor_id=current.id
+        )
+
+    await session.commit()
+
+    for sibling_wo in (p[1] for p in pairs):
+        try:
+            await _publish_wo_changed(sibling_wo, "pickup_confirmed")
+        except Exception:  # noqa: BLE001
+            pass
+
+    return ConfirmPickupResponse(
+        work_order_id=wo.id_str,
+        vehicle_id=wo.vehicle_id,
+        updated_ro_ids=updated_ro_ids,
+        in_progress_work_order_ids=in_progress_wo_ids,
+    )
+
+
+# ═════════════════════════════════════════════════════
+# WO V2 iter-1 — RO sync events (spec §3.6 + activity-log catalog)
+# ═════════════════════════════════════════════════════
+#
+# Single endpoint for the SW to stamp the manually-managed sync columns
+# on a work_order_ro row. Five events:
+#
+#   parts_ordered    → parts_ordered_at = now()
+#   parts_received   → parts_received_at = now()
+#   submitted_to_fmc → submitted_to_fmc_at = now()
+#   fmc_approved     → fmc_approved_at = now()
+#   no_show          → vendor_status = 'no_show'    (no dedicated column)
+#
+# Each emits the matching wo_activity_log action verb so the customer
+# dashboard timeline + analytics queries get a clean event stream. In
+# production this same code path is hit by a vendor-system webhook
+# (RO Writer / Mitchell / Auto Integrate); the SW button is just the
+# manual fallback.
+
+_RO_SYNC_EVENTS = ("parts_ordered", "parts_received", "submitted_to_fmc", "fmc_approved", "no_show")
+# Subset that requires an FMC-billed (AMR) flavour to make sense. Only
+# soft-enforced via a comment for now — adding a hard check would mean
+# joining out to defects.defect_group, which a sloppy SW would just route
+# around. Keep the affordance, document the expectation.
+
+
+class RoSyncEventBody(BaseModel):
+    """Body for POST /work-orders/{wo_id}/ros/{ro_id}/sync-event."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    event: str = Field(
+        ...,
+        description="One of: parts_ordered, parts_received, submitted_to_fmc, fmc_approved, no_show.",
+    )
+    note: str | None = Field(
+        default=None, max_length=500,
+        description="Free-text context (vendor reference number, FMC ticket ID, etc.).",
+    )
+
+
+class RoSyncEventResponse(BaseModel):
+    ro_id: int
+    work_order_id: str
+    event: str
+    stamped_at: datetime
+    prior_value: datetime | str | None = Field(
+        default=None,
+        description="What the column was before (for idempotency / debugging). "
+                    "datetime for *_at columns, str for vendor_status (no_show).",
+    )
+
+
+@router.post(
+    "/{wo_id}/ros/{ro_id}/sync-event",
+    response_model=RoSyncEventResponse,
+    summary="SW: stamp an RO sync event (parts_ordered, FMC submitted, no_show, …)",
+)
+async def ro_sync_event(
+    body: RoSyncEventBody,
+    request: Request,
+    wo_id: str = Path(..., examples=["WO-00001"]),
+    ro_id: int = Path(..., ge=1),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> RoSyncEventResponse:
+    """Record a sync milestone on a WO's RO. In production this is what
+    a vendor-system webhook would call; in iter-1 the SW also has buttons
+    on the WO modal.
+
+    Pre-conditions:
+      - WO must be accepted or in_progress (sync events don't make sense
+        before acceptance or after completion).
+      - RO must belong to this WO.
+      - Event is not idempotent — re-stamping overwrites the prior value
+        and the response carries `prior_value` so the UI can warn the SW
+        ("you already recorded this 4h ago — sure you want to overwrite?").
+    """
+    lang = get_request_language(request)
+
+    if body.event not in _RO_SYNC_EVENTS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"event must be one of {_RO_SYNC_EVENTS}",
+        )
+
+    wo = await _load_wo_or_404(session, _parse_wo_id(wo_id), lang)
+    await _ensure_can_act(
+        session,
+        wo=wo,
+        user=current,
+        allowed_roles=(UserRole.SITE_ADMIN, UserRole.VENDOR_ADMIN, UserRole.SERVICE_WRITER),
+        lang=lang,
+    )
+
+    if wo.status not in (WorkOrderStatus.ACCEPTED, WorkOrderStatus.IN_PROGRESS):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"work order status is {wo.status.value}; "
+            "sync events require accepted or in_progress",
+        )
+
+    ro = (
+        await session.execute(
+            select(WorkOrderRo)
+            .where(WorkOrderRo.id == ro_id)
+            .where(WorkOrderRo.work_order_id == wo.id)
+        )
+    ).scalar_one_or_none()
+    if ro is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "RO not found on this WO")
+
+    now = utc_now()
+    prior_value: datetime | str | None = None
+    if body.event == "parts_ordered":
+        prior_value = ro.parts_ordered_at
+        ro.parts_ordered_at = now
+    elif body.event == "parts_received":
+        prior_value = ro.parts_received_at
+        ro.parts_received_at = now
+    elif body.event == "submitted_to_fmc":
+        prior_value = ro.submitted_to_fmc_at
+        ro.submitted_to_fmc_at = now
+    elif body.event == "fmc_approved":
+        prior_value = ro.fmc_approved_at
+        ro.fmc_approved_at = now
+    elif body.event == "no_show":
+        prior_value = ro.vendor_status
+        ro.vendor_status = "no_show"
+
+    session.add(ro)
+
+    details: dict = {
+        "vehicle_id": wo.vehicle_id,
+        "work_order_id": wo.id,
+        "ro_number": ro.ro_number,
+        "stamped_at": now.isoformat(),
+        "note": body.note,
+    }
+    if prior_value is not None:
+        details["prior_value"] = (
+            prior_value.isoformat() if isinstance(prior_value, datetime) else str(prior_value)
+        )
+
+    await log_event(
+        session,
+        entity_type=WoActivityLogEntityType.RO,
+        entity_id=ro.id,
+        action=body.event,  # spec-matched verb (parts_ordered, no_show, …)
+        actor_id=current.id,
+        details=details,
+    )
+
+    await session.commit()
+    await session.refresh(ro)
+
+    # Best-effort SSE — touch the WO so the DSP dashboard refreshes its
+    # row. The sync-event itself isn't directly visible to DSP today, but
+    # the timeline panel reads from wo_activity_log so a refetch surfaces it.
+    try:
+        await _publish_wo_changed(wo, f"ro_{body.event}")
+    except Exception:  # noqa: BLE001
+        pass
+
+    return RoSyncEventResponse(
+        ro_id=ro.id,
+        work_order_id=wo.id_str,
+        event=body.event,
+        stamped_at=now,
+        prior_value=prior_value,
+    )
+

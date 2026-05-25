@@ -90,7 +90,17 @@ Domain (read `nova4a-rebuild-plan.md` Sec 3.2 for the full model):
 - `Organization` (`OrgType`: `dsp` / `vendor` / `platform`) → `User` (`UserRole`: `dsp_owner` / `vendor_admin` / `technician` / `site_admin`)
 - `Vehicle` belongs to a DSP; `asset_type` (`AssetType` enum) selects which DVIC template to load
 - `Inspection` → `ReportedDefect` (1:N). Defect lifecycle: pending → acknowledged → sent_to_vendor → scheduled → converted_to_wo (or dismissed)
-- `WorkOrder` → `WorkOrderItem` (M:N to defects, with UNIQUE(defect_id) so a defect lives in at most one WO). Lifecycle: pending → acknowledged → scheduled → in_progress → completed (plus declined / canceled)
+- `WorkOrder` → `WorkOrderItem` (M:N to defects, with UNIQUE(defect_id) so a defect lives in at most one WO). Lifecycle: pending → acknowledged → scheduled → in_progress → completed (plus declined / canceled). **Superseded for new work by `app/models/work_orders/` (WO V2 — see below).**
+
+### WO V2 (iter-1)
+
+Active schema for all new work-order code paths. Spec: [Notion — Work Order Schema V2.0 — Updated Spec (post-John meeting)](https://www.notion.so/Work-Order-Schema-V2-0-Updated-Spec-post-John-meeting-380f04c9cacc811398d0e3f2f3a3f4d5). Models live under `app/models/work_orders/` (14 SQLModel tables, 11 spec-mandated enums + 2 Nova-Fora extensions: `RepairBucket`, `DspWoResponse`).
+
+Entity map: `RepairRequest` (customer's bundled authorization, survives vendor changes via `parent_repair_request_id`) ←→ `RepairRequestDefect` ↔ `Defect` (defects v2.2). One RR can spawn multiple `WorkOrder` rows (one per vendor). Per-WO state: `WorkOrderRo` (vendor RO# + sync timestamps), `DefectResolution` (per-WO defect handling), `DefectReview` (scope + cost approval audit), `WorkOrderNote` (with `channel='internal'|'customer'`), `WorkOrderPhoto` (stage-typed), `WoActivityLog` (append-only audit).
+
+**Iter-1 dormancy markers** — these are in the schema for forward compatibility but **no runtime code reads/writes them**: `StatusTrackingMode`, `WorkOrderLineItem` (entire flow), the `assert_defect_repair_links_on_complete` + `assert_external_mode_ro_present` triggers, `LineItemStatus.pending_cost_approval` + `pending_variance_reapproval`. Cost approval lives at **defect level** in iter-1 — `defects.estimated_cost` + `defects.fmc_capped_at` + `defects.cost_decision` are the gating columns (see migration `20260524_1200_wo_v2_iter1_additions.py`).
+
+**Cross-cutting WO V2 conventions**: pickup is a vehicle-scoped event (one truck trip, update every ready RO on the vehicle in one query). `customer_org_name` and `assigned_technician_name` from the spec are denormalized; Nova Fora uses FK `dsp_id → organizations` and `assigned_technician_id → users` instead (better than spec — listed as TBD in the spec's open-items).
 - `DvicTemplateItem` + defect catalog reference tables (`DefectPartSystem`, `DefectPartValidity`, `DefectDetailsSchema`) drive the inspector wizard; updates are seed runs, not migrations
 - `Photo` is polymorphic with FKs to inspection / defect / work_order
 

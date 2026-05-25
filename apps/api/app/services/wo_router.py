@@ -180,4 +180,14 @@ async def route_repair_request(
     except Exception:  # noqa: BLE001
         # Never block routing on a pubsub failure.
         pass
+
+    # Roll up the RR status now that it has at least one child WO. First
+    # route fires the open → accepted transition; re-route after a decline
+    # keeps it 'accepted' (the rollup ignores the declined WO once a new
+    # one is in pending_acceptance).
+    from app.services.wo_rr_status import refresh_rr_status  # local import to avoid cycles
+    await refresh_rr_status(
+        session, repair_request_id=rr.id, actor_id=actor_id
+    )
+
     return wo
