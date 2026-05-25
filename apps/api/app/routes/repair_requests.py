@@ -521,14 +521,28 @@ async def add_mid_find_defect(
     if not await _can_view_rr(session, rr, current):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "no access to this repair request")
 
+    # validate_defect_write needs the vehicle_class for V2.2 applicability
+    # lookups; pull it now (the RR carries vehicle_id but not class).
+    from app.models.vehicle import Vehicle as _Vehicle
+    vehicle = (
+        await session.execute(select(_Vehicle).where(_Vehicle.id == rr.vehicle_id))
+    ).scalar_one_or_none()
+    if vehicle is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            f"vehicle {rr.vehicle_id} not found for this RR",
+        )
+
     try:
         await validate_defect_write(
             session,
-            vehicle_id=rr.vehicle_id,
             part=payload.part,
             defect_type=payload.defect_type,
             position=payload.position,
             details=payload.details,
+            source=DefectSource.SHOP_FINDING,
+            inspection_id=None,
+            vehicle_class=vehicle.vehicle_class,
         )
     except DefectValidationError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e

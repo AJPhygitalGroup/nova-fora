@@ -12,7 +12,7 @@ import BodyRepairs from './BodyRepairs';
 import FleetSnapshot from './FleetSnapshot';
 import MyVehicles from './MyVehicles';
 import MyDsps from './MyDsps';
-import WorkOrders from './WorkOrders';
+import WoV2Dashboard from './WoV2Dashboard';
 import AdminPanel from './AdminPanel';
 import GhostMode from './GhostMode';
 import Defects from './Defects';
@@ -31,13 +31,23 @@ const VIEW_CATALOG = {
   snapshot:    { id: 'snapshot',    i18nKey: 'snapshot',    icon: LayoutGrid,     color: 'text-accent-blue',   Component: FleetSnapshot },
   vehicles:    { id: 'vehicles',    i18nKey: 'vehicles',    icon: Truck,          color: 'text-accent-green',  Component: MyVehicles },
   my_dsps:     { id: 'my_dsps',     i18nKey: 'myDsps',      icon: Truck,          color: 'text-accent-blue',   Component: MyDsps },
-  work_orders: { id: 'work_orders', i18nKey: 'workOrders',  icon: ClipboardList,  color: 'text-accent-purple', Component: WorkOrders },
-  // DSP-side "Work Orders Status" entry — same component as `work_orders` but
-  // surfaced inside the Dashboard dropdown so the DSP can see the full repair
-  // pipeline (pending / in_progress / completed / declined) without taking
-  // over a top-level tab. The component is already role-aware (read-only for
-  // DSP — no Accept/Decline buttons rendered).
-  wo_status:   { id: 'wo_status',   i18nKey: 'workOrdersStatus', icon: ClipboardList, color: 'text-accent-purple', Component: WorkOrders },
+  // The canonical Work Orders view. Was 'wo_v2' during the iter-1 build,
+  // promoted to the only WO surface 2026-05-25 once feature parity with
+  // the legacy WorkOrders page was reached (Accept/Decline/Start/Complete
+  // via StatusChanger + Schedule + Van detail + DSP approval flows).
+  // The old WorkOrders.jsx component is no longer imported.
+  //
+  // Two view ids point at the same component on purpose:
+  //   • `work_orders` — top-level tab. Used by vendor + site_admin roles
+  //                     (their daily entry point).
+  //   • `wo_status`  — same component, surfaced inside the DSP's
+  //                     Dashboard dropdown. The DSP's original IA placed
+  //                     "Work Orders" under Dashboard alongside Defects
+  //                     and Body Repairs, so we preserve that grouping.
+  // The Component is role-aware (renders the SW dashboard for vendors,
+  // the Customer dashboard for DSPs) so the same Component works for both.
+  work_orders: { id: 'work_orders', i18nKey: 'workOrders',  icon: ClipboardList,  color: 'text-accent-purple', Component: WoV2Dashboard },
+  wo_status:   { id: 'wo_status',   i18nKey: 'workOrders',  icon: ClipboardList,  color: 'text-accent-purple', Component: WoV2Dashboard },
   body:        { id: 'body',        i18nKey: 'body',        icon: Wrench,         color: 'text-accent-purple', Component: BodyRepairs },
   scorecard:   { id: 'scorecard',   i18nKey: 'scorecard',   icon: BarChart3,      color: 'text-accent-blue',   Component: VendorScorecard },
   admin:       { id: 'admin',       i18nKey: 'admin',       icon: Settings,       color: 'text-accent-gold',   Component: AdminPanel },
@@ -45,7 +55,10 @@ const VIEW_CATALOG = {
 };
 
 // 'Dashboard' is a virtual group rendered as a dropdown that contains the
-// defects + body repairs views (so they share a single nav slot for DSP).
+// defects + body repairs + work orders views (so they share a single nav
+// slot for DSP). `wo_status` is the DSP-side handle for Work Orders —
+// same WoV2Dashboard component as vendors get top-level, just nested in
+// the dropdown per the DSP's IA convention.
 const DASHBOARD_GROUP = {
   id: 'dashboard',
   i18nKey: 'dashboard',

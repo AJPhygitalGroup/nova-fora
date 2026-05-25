@@ -9,6 +9,7 @@ from app.i18n_errors import translate_known_detail
 from app.i18n_helpers import get_request_language
 from app.routes import (
     auth,
+    dashboards,
     defect_catalog,
     defect_reviews,
     defects,
@@ -136,6 +137,7 @@ app.include_router(defect_reviews.router)
 app.include_router(repair_requests.router)
 app.include_router(directory.router)
 app.include_router(uploads.router)
+app.include_router(dashboards.router)
 
 
 @app.get("/", tags=["root"])

@@ -46,6 +46,7 @@ from app.models.organization import OrgType, Organization
 from app.models.photo import Photo, PhotoCategory
 from app.models.user import User, UserRole, UserStatus
 from app.models.vehicle import Ownership, Vehicle
+from app.models.vehicle_note import VehicleNote
 from app.models.work_orders import (
     DeclineReasonCode,
     DefectResolution,
@@ -118,6 +119,7 @@ __all__ = [
     "UserStatus",
     "Vehicle",
     "VehicleClass",
+    "VehicleNote",
     # WO V2.0 (14 tables + enums)
     "DeclineReasonCode",
     "DefectResolution",

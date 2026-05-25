@@ -350,6 +350,36 @@ export const vehicles = {
       body: JSON.stringify(camelToSnake(body)),
     });
   },
+
+  // ── WO V2: van-scoped persistent SW notes ──
+  listNotes(id, params = {}) {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v == null || v === '') continue;
+      q.set(k, String(v));
+    }
+    const qs = q.toString();
+    return apiFetch(`/vehicles/${encodeURIComponent(id)}/notes${qs ? '?' + qs : ''}`);
+  },
+  addNote(id, { body }) {
+    return apiFetch(`/vehicles/${encodeURIComponent(id)}/notes`, {
+      method: 'POST',
+      body: JSON.stringify({ body }),
+    });
+  },
+
+  // ── WO V2: aggregated van detail ──
+  // Returns { vehicleIdStr, fleetId, plate, ... kpis, activeWork[], serviceHistory[], defectTimeline[] }.
+  woSummary(id, params = {}) {
+    const q = new URLSearchParams();
+    const paramMap = { historyLimit: 'history_limit' };
+    for (const [k, v] of Object.entries(params)) {
+      if (v == null || v === '') continue;
+      q.set(paramMap[k] || k, String(v));
+    }
+    const qs = q.toString();
+    return apiFetch(`/vehicles/${encodeURIComponent(id)}/wo-summary${qs ? '?' + qs : ''}`);
+  },
 };
 
 // ─────────────────────────────────────────────────────
@@ -557,6 +587,31 @@ export const defects = {
   delete(id) {
     return apiFetch(`/defects/${encodeURIComponent(id)}`, {
       method: 'DELETE',
+    });
+  },
+
+  // ── WO V2 iter-1: defect-level cost approval ─────
+  /**
+   * POST /defects/{id}/cost — SW writes the estimated cost.
+   * body: { estimatedCost: number, fmcCappedAt?: number }
+   * Auto-approves if AMR & no shortfall, OR if CMR under DSP threshold.
+   * Otherwise stores the cost and pings the DSP for `customer_cost_approve`.
+   */
+  setCost(id, body) {
+    return apiFetch(`/defects/${encodeURIComponent(id)}/cost`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /**
+   * POST /defects/{id}/cost-decision — DSP approves/rejects above-threshold cost.
+   * body: { decision: 'approved' | 'rejected', reason?: string }
+   */
+  costDecision(id, body) {
+    return apiFetch(`/defects/${encodeURIComponent(id)}/cost-decision`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
     });
   },
 
@@ -826,7 +881,12 @@ export const directory = {
 export const workOrders = {
   /**
    * GET /work-orders — list, role-scoped server-side.
-   * params: { status?, dspId?, vendorWorkshopId?, assignedToMe?, limit? }
+   * params: { status?, dspId?, vendorWorkshopId?, assignedToMe?,
+   *           vehicleId?, scheduledWithinHours?, hasConfirmedPickup?, limit? }
+   * hasConfirmedPickup=true filters to WOs whose primary RO has both a
+   * pickup request AND a DSP confirmation (i.e., the SW "Customer
+   * Confirmed Pickup" section). hasConfirmedPickup=false yields the
+   * inverse (AWAITING CUSTOMER bucket).
    */
   list(params = {}) {
     const q = new URLSearchParams();
@@ -836,6 +896,7 @@ export const workOrders = {
       assignedToMe: 'assigned_to_me',
       vehicleId: 'vehicle_id',
       scheduledWithinHours: 'scheduled_within_hours',
+      hasConfirmedPickup: 'has_confirmed_pickup',
     };
     for (const [k, v] of Object.entries(params)) {
       if (v === undefined || v === null || v === '') continue;
@@ -1032,8 +1093,9 @@ export const workOrders = {
   // ── Notes (sub-resource) ──────────────────────────
   /**
    * POST /work-orders/{id}/notes — append a note to the thread.
-   * body: { body, authorRole? }
+   * body: { body, authorRole?, channel? }
    *        authorRole: 'customer' | 'vendor_service_writer' | 'technician' | 'admin' | 'system'
+   *        channel: 'internal' | 'customer' (iter-1, defaults to 'internal')
    *        (defaults to 'admin' server-side; the front end should pass an
    *        appropriate role based on the current user.)
    */
@@ -1042,6 +1104,79 @@ export const workOrders = {
       method: 'POST',
       body: JSON.stringify(camelToSnake(body)),
     });
+  },
+
+  /**
+   * GET /work-orders/{id}/notes?channel=internal|customer
+   * Filtered list of the WO's notes by channel. DSP users always get
+   * channel='customer' regardless of what they pass.
+   */
+  listNotes(id, { channel } = {}) {
+    const q = channel ? `?channel=${encodeURIComponent(channel)}` : '';
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/notes${q}`);
+  },
+
+  // ── WO V2 iter-1: vehicle-scoped pickup ───────────
+  /**
+   * POST /work-orders/{id}/pickup-request — SW action.
+   * body: { pickupType: 'overnight_rush' | 'in_shop',
+   *         pickupDurationText?: string }
+   * Vehicle-scoped fan-out: writes pickup_requested_at + pickup_type +
+   * pickup_duration_text to every primary RO on the same vehicle.
+   * Returns: { workOrderId, vehicleId, updatedRoIds, updatedWorkOrderIds }
+   */
+  pickupRequest(id, body) {
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/pickup-request`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /**
+   * POST /work-orders/{id}/confirm-pickup — customer (DSP) action.
+   * body: { scheduledStartAt: ISO,
+   *         pickupLocation: string,
+   *         keyLocation?: string,
+   *         pickupNotes?: string }
+   * Vehicle-scoped fan-out: writes the confirmation to every primary RO
+   * on the vehicle that had a pending pickup_requested_at, AND flips
+   * those WOs to status='in_progress'.
+   * Returns: { workOrderId, vehicleId, updatedRoIds, inProgressWorkOrderIds }
+   */
+  confirmPickup(id, body) {
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/confirm-pickup`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /**
+   * POST /work-orders/{id}/ros/{roId}/sync-event — stamp an RO sync milestone.
+   * body: { event: 'parts_ordered'|'parts_received'|'submitted_to_fmc'|
+   *                'fmc_approved'|'no_show',
+   *         note?: string }
+   * Returns: { roId, workOrderId, event, stampedAt, priorValue }
+   * The priorValue carries what the column was before — if non-null, the UI
+   * should warn the SW ("you already recorded this 4h ago — overwrite?").
+   */
+  roSyncEvent(id, roId, body) {
+    return apiFetch(
+      `/work-orders/${encodeURIComponent(id)}/ros/${encodeURIComponent(roId)}/sync-event`,
+      {
+        method: 'POST',
+        body: JSON.stringify(camelToSnake(body)),
+      }
+    );
+  },
+
+  /**
+   * GET /work-orders/{id}/activity?limit=N&offset=M — merged audit timeline.
+   * Returns rows from wo_activity_log spanning the WO itself + its child
+   * ROs + notes + the parent RR. Used by the WO modal's Activity panel.
+   */
+  activity(id, { limit = 100, offset = 0 } = {}) {
+    const q = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/activity?${q}`);
   },
 
   /**
@@ -1306,6 +1441,76 @@ export const repairRequests = {
       method: 'POST',
       body: JSON.stringify(camelToSnake(body)),
     });
+  },
+
+  /**
+   * POST /repair-requests/{id}/defer-defect — vendor declines a single
+   * defect during review. Flips the source DefectResolution to DEFERRED,
+   * creates a follow-up RR with parent_repair_request_id pointing back
+   * here, and auto-routes the new RR to the next eligible vendor.
+   *
+   * body: {
+   *   defectId,              // required
+   *   reason,                // required, free text
+   *   repairType?,           // optional override; backend re-derives from defect if missing
+   *   targetWorkshopId?,     // optional pin (otherwise router picks first eligible)
+   *   excludeWorkshopIds?,   // skip these vendors on the re-route
+   * }
+   */
+  deferDefect(id, body) {
+    return apiFetch(`/repair-requests/${encodeURIComponent(id)}/defer-defect`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /**
+   * POST /repair-requests/{id}/add-defect — mid-find. Forces
+   * source='shop_finding'. Lets the SW add a defect the technician
+   * found mid-repair without leaving the WO view.
+   */
+  addDefect(id, body) {
+    return apiFetch(`/repair-requests/${encodeURIComponent(id)}/add-defect`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+};
+
+// ─────────────────────────────────────────────────────
+// Dashboards — counter aggregates for SW + DSP homes.
+// ─────────────────────────────────────────────────────
+/**
+ * Read-only count rollups powering the chips at the top of the WO v2
+ * Service Writer and Customer (DSP) dashboards. Each endpoint packs
+ * 5-8 counts in one round-trip so the dashboard renders without an
+ * N-fanout of separate queries.
+ *
+ * Backend: app/routes/dashboards.py.
+ */
+export const dashboards = {
+  /**
+   * GET /dashboards/sw/{vendorWorkshopId}/counters — vendor-scoped.
+   * Returns: { pending, pendingParts, pendingFmc, readyToSchedule,
+   *            awaitingCustomer, inProgress, declined, completed, cancelled }
+   * Tenancy: vendor_admin / service_writer / technician must own the
+   * workshop; site_admin can hit any.
+   */
+  swCounters(vendorWorkshopId) {
+    const id = encodeURIComponent(vendorWorkshopId);
+    return apiFetch(`/dashboards/sw/${id}/counters`);
+  },
+
+  /**
+   * GET /dashboards/dsp/{dspId}/counters — DSP-scoped.
+   * Returns: { vansInService, approveCost, approveDefects, confirmPickup,
+   *            inProgress }
+   * Tenancy: any DSP role (owner/manager/inspector/viewer) for own DSP;
+   * site_admin can hit any.
+   */
+  dspCounters(dspId) {
+    const id = encodeURIComponent(dspId);
+    return apiFetch(`/dashboards/dsp/${id}/counters`);
   },
 };
 
