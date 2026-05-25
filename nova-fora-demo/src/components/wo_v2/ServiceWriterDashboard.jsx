@@ -24,7 +24,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   ClipboardList, Loader2, AlertTriangle, RefreshCw, Hourglass, Briefcase,
   PackageCheck, Truck, PlayCircle, CheckCircle2, XCircle, Check, X,
-  Flame, ChevronRight, MapPin, KeyRound, User as UserIcon, Calendar,
+  Flame, ChevronRight, ChevronDown, MapPin, KeyRound, User as UserIcon, Calendar,
   ArrowRight, MoreVertical,
 } from 'lucide-react';
 import {
@@ -737,30 +737,65 @@ function IncomingRequestsPanel({ wos, onReview }) {
 // ─────────────────────────────────────────────────────
 function SwWoRow({ wo, onOpen, onOpenRo, onDecline, onComplete, onSchedule, onAfter }) {
   const r = primaryRo(wo);
+  // Jorge#3: expandable defects per row. Lazy-fetch the WO detail
+  // the first time the row is expanded, then cache it in state so
+  // re-expansion is instant.
+  const [expanded, setExpanded] = useState(false);
+  const [defects, setDefects] = useState(null);
+  const [loadingDefects, setLoadingDefects] = useState(false);
+  const toggleExpand = async () => {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && defects == null) {
+      setLoadingDefects(true);
+      try {
+        const detail = await woApi.get(wo.id);
+        setDefects(detail.defects || []);
+      } catch {
+        setDefects([]);
+      } finally {
+        setLoadingDefects(false);
+      }
+    }
+  };
 
   return (
+    <>
     <div className="grid grid-cols-12 px-4 py-3 items-center border-b border-navy-800 hover:bg-navy-800/40 transition-colors text-sm">
       <button
         type="button"
         onClick={onOpen}
-        className="col-span-2 text-left"
+        className="col-span-2 text-left flex items-start gap-2"
       >
-        <div className="font-medium text-text-strong flex items-center gap-2">
-          Van {vanLabel(wo)}
-          {wo.isRush && (
-            <span className="px-1.5 py-0.5 text-[10px] rounded bg-accent-red text-white font-semibold">
-              RUSH
-            </span>
-          )}
-        </div>
-        {/* Jorge#8: drop the full model name (was running ~80 chars).
-            Show just make + plate so the row stays compact. */}
-        <div
-          className="text-xs text-text-muted truncate"
-          title={[wo.vehicleYear, wo.vehicleMake, wo.vehicleModel].filter(Boolean).join(' ')}
+        {/* Jorge#3: chevron toggles inline defect peek. stopPropagation
+            so it doesn't also trigger the row-click (Van detail). */}
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleExpand(); }}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); toggleExpand(); } }}
+          className="mt-0.5 text-text-muted hover:text-text-strong shrink-0 cursor-pointer"
+          title={expanded ? 'Hide defects' : 'Show defects'}
         >
-          {vehicleShortLabel(wo) || (wo.vehiclePlate ? `Plate ${wo.vehiclePlate}` : '')}
-        </div>
+          {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+        </span>
+        <span className="flex-1 min-w-0 block">
+          <span className="font-medium text-text-strong flex items-center gap-2">
+            Van {vanLabel(wo)}
+            {wo.isRush && (
+              <span className="px-1.5 py-0.5 text-[10px] rounded bg-accent-red text-white font-semibold">
+                RUSH
+              </span>
+            )}
+          </span>
+          {/* Jorge#8: drop the full model name. Show just year + make. */}
+          <span
+            className="text-xs text-text-muted truncate block"
+            title={[wo.vehicleYear, wo.vehicleMake, wo.vehicleModel].filter(Boolean).join(' ')}
+          >
+            {vehicleShortLabel(wo) || (wo.vehiclePlate ? `Plate ${wo.vehiclePlate}` : '')}
+          </span>
+        </span>
       </button>
       <div className="col-span-2 text-text-strong truncate">
         {wo.dspName || (wo.dspId ? `DSP ${wo.dspId}` : '—')}
@@ -829,6 +864,61 @@ function SwWoRow({ wo, onOpen, onOpenRo, onDecline, onComplete, onSchedule, onAf
         </button>
       </div>
     </div>
+
+    {/* Jorge#3: inline defect peek when the chevron is toggled. */}
+    {expanded && (
+      <div className="px-4 py-3 border-b border-navy-800 bg-navy-900/30">
+        {loadingDefects ? (
+          <div className="text-xs text-text-muted flex items-center gap-2">
+            <Loader2 className="w-3 h-3 animate-spin" /> Loading defects…
+          </div>
+        ) : !defects || defects.length === 0 ? (
+          <div className="text-xs text-text-muted">No defects on this WO.</div>
+        ) : (
+          <ul className="space-y-1">
+            {defects.map((d) => (
+              <li key={d.id} className="text-xs flex items-center gap-2 flex-wrap">
+                <span className="text-text-strong font-medium">
+                  {(d.part || '').replace(/_/g, ' ')}
+                  {d.defectType ? ` — ${d.defectType.replace(/_/g, ' ')}` : ''}
+                </span>
+                {d.position && <span className="text-text-muted">({d.position.replace(/_/g, ' ')})</span>}
+                {d.source && (
+                  <span className="px-1.5 py-0.5 rounded bg-navy-700/60 text-text-muted text-[9px] uppercase">
+                    {String(d.source).replace(/_/g, ' ')}
+                  </span>
+                )}
+                {d.billingType && (
+                  <span className={`px-1.5 py-0.5 rounded text-[9px] uppercase font-semibold ${
+                    d.billingType === 'amr'
+                      ? 'bg-accent-purple/15 text-accent-purple'
+                      : 'bg-accent-blue/15 text-accent-blue'
+                  }`}>
+                    {d.billingType}
+                  </span>
+                )}
+                {d.costDecision === 'approved' && (
+                  <span className="px-1.5 py-0.5 rounded bg-accent-green/15 text-accent-green text-[9px] uppercase font-semibold">
+                    ✓ approved
+                  </span>
+                )}
+                {d.costDecision === 'rejected' && (
+                  <span className="px-1.5 py-0.5 rounded bg-accent-red/15 text-accent-red text-[9px] uppercase font-semibold">
+                    rejected
+                  </span>
+                )}
+                {d.estimatedCost != null && !d.costDecision && (
+                  <span className="px-1.5 py-0.5 rounded bg-accent-gold/15 text-accent-gold text-[9px] uppercase font-semibold">
+                    pending customer
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    )}
+    </>
   );
 }
 
