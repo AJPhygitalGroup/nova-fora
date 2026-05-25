@@ -40,6 +40,16 @@ class WorkOrderNote(SQLModel, table=True):
             "channel IN ('internal', 'customer')",
             name="work_order_notes_channel_chk",
         ),
+        # Escalation reason — set when the SW flags a customer-facing
+        # note for special attention (mockup page 7, Mohammed's demo
+        # called this "Escalate"). CMR = customer maintenance request
+        # the vendor needs the DSP to accept; exceeded_price_cap = the
+        # estimate ran above what FMC will reimburse.
+        CheckConstraint(
+            "escalation_reason IS NULL "
+            "OR escalation_reason IN ('cmr', 'exceeded_price_cap')",
+            name="work_order_notes_escalation_chk",
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -83,6 +93,15 @@ class WorkOrderNote(SQLModel, table=True):
         ),
     )
     body: str = Field(nullable=False)
+    # Optional escalation marker — only meaningful on channel='customer'
+    # notes. NULL = regular note. Constrained at DB level via
+    # work_order_notes_escalation_chk above.
+    escalation_reason: str | None = Field(
+        default=None,
+        max_length=30,
+        description="'cmr' or 'exceeded_price_cap' when the SW marks the "
+                    "note as escalated. NULL for regular notes.",
+    )
 
     created_at: datetime = Field(
         default_factory=utc_now,

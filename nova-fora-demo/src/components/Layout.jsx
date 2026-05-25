@@ -7,7 +7,7 @@ import {
   AlertTriangle, ChevronDown, Check
 } from 'lucide-react';
 import VendorScorecard from './VendorScorecard';
-import RealDVIC from './RealDVIC';
+import HomeRouter from './HomeRouter';
 import BodyRepairs from './BodyRepairs';
 import FleetSnapshot from './FleetSnapshot';
 import MyVehicles from './MyVehicles';
@@ -26,7 +26,10 @@ import { isVendorRole } from '../lib/permissions';
 // Labels are looked up via t('layout:nav.<key>') and t('layout:subtitles.<key>')
 // at render time so language changes apply without a reload.
 const VIEW_CATALOG = {
-  dvic:        { id: 'dvic',        i18nKey: 'dvic',        icon: HomeIcon,       color: 'text-accent-green',  Component: RealDVIC },
+  // Home tab — HomeRouter dispatches by user.role: DSP → RealDVIC
+  // (inspector landing); vendor / site_admin → VendorHome (the new
+  // Vendor View dashboard, mockup page 2). Single nav slot, two layouts.
+  dvic:        { id: 'dvic',        i18nKey: 'dvic',        icon: HomeIcon,       color: 'text-accent-green',  Component: HomeRouter },
   defects:     { id: 'defects',     i18nKey: 'defects',     icon: AlertTriangle,  color: 'text-accent-orange', Component: Defects },
   snapshot:    { id: 'snapshot',    i18nKey: 'snapshot',    icon: LayoutGrid,     color: 'text-accent-blue',   Component: FleetSnapshot },
   vehicles:    { id: 'vehicles',    i18nKey: 'vehicles',    icon: Truck,          color: 'text-accent-green',  Component: MyVehicles },

@@ -38,6 +38,7 @@ import DeclineModal from './DeclineModal';
 import CompleteModal from './CompleteModal';
 import ScheduleModal from './ScheduleModal';
 import ReviewRequestModal from './ReviewRequestModal';
+import CreateWoWizard from './CreateWoWizard';
 import StatusChanger from './StatusChanger';
 
 // ─────────────────────────────────────────────────────
@@ -327,25 +328,35 @@ export default function ServiceWriterDashboard({ user }) {
 
   return (
     <div>
-      {/* Workshop selector */}
-      {workshops.length > 1 && (
-        <div className="flex items-center gap-3 mb-4">
-          <label className="text-xs font-semibold uppercase tracking-wider text-text-muted">
-            Workshop
-          </label>
-          <select
-            value={workshopId || ''}
-            onChange={(e) => setWorkshopId(Number(e.target.value))}
-            className="px-3 py-1.5 rounded-md bg-navy-900 border border-navy-700 text-sm text-text-strong"
-          >
-            {workshops.map((w) => (
-              <option key={w.id} value={parseOrgInt(w.id)}>
-                {w.name}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
+      {/* Workshop selector + Create WO button */}
+      <div className="flex items-center gap-3 mb-4">
+        {workshops.length > 1 && (
+          <>
+            <label className="text-xs font-semibold uppercase tracking-wider text-text-muted">
+              Workshop
+            </label>
+            <select
+              value={workshopId || ''}
+              onChange={(e) => setWorkshopId(Number(e.target.value))}
+              className="px-3 py-1.5 rounded-md bg-navy-900 border border-navy-700 text-sm text-text-strong"
+            >
+              {workshops.map((w) => (
+                <option key={w.id} value={parseOrgInt(w.id)}>
+                  {w.name}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+        <button
+          type="button"
+          onClick={() => setActionModal({ kind: 'create_wo' })}
+          className="ml-auto px-3 py-1.5 rounded-md text-sm font-semibold bg-accent-green text-navy-950 hover:opacity-90 flex items-center gap-1"
+          title="Create a new Work Order from scratch"
+        >
+          + Create WO
+        </button>
+      </div>
 
       {/* Chip row — clickable filters */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 mb-6">
@@ -555,6 +566,14 @@ export default function ServiceWriterDashboard({ user }) {
           wo={actionModal.wo}
           onClose={() => setActionModal(null)}
           onSuccess={() => { setActionModal(null); refreshAll(); }}
+        />
+      )}
+      {actionModal?.kind === 'create_wo' && (
+        <CreateWoWizard
+          user={user}
+          workshopId={workshopId}
+          onClose={() => setActionModal(null)}
+          onCreated={() => { setActionModal(null); refreshAll(); }}
         />
       )}
       {actionModal?.kind === 'review' && (

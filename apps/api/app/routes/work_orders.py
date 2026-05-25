@@ -37,6 +37,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Reques
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -50,8 +51,10 @@ from app.models.defect import Defect
 from app.models.inspection import Inspection
 from app.models.organization import Organization
 from app.models.vehicle import Vehicle
+from app.models.defect import DefectSource
 from app.models.work_orders import (
     DefectResolution,
+    DefectReviewDecision,
     DspWoResponse,
     LineItemBillingType,
     LineItemCategory,
@@ -375,6 +378,10 @@ class NoteResp(BaseModel):
         description="'internal' (vendor team only) or 'customer' (bilateral SW ↔ DSP thread).",
     )
     body: str
+    escalation_reason: str | None = Field(
+        default=None,
+        description="'cmr' or 'exceeded_price_cap' when SW escalated this note. Else NULL.",
+    )
     created_at: datetime
 
     @classmethod
@@ -386,6 +393,7 @@ class NoteResp(BaseModel):
             author_role=n.author_role.value if hasattr(n.author_role, "value") else n.author_role,
             channel=n.channel.value if hasattr(n.channel, "value") else (n.channel or "internal"),
             body=n.body,
+            escalation_reason=n.escalation_reason,
             created_at=n.created_at,
         )
 
@@ -564,6 +572,12 @@ class NoteBody(BaseModel):
     channel: WorkOrderNoteChannel = Field(
         default=WorkOrderNoteChannel.INTERNAL,
         description="'internal' (vendor team only) or 'customer' (visible to DSP).",
+    )
+    escalation_reason: str | None = Field(
+        default=None,
+        description="Set to 'cmr' or 'exceeded_price_cap' to flag this customer "
+                    "note for SW escalation (mockup p.7). Only meaningful on "
+                    "channel='customer'; backend rejects it on internal notes.",
     )
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
@@ -2264,12 +2278,30 @@ async def add_note(
                 "DSP users cannot post to the internal vendor thread",
             )
 
+    # Escalation only applies to customer-facing notes — the mockup's
+    # "Escalate" button lives on the customer thread (mockup p.7).
+    # Reject any attempt to escalate an internal note so the field's
+    # semantics stay clean for downstream queries.
+    escalation = body.escalation_reason
+    if escalation is not None:
+        if channel != WorkOrderNoteChannel.CUSTOMER:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "escalation_reason only allowed on channel='customer' notes",
+            )
+        if escalation not in ("cmr", "exceeded_price_cap"):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "escalation_reason must be 'cmr' or 'exceeded_price_cap'",
+            )
+
     note = WorkOrderNote(
         work_order_id=wo.id,
         author_id=current.id,
         author_role=role,
         channel=channel,
         body=body.body,
+        escalation_reason=escalation,
     )
     session.add(note)
     await session.flush()
@@ -2277,12 +2309,13 @@ async def add_note(
         session,
         entity_type=WoActivityLogEntityType.NOTE,
         entity_id=note.id,
-        action="note_added",
+        action="note_escalated" if escalation else "note_added",
         actor_id=current.id,
         details={
             "work_order_id": wo.id,
             "author_role": role.value,
             "channel": channel.value,
+            **({"escalation_reason": escalation} if escalation else {}),
         },
     )
     await session.commit()
@@ -2707,6 +2740,197 @@ class RoSyncEventResponse(BaseModel):
         description="What the column was before (for idempotency / debugging). "
                     "datetime for *_at columns, str for vendor_status (no_show).",
     )
+
+
+@router.post(
+    "/manual",
+    response_model=dict,
+    status_code=status.HTTP_201_CREATED,
+    summary="Manual SW-created WO from scratch (wizard from Vendor Home + Create WO)",
+)
+async def manual_create_wo(
+    body: dict = Body(...),
+    request: Request = None,
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Wizard-driven manual WO creation (mockup pages 4-6).
+
+    Chain:
+      1. Validate inputs (SW role + workshop access + vehicle + catalog)
+      2. Create Defect — source mapped from reason_code:
+           newly_discovered  → shop_finding
+           secondary         → shop_finding
+           auto_integrate    → maintenance_request
+           customer_requested→ customer_report
+           other             → other
+      3. Manual auto-approve the scope review with current SW as reviewer.
+         (Per the mockup banner: "Shop created defects must be approved by
+         customers for work authorization" — the customer's separate cost
+         decision still gates billing; this step just clears the scope-
+         review gate so the bundler can route it.)
+      4. Bundler picks up the approved defect → RR.
+      5. Force-route the RR to the chosen workshop (defaults to caller's
+         first workshop if not given). Creates a WO in pending_acceptance.
+      6. If ro_number given, patch the auto-created TBD-{id} placeholder.
+
+    The SW finds the new WO in their Work Orders list immediately — no
+    extra step. Customer sees the defect in their existing review queue
+    AFTER acceptance (the WO acceptance is the SW's job per normal flow).
+    """
+    from app.routes.vehicles import _parse_vehicle_id
+    from app.services.defect_validation import validate_defect_write, DefectValidationError
+    from app.services.wo_defect_reviews import manual_review
+    from app.services.wo_bundler import consider_defect_for_bundling
+    from app.services.wo_router import route_repair_request
+
+    lang = get_request_language(request) if request else "en"
+
+    # ── Role gate ─────────────────────────────────────
+    if current.role not in (UserRole.SITE_ADMIN, UserRole.VENDOR_ADMIN, UserRole.SERVICE_WRITER):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "manual create requires vendor SW role")
+
+    # ── Vehicle ──────────────────────────────────────
+    vehicle_raw = body.get("vehicle_id") or body.get("vehicleId")
+    if not vehicle_raw:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "vehicle_id required")
+    vid = _parse_vehicle_id(str(vehicle_raw))
+    vehicle = (await session.execute(select(Vehicle).where(Vehicle.id == vid))).scalar_one_or_none()
+    if vehicle is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "vehicle not found")
+
+    # ── Defect inputs ────────────────────────────────
+    part = body.get("part")
+    defect_type = body.get("defect_type") or body.get("defectType")
+    position = body.get("position")
+    description = body.get("description") or body.get("notes")
+    reason_code = (body.get("reason_code") or body.get("reasonCode") or "newly_discovered").strip()
+
+    if not part or not defect_type:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "part + defect_type required")
+
+    # Map reason_code → DefectSource (validates the reason too).
+    REASON_TO_SOURCE = {
+        "newly_discovered": DefectSource.SHOP_FINDING,
+        "secondary": DefectSource.SHOP_FINDING,
+        "auto_integrate": DefectSource.MAINTENANCE_REQUEST,
+        "customer_requested": DefectSource.CUSTOMER_REPORT,
+        "other": DefectSource.OTHER,
+    }
+    src = REASON_TO_SOURCE.get(reason_code)
+    if src is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"reason_code must be one of: {list(REASON_TO_SOURCE)}",
+        )
+
+    # ── Catalog validation ───────────────────────────
+    try:
+        await validate_defect_write(
+            session,
+            part=part,
+            defect_type=defect_type,
+            position=position,
+            details={},
+            source=src,
+            inspection_id=None,
+            vehicle_class=vehicle.vehicle_class,
+        )
+    except DefectValidationError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
+
+    # ── Create the Defect ────────────────────────────
+    defect = Defect(
+        vehicle_id=vid,
+        inspection_id=None,
+        source=src,
+        part=part,
+        defect_type=defect_type,
+        position=position,
+        details={},
+        notes=(f"[reason: {reason_code}] " + (description or "")).strip(),
+        reported_by_id=current.id,
+    )
+    session.add(defect)
+    try:
+        await session.flush()
+    except IntegrityError as e:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "duplicate defect on this vehicle (same part/position/type already exists)",
+        ) from e
+
+    # ── Auto-approve scope so bundler can route ──────
+    await manual_review(
+        session,
+        defect_id=defect.id,
+        decision=DefectReviewDecision.APPROVED,
+        reviewer_id=current.id,
+        reason=f"shop-created via Vendor Home wizard (reason: {reason_code})",
+    )
+
+    # ── Bundler → RR ─────────────────────────────────
+    await consider_defect_for_bundling(session, defect_id=defect.id, actor_id=current.id)
+
+    # ── Resolve target workshop + force-route ────────
+    target_ws = body.get("vendor_workshop_id") or body.get("vendorWorkshopId")
+    if target_ws is None:
+        # Default to the caller's first workshop.
+        my_workshops = await _vendor_workshop_ids_for_user(session, current)
+        if not my_workshops:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "no vendor_workshop_id provided and you have no workshops",
+            )
+        target_ws = my_workshops[0]
+    target_ws = int(target_ws)
+
+    # Find the RR the bundler just created for this defect.
+    rr_row = (
+        await session.execute(
+            select(RepairRequestDefect.repair_request_id)
+            .where(RepairRequestDefect.defect_id == defect.id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if rr_row is None:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "bundler did not create an RR for the new defect (unexpected)",
+        )
+
+    new_wo = await route_repair_request(
+        session,
+        repair_request_id=rr_row,
+        actor_id=current.id,
+        target_workshop_id=target_ws,
+    )
+
+    # ── Optional: replace the auto TBD-{id} placeholder RO ──
+    ro_number_raw = body.get("ro_number") or body.get("roNumber")
+    if new_wo is not None and ro_number_raw:
+        # The /accept endpoint adds the placeholder, but here the WO is
+        # still pending_acceptance (no placeholder yet). Add an RO row
+        # directly so the SW's typed RO# sticks from the start.
+        new_ro = WorkOrderRo(
+            work_order_id=new_wo.id,
+            ro_number=str(ro_number_raw).strip(),
+            is_primary=True,
+            added_by_id=current.id,
+        )
+        session.add(new_ro)
+
+    await session.commit()
+    if new_wo is not None:
+        await session.refresh(new_wo)
+
+    return {
+        "defect_id": defect.id,
+        "repair_request_id": rr_row,
+        "work_order_id": new_wo.id if new_wo else None,
+        "work_order_id_str": new_wo.id_str if new_wo else None,
+        "routed": new_wo is not None,
+    }
 
 
 @router.post(

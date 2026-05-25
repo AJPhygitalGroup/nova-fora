@@ -48,7 +48,10 @@ from app.models.user import User, UserRole, UserStatus
 from app.models.vehicle import Ownership, Vehicle
 from app.models.vehicle_note import VehicleNote
 from app.models.work_orders import (
+    CustomerPreferredVendor,
     DeclineReasonCode,
+    RewardsProgram,
+    RewardsTier,
     DefectResolution,
     DefectResolutionStatus,
     DefectReview,
@@ -121,7 +124,10 @@ __all__ = [
     "VehicleClass",
     "VehicleNote",
     # WO V2.0 (14 tables + enums)
+    "CustomerPreferredVendor",
     "DeclineReasonCode",
+    "RewardsProgram",
+    "RewardsTier",
     "DefectResolution",
     "DefectResolutionStatus",
     "DefectReview",

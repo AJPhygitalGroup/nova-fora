@@ -351,6 +351,32 @@ export const vehicles = {
     });
   },
 
+  // ── Customer preferred vendors (spec §10) ─────────
+  // Lives under vehicles for ergonomics — the DSP picks their vendor
+  // from the same surface where their fleet lives.
+  // GET /customer-preferred-vendors?dspId=&vendorWorkshopId=&isPrimary=
+  listPreferredVendors(params = {}) {
+    const q = new URLSearchParams();
+    const map = { dspId: 'dsp_id', vendorWorkshopId: 'vendor_workshop_id', isPrimary: 'is_primary' };
+    for (const [k, v] of Object.entries(params)) {
+      if (v == null || v === '') continue;
+      q.set(map[k] || k, String(v));
+    }
+    const qs = q.toString();
+    return apiFetch(`/customer-preferred-vendors${qs ? '?' + qs : ''}`);
+  },
+  setPreferredVendor(body) {
+    return apiFetch('/customer-preferred-vendors', {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+  unsetPreferredVendor(rowId) {
+    return apiFetch(`/customer-preferred-vendors/${encodeURIComponent(rowId)}`, {
+      method: 'DELETE',
+    });
+  },
+
   // ── WO V2: van-scoped persistent SW notes ──
   listNotes(id, params = {}) {
     const q = new URLSearchParams();
@@ -1125,6 +1151,24 @@ export const workOrders = {
    * pickup_duration_text to every primary RO on the same vehicle.
    * Returns: { workOrderId, vehicleId, updatedRoIds, updatedWorkOrderIds }
    */
+  /**
+   * POST /work-orders/manual — SW wizard creates a WO from scratch
+   * (mockup pages 4-6). Chains defect creation + auto-approve + bundler
+   * + route + optional RO# attach into one atomic call.
+   *
+   * body: { vehicleId, part, defectType, position?, description?,
+   *         reasonCode: 'newly_discovered'|'secondary'|'auto_integrate'|
+   *                      'customer_requested'|'other',
+   *         vendorWorkshopId?, roNumber? }
+   * Returns: { defectId, repairRequestId, workOrderId, workOrderIdStr, routed }
+   */
+  manualCreate(body) {
+    return apiFetch('/work-orders/manual', {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
   pickupRequest(id, body) {
     return apiFetch(`/work-orders/${encodeURIComponent(id)}/pickup-request`, {
       method: 'POST',
@@ -1348,7 +1392,13 @@ export const defectReviews = {
     );
   },
 
-  /** POST /defect-reviews/defect/{defectId}/reject — body: { reason? } */
+  /**
+   * POST /defect-reviews/defect/{defectId}/reject
+   * body: { reason?, rejectReasonCode? }
+   * rejectReasonCode (mockup p.9): 'shop_no_capability' | 'illegitimate_defect' | 'other'.
+   * 'illegitimate_defect' attributes a negative mark to the defect's
+   * `reportedBy` inspector (drives Inspector KPI).
+   */
   reject(defectId, body = {}) {
     return apiFetch(
       `/defect-reviews/defect/${encodeURIComponent(defectId)}/reject`,
@@ -1502,6 +1552,38 @@ export const dashboards = {
   },
 
   /**
+   * GET /dashboards/vendor-home/{ws_id}/counters — landing-page tiles.
+   * Returns: { adHocDefects24h, rushOrders, vansInspectedToday,
+   *            vansTotal, newDefectsToday, defectsPendingFmc,
+   *            defectsPendingFmcTotal, scheduledRepairsCount,
+   *            defectsRepairedWeek, defectsRepairedPctChange,
+   *            pendingFeedback }
+   * Optional dsp_id filter narrows everything to one customer.
+   */
+  vendorHomeCounters(vendorWorkshopId, { dspId } = {}) {
+    const q = new URLSearchParams();
+    if (dspId != null && dspId !== '') q.set('dsp_id', String(dspId));
+    const qs = q.toString();
+    return apiFetch(
+      `/dashboards/vendor-home/${encodeURIComponent(vendorWorkshopId)}/counters${qs ? '?' + qs : ''}`
+    );
+  },
+
+  /**
+   * GET /dashboards/vendor-home/{ws_id}/ad-hoc-defects — modal list.
+   * Returns: [{ id, idStr, part, defectType, position, source,
+   *             reportedAt, dspId, dspName }]
+   */
+  adHocDefects(vendorWorkshopId, { hours = 24, dspId } = {}) {
+    const q = new URLSearchParams();
+    if (hours) q.set('hours', String(hours));
+    if (dspId != null && dspId !== '') q.set('dsp_id', String(dspId));
+    return apiFetch(
+      `/dashboards/vendor-home/${encodeURIComponent(vendorWorkshopId)}/ad-hoc-defects?${q.toString()}`
+    );
+  },
+
+  /**
    * GET /dashboards/dsp/{dspId}/counters — DSP-scoped.
    * Returns: { vansInService, approveCost, approveDefects, confirmPickup,
    *            inProgress }
@@ -1579,5 +1661,42 @@ function camelToSnake(obj) {
   }
   return obj;
 }
+
+// ─────────────────────────────────────────────────────
+// Rewards program — vendor loyalty config (mockup p.11)
+// ─────────────────────────────────────────────────────
+export const rewards = {
+  /** GET /rewards/programs/{workshopId} — settings + tiers in one shot */
+  getProgram(workshopId) {
+    return apiFetch(`/rewards/programs/${encodeURIComponent(workshopId)}`);
+  },
+  /** PUT /rewards/programs/{workshopId} — body: { vendorBucksPct, vendorBucksDurationMonths } */
+  upsertProgram(workshopId, body) {
+    return apiFetch(`/rewards/programs/${encodeURIComponent(workshopId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+  /** POST /rewards/programs/{workshopId}/tiers — body: { tierOrder, metricLabel, metricTarget, rewardLabel } */
+  addTier(workshopId, body) {
+    return apiFetch(`/rewards/programs/${encodeURIComponent(workshopId)}/tiers`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+  /** PATCH /rewards/tiers/{tierId} */
+  patchTier(tierId, body) {
+    return apiFetch(`/rewards/tiers/${encodeURIComponent(tierId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+  /** DELETE /rewards/tiers/{tierId} */
+  deleteTier(tierId) {
+    return apiFetch(`/rewards/tiers/${encodeURIComponent(tierId)}`, {
+      method: 'DELETE',
+    });
+  },
+};
 
 export { APIError };

@@ -27,14 +27,25 @@ from app.auth.dependencies import get_current_user
 from app.db import get_session
 from app.i18n_errors import E, tr_error
 from app.i18n_helpers import get_request_language
+from app.models.organization import Organization
 from app.models.user import User, UserRole
 from app.models.work_orders import (
+    CustomerPreferredVendor,
     RepairType,
     StatusTrackingMode,
     VendorWorkshop,
 )
 
 router = APIRouter(prefix="/vendor-workshops", tags=["vendor-workshops"])
+
+# Separate router for preferred-vendor CRUD so the dynamic
+# `/vendor-workshops/{workshop_id}` route doesn't swallow paths like
+# `/vendor-workshops/preferred-vendors`. Mounted in main.py alongside
+# the workshop router.
+preferred_router = APIRouter(
+    prefix="/customer-preferred-vendors",
+    tags=["customer-preferred-vendors"],
+)
 
 
 # ─────────────────────────────────────────────────────
@@ -273,5 +284,206 @@ async def deactivate_workshop(
         )
     w.is_active = False
     session.add(w)
+    await session.commit()
+    return None
+
+
+# ═════════════════════════════════════════════════════
+# Customer preferred vendors (spec §10, mockup p.10)
+# ═════════════════════════════════════════════════════
+#
+# Per-DSP "primary vendor" preferences. Iter-1 supports only the
+# boolean `is_primary` flag (one primary per (dsp, repair_type) pair),
+# enforced via the partial unique index in the 20260525_2100 migration.
+# Frontend (My DSPs card) shows a gold ribbon badge when the current
+# vendor is primary for that DSP.
+
+class PreferredVendorResponse(BaseModel):
+    id: int
+    dsp_id: int
+    dsp_name: str | None = None
+    vendor_workshop_id: int
+    workshop_name: str | None = None
+    repair_type: str | None = None
+    is_primary: bool
+    created_at: datetime
+
+
+class PreferredVendorCreate(BaseModel):
+    """Body for POST /customer-preferred-vendors."""
+
+    dsp_id: int
+    vendor_workshop_id: int
+    repair_type: str | None = Field(
+        default=None,
+        description="RepairType value, or omit for 'applies to all repair types'.",
+    )
+    is_primary: bool = True
+    model_config = ConfigDict(extra="forbid")
+
+
+@preferred_router.get(
+    "",
+    response_model=list[PreferredVendorResponse],
+    summary="List customer preferred-vendor rows (filterable)",
+)
+async def list_preferred_vendors(
+    dsp_id: int | None = None,
+    vendor_workshop_id: int | None = None,
+    is_primary: bool | None = None,
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[PreferredVendorResponse]:
+    """Public read for any authenticated user — the relationship is
+    relevant to both DSPs and vendors. Filter by either side as needed.
+    """
+    q = (
+        select(CustomerPreferredVendor, Organization, VendorWorkshop)
+        .join(Organization, Organization.id == CustomerPreferredVendor.dsp_id, isouter=True)
+        .join(VendorWorkshop, VendorWorkshop.id == CustomerPreferredVendor.vendor_workshop_id, isouter=True)
+    )
+    if dsp_id is not None:
+        q = q.where(CustomerPreferredVendor.dsp_id == dsp_id)
+    if vendor_workshop_id is not None:
+        q = q.where(CustomerPreferredVendor.vendor_workshop_id == vendor_workshop_id)
+    if is_primary is not None:
+        q = q.where(CustomerPreferredVendor.is_primary == is_primary)
+    rows = (await session.execute(q)).all()
+    return [
+        PreferredVendorResponse(
+            id=row[0].id,
+            dsp_id=row[0].dsp_id,
+            dsp_name=row[1].name if row[1] else None,
+            vendor_workshop_id=row[0].vendor_workshop_id,
+            workshop_name=row[2].name if row[2] else None,
+            repair_type=row[0].repair_type,
+            is_primary=row[0].is_primary,
+            created_at=row[0].created_at,
+        )
+        for row in rows
+    ]
+
+
+@preferred_router.post(
+    "",
+    response_model=PreferredVendorResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Pin a vendor as preferred for a DSP (optionally per repair_type)",
+)
+async def upsert_preferred_vendor(
+    body: PreferredVendorCreate,
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> PreferredVendorResponse:
+    """Tenancy:
+      - site_admin: anything
+      - dsp_owner: only on their own DSP
+      - vendor_admin: not allowed (the DSP picks, not the vendor)
+
+    If is_primary=True and another row is already primary for the
+    (dsp_id, repair_type) tuple, that other row is demoted first so the
+    partial unique index in the migration doesn't reject the insert.
+    """
+    if current.role == UserRole.SITE_ADMIN:
+        pass
+    elif current.role == UserRole.DSP_OWNER and current.organization_id == body.dsp_id:
+        pass
+    else:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "only DSP owner or site admin can set preferred vendors",
+        )
+
+    # Validate workshop handles this repair_type (when given).
+    ws = (
+        await session.execute(
+            select(VendorWorkshop).where(VendorWorkshop.id == body.vendor_workshop_id)
+        )
+    ).scalar_one_or_none()
+    if ws is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "vendor_workshop not found")
+
+    # Demote any existing primary for (dsp_id, repair_type) so the partial
+    # unique index doesn't reject the insert.
+    if body.is_primary:
+        existing_primary = (
+            await session.execute(
+                select(CustomerPreferredVendor)
+                .where(CustomerPreferredVendor.dsp_id == body.dsp_id)
+                .where(CustomerPreferredVendor.repair_type == body.repair_type)
+                .where(CustomerPreferredVendor.is_primary.is_(True))
+            )
+        ).scalars().all()
+        for row in existing_primary:
+            if row.vendor_workshop_id != body.vendor_workshop_id:
+                row.is_primary = False
+                session.add(row)
+
+    # Upsert: if (dsp, vendor, repair_type) row exists, update; else insert.
+    row = (
+        await session.execute(
+            select(CustomerPreferredVendor)
+            .where(CustomerPreferredVendor.dsp_id == body.dsp_id)
+            .where(CustomerPreferredVendor.vendor_workshop_id == body.vendor_workshop_id)
+            .where(CustomerPreferredVendor.repair_type == body.repair_type)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        row = CustomerPreferredVendor(
+            dsp_id=body.dsp_id,
+            vendor_workshop_id=body.vendor_workshop_id,
+            repair_type=body.repair_type,
+            is_primary=body.is_primary,
+            created_by_id=current.id,
+        )
+        session.add(row)
+    else:
+        row.is_primary = body.is_primary
+        session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    org = (
+        await session.execute(select(Organization).where(Organization.id == row.dsp_id))
+    ).scalar_one_or_none()
+    return PreferredVendorResponse(
+        id=row.id,
+        dsp_id=row.dsp_id,
+        dsp_name=org.name if org else None,
+        vendor_workshop_id=row.vendor_workshop_id,
+        workshop_name=ws.name,
+        repair_type=row.repair_type,
+        is_primary=row.is_primary,
+        created_at=row.created_at,
+    )
+
+
+@preferred_router.delete(
+    "/{row_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Unpin a preferred-vendor row",
+)
+async def delete_preferred_vendor(
+    row_id: int = Path(..., ge=1),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    row = (
+        await session.execute(
+            select(CustomerPreferredVendor).where(CustomerPreferredVendor.id == row_id)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "preference not found")
+    if current.role == UserRole.SITE_ADMIN:
+        pass
+    elif current.role == UserRole.DSP_OWNER and current.organization_id == row.dsp_id:
+        pass
+    else:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "only DSP owner or site admin can unpin preferred vendors",
+        )
+    await session.delete(row)
     await session.commit()
     return None

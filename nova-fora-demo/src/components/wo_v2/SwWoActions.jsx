@@ -23,7 +23,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Loader2, AlertCircle, FileText, Wrench, Plus, X, ChevronDown, ChevronUp,
-  UserPlus, AlertTriangle, DollarSign, Check,
+  UserPlus, AlertTriangle, DollarSign, Check, MessageSquare, Megaphone,
 } from 'lucide-react';
 import {
   workOrders as woApi,
@@ -48,9 +48,165 @@ export default function SwWoActions({
       </div>
       <SetCostPanel row={row} onChanged={onChanged} />
       <InternalNotesPanel woId={woId} />
+      <CustomerNotesPanel woId={woId} />
       <DeferDefectsPanel row={row} onChanged={onChanged} />
     </div>
   );
+}
+
+// ─────────────────────────────────────────────────────
+// CustomerNotesPanel — channel='customer' thread + Escalate button.
+// Per mockup p.7: the SW can flag any customer note as escalated
+// with reason 'cmr' (customer maintenance request) or
+// 'exceeded_price_cap'. Escalated notes render with a red Megaphone
+// chip so the DSP-side notes view can prioritise them visually.
+// ─────────────────────────────────────────────────────
+function CustomerNotesPanel({ woId }) {
+  const [notes, setNotes] = useState([]);
+  const [draft, setDraft] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(null);
+  // Escalation state — null = regular send; 'cmr'/'exceeded_price_cap' = escalate.
+  const [escalation, setEscalation] = useState(null);
+  const [escalationOpen, setEscalationOpen] = useState(false);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    woApi
+      .listNotes(woId, { channel: 'customer' })
+      .then((rows) => setNotes(Array.isArray(rows) ? rows : (rows?.items || [])))
+      .catch(() => setNotes([]))
+      .finally(() => setLoading(false));
+  }, [woId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const submit = async (reason = null) => {
+    const body = draft.trim();
+    if (!body) return;
+    setErr(null);
+    setSaving(true);
+    try {
+      await woApi.addNote(woId, {
+        body,
+        channel: 'customer',
+        authorRole: 'vendor_service_writer',
+        escalationReason: reason || undefined,
+      });
+      setDraft('');
+      setEscalation(null);
+      setEscalationOpen(false);
+      load();
+    } catch (e) {
+      setErr(e.detail || e.message || 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="rounded-md border border-navy-800 bg-navy-900/40 p-2">
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted mb-2 flex items-center gap-1">
+        <MessageSquare className="w-3 h-3" />
+        Customer notes
+        <span className="text-text-muted/70">· visible to DSP · {notes.length}</span>
+      </div>
+
+      {loading ? (
+        <div className="text-xs text-text-muted flex items-center gap-1">
+          <Loader2 className="w-3 h-3 animate-spin" /> Loading…
+        </div>
+      ) : (
+        <>
+          {notes.length > 0 && (
+            <ul className="space-y-1 mb-2 max-h-40 overflow-y-auto">
+              {notes.map((n) => {
+                const isEscalated = !!n.escalationReason;
+                return (
+                  <li
+                    key={n.id}
+                    className={`rounded px-2 py-1 ${
+                      isEscalated
+                        ? 'bg-accent-red/10 border border-accent-red/40'
+                        : 'bg-navy-800/60'
+                    }`}
+                  >
+                    {isEscalated && (
+                      <div className="text-[9px] font-bold uppercase text-accent-red flex items-center gap-1 mb-0.5">
+                        <Megaphone className="w-3 h-3" />
+                        Escalated · {prettyEscalation(n.escalationReason)}
+                      </div>
+                    )}
+                    <div className="text-xs text-text-strong whitespace-pre-wrap">{n.body}</div>
+                    <div className="text-[9px] text-text-muted mt-0.5">
+                      {n.authorRole || ''} · {new Date(n.createdAt).toLocaleString()}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <div className="flex gap-2">
+            <textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              rows={2}
+              placeholder="Message visible to the DSP…"
+              className="flex-1 rounded-md px-2 py-1 text-xs bg-navy-800 border border-navy-700 text-text-strong placeholder-text-muted outline-none focus:border-accent-blue resize-none"
+            />
+            <div className="flex flex-col gap-1 relative">
+              <button
+                type="button"
+                onClick={() => submit()}
+                disabled={saving || !draft.trim()}
+                className="px-2 py-1 rounded-md bg-text-strong text-navy-950 text-xs font-semibold disabled:opacity-40"
+              >
+                {saving ? '…' : 'Send'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setEscalationOpen(!escalationOpen)}
+                disabled={saving || !draft.trim()}
+                className="px-2 py-1 rounded-md border border-accent-red/50 text-accent-red text-xs font-semibold hover:bg-accent-red/10 disabled:opacity-40 flex items-center gap-1"
+                title="Mark this note as escalated with a reason code"
+              >
+                <Megaphone className="w-3 h-3" />
+                Escalate
+              </button>
+              {escalationOpen && (
+                <div className="absolute right-0 top-full mt-1 z-10 w-44 rounded-md border border-navy-700 bg-navy-900 shadow-xl py-1">
+                  <button
+                    type="button"
+                    onClick={() => submit('cmr')}
+                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-navy-800 text-text-strong"
+                  >
+                    <div className="font-semibold">CMR</div>
+                    <div className="text-[10px] text-text-muted">Customer Maintenance Request</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => submit('exceeded_price_cap')}
+                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-navy-800 text-text-strong"
+                  >
+                    <div className="font-semibold">Exceeded Price Cap</div>
+                    <div className="text-[10px] text-text-muted">Estimate over FMC cap</div>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+          {err && <div className="mt-1 text-[10px] text-accent-red">{err}</div>}
+        </>
+      )}
+    </div>
+  );
+}
+
+function prettyEscalation(r) {
+  if (r === 'cmr') return 'CMR';
+  if (r === 'exceeded_price_cap') return 'Exceeded Price Cap';
+  return r;
 }
 
 // ─────────────────────────────────────────────────────
@@ -497,24 +653,20 @@ function MidFindPanel({ rrIdHint, woId, vehicleClass, onChanged }) {
       .catch((e) => setCatErr(e.detail || e.message || 'Failed to load catalog'));
   }, [open, vehicleClass, cat]);
 
-  // Index the catalog rules so dropdowns cascade.
-  // Catalog shape (from defect_catalog response): { rules: [{part, defect_type, positions: [...], ...}] }.
+  // Catalog shape: { parts: [{ id, label, defectTypes: [{ id, label, validPositions: [{id, label}] }] }] }
   const parts = (() => {
-    if (!cat?.rules) return [];
-    return Array.from(new Set(cat.rules.map((r) => r.part))).sort();
+    if (!Array.isArray(cat?.parts)) return [];
+    return cat.parts.map((p) => ({ id: p.id, label: p.label || p.id }));
   })();
+  const partInfo = part ? (cat?.parts?.find((p) => p.id === part) || null) : null;
   const typesForPart = (() => {
-    if (!cat?.rules || !part) return [];
-    return Array.from(
-      new Set(cat.rules.filter((r) => r.part === part).map((r) => r.defectType || r.defect_type))
-    ).sort();
+    if (!partInfo?.defectTypes) return [];
+    return partInfo.defectTypes.map((t) => ({ id: t.id, label: t.label || t.id }));
   })();
+  const typeInfo = defectType ? (partInfo?.defectTypes?.find((t) => t.id === defectType) || null) : null;
   const positionsForPair = (() => {
-    if (!cat?.rules || !part || !defectType) return [];
-    const matched = cat.rules.find(
-      (r) => r.part === part && (r.defectType || r.defect_type) === defectType
-    );
-    return matched?.positions || [];
+    if (!typeInfo?.validPositions) return [];
+    return typeInfo.validPositions.map((p) => ({ id: p.id, label: p.label || p.id }));
   })();
 
   const reset = () => {
@@ -586,16 +738,16 @@ function MidFindPanel({ rrIdHint, woId, vehicleClass, onChanged }) {
                   className="px-2 py-1 rounded-md bg-navy-800 border border-navy-700 text-xs text-text-strong outline-none"
                 >
                   <option value="">— Part —</option>
-                  {parts.map((p) => <option key={p} value={p}>{p.replace(/_/g, ' ')}</option>)}
+                  {parts.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
                 </select>
                 <select
                   value={defectType}
                   onChange={(e) => { setDefectType(e.target.value); setPosition(''); }}
-                  disabled={!part}
+                  disabled={!part || typesForPart.length === 0}
                   className="px-2 py-1 rounded-md bg-navy-800 border border-navy-700 text-xs text-text-strong outline-none disabled:opacity-40"
                 >
                   <option value="">— Defect type —</option>
-                  {typesForPart.map((t) => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
+                  {typesForPart.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
                 </select>
               </div>
               <select
@@ -607,7 +759,7 @@ function MidFindPanel({ rrIdHint, woId, vehicleClass, onChanged }) {
                 <option value="">
                   {positionsForPair.length === 0 ? '— No position needed —' : '— Position (optional) —'}
                 </option>
-                {positionsForPair.map((p) => <option key={p} value={p}>{p.replace(/_/g, ' ')}</option>)}
+                {positionsForPair.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
               </select>
               <textarea
                 value={notes}

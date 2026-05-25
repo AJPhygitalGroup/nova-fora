@@ -23,6 +23,15 @@ import {
   defectReviews as defectReviewsApi,
 } from '../../api/client';
 
+// Reject reason codes (mockup p.9). illegitimate_defect feeds the
+// inspector KPI; shop_no_capability is the vendor saying "wrong shop";
+// other is the catch-all for everything else.
+const REJECT_LABELS = {
+  shop_no_capability: 'Shop does not have this capability',
+  illegitimate_defect: 'Illegitimate defect',
+  other: 'Other',
+};
+
 export default function ApproveDefectsModal({ woId, onClose, onAfter }) {
   const [wo, setWo] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -63,27 +72,51 @@ export default function ApproveDefectsModal({ woId, onClose, onAfter }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Track which row's reject picker is open. Reject opens a small
+  // inline dropdown with the 3 reason codes (mockup p.9). Approve
+  // fires immediately — no reason needed.
+  const [rejectingFor, setRejectingFor] = useState(null);
+
   const decide = async (defectId, decision) => {
-    let reason;
     if (decision === 'reject') {
-      reason = window.prompt(
-        'Rejecting this defect — why? (will show on the audit log)',
-        '',
-      );
-      if (reason === null) return;
+      // Defer to the per-row reason picker below; just toggle the picker.
+      setRejectingFor((cur) => (cur === defectId ? null : defectId));
+      return;
     }
     setBusyId(defectId);
     setActionErr(null);
     try {
-      if (decision === 'approve') {
-        await defectReviewsApi.approve(defectId, {});
-      } else {
-        await defectReviewsApi.reject(defectId, { reason: reason?.trim() || undefined });
-      }
+      await defectReviewsApi.approve(defectId, {});
       load();
       onAfter && onAfter();
     } catch (e) {
       setActionErr(e.detail || e.message || 'Action failed');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // Fired from the reject reason picker. Optionally accepts a free-text
+  // note. `code` is the structured code — illegitimate_defect feeds the
+  // inspector KPI.
+  const submitReject = async (defectId, code) => {
+    const note = window.prompt(
+      `Reject with reason "${REJECT_LABELS[code]}" — optional note for the audit log:`,
+      '',
+    );
+    if (note === null) return;  // cancelled the prompt entirely
+    setBusyId(defectId);
+    setActionErr(null);
+    try {
+      await defectReviewsApi.reject(defectId, {
+        rejectReasonCode: code,
+        reason: note.trim() || undefined,
+      });
+      setRejectingFor(null);
+      load();
+      onAfter && onAfter();
+    } catch (e) {
+      setActionErr(e.detail || e.message || 'Reject failed');
     } finally {
       setBusyId(null);
     }
@@ -189,6 +222,29 @@ export default function ApproveDefectsModal({ woId, onClose, onAfter }) {
                     Approve
                   </button>
                 </div>
+                {rejectingFor === intId && (
+                  <div className="mt-2 pt-2 border-t border-accent-red/30 space-y-1">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-accent-red">
+                      Pick a reason
+                    </div>
+                    {Object.entries(REJECT_LABELS).map(([code, label]) => (
+                      <button
+                        key={code}
+                        type="button"
+                        onClick={() => submitReject(intId, code)}
+                        disabled={busyId === intId}
+                        className="w-full text-left px-3 py-1.5 rounded-md text-xs bg-navy-900 border border-navy-700 hover:border-accent-red/50 hover:bg-accent-red/5 text-text-strong disabled:opacity-40"
+                      >
+                        <div className="font-semibold">{label}</div>
+                        {code === 'illegitimate_defect' && (
+                          <div className="text-[10px] text-accent-red mt-0.5">
+                            Counts against the inspector's KPI grade.
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             );
           })}
