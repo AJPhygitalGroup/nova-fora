@@ -1330,6 +1330,15 @@ function Step4Odometer({
               category="odometer"
               maxPhotos={1}
               onChanged={onOdometerPhotoChanged}
+              // The most common flow: inspector taps the orange "Start
+              // inspection to attach the odometer photo" button → draft
+              // is created → this PhotoUploader mounts. The natural next
+              // action is to snap the photo, so open the camera directly
+              // instead of making them tap "Add photo" first.
+              // Gated on odometerPhotoCount===0 so that returning to step 5
+              // from a later step doesn't re-open the camera if the photo
+              // is already on file.
+              autoOpenOnEmpty={odometerPhotoCount === 0}
             />
             <div className={`mt-2 rounded-md border px-2.5 py-2 text-[11px] flex items-start gap-2 ${
               photoLanded
