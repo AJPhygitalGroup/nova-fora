@@ -50,6 +50,7 @@ from app.models.vehicle_note import VehicleNote
 from app.models.work_orders import (
     CustomerPreferredVendor,
     DeclineReasonCode,
+    RepairFeedback,
     DvicNightlyConfirmation,
     RewardsProgram,
     RewardsTier,
@@ -128,6 +129,7 @@ __all__ = [
     # WO V2.0 (14 tables + enums)
     "CustomerPreferredVendor",
     "DeclineReasonCode",
+    "RepairFeedback",
     "RewardsProgram",
     "RewardsTier",
     "DefectResolution",

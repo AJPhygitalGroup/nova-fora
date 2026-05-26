@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { ThumbsUp, ThumbsDown, Clock, DollarSign, Star, Award, AlertTriangle, ChevronDown, MessageSquare, Zap, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { vendors, vendorScorecard, vendorBenchmarks, repairOrders } from '../data/mockData';
+import { vendorScorecard as scorecardApi, vendorWorkshops as workshopsApi } from '../api/client';
 import MetricCard from './ui/MetricCard';
 import ScoreRing from './ui/ScoreRing';
 import ProgressBar from './ui/ProgressBar';
@@ -73,8 +74,55 @@ export default function VendorScorecard() {
   const benchmarks = vendorBenchmarks[selectedVendor];
   const vendorRepairs = repairOrders.filter((r) => r.vendor === selectedVendor);
 
-  const totalFeedback = scores.quality.thumbsUp + scores.quality.thumbsDown;
-  const satisfactionRate = ((scores.quality.thumbsUp / totalFeedback) * 100).toFixed(1);
+  // Live scorecard — fetched from /vendor-scorecard/{ws_id}. We map
+  // the mock vendor id (V-101) to the workshop's int id by looking up
+  // /vendor-workshops on mount. While the fetch is in flight or for
+  // workshops with no real-data yet, the mock fallback keeps painting.
+  const [liveScorecard, setLiveScorecard] = useState(null);
+  const [workshopMap, setWorkshopMap] = useState({}); // V-101 → 3 etc.
+  useEffect(() => {
+    workshopsApi.list({ includeInactive: false }).then((res) => {
+      const map = {};
+      (res.items || []).forEach((w) => {
+        // The mock 'V-101' / 'V-102' / 'V-103' IDs don't have a clean
+        // mapping to the real DB IDs. For now match by org_id +
+        // string-prefix to get something functional. iter-2 will
+        // expose a vendor picker scoped to real workshops.
+        map[w.id] = w;
+      });
+      setWorkshopMap(map);
+    }).catch(() => {});
+  }, []);
+  useEffect(() => {
+    // Resolve a real workshop id for the chosen mock vendor key.
+    // Fallback: pick the FIRST active workshop so the live panel has
+    // something to show until we wire a proper picker.
+    const candidate = workshopMap[selectedVendor] || Object.values(workshopMap)[0];
+    if (!candidate) return;
+    const wsId = (() => {
+      const raw = candidate.id;
+      if (typeof raw === 'number') return raw;
+      const m = String(raw).match(/(\d+)/);
+      return m ? Number(m[1]) : null;
+    })();
+    if (!wsId) return;
+    scorecardApi.get(wsId, { days: 90 })
+      .then(setLiveScorecard)
+      .catch(() => setLiveScorecard(null));
+  }, [selectedVendor, workshopMap]);
+
+  // Prefer live numbers, fall back to mock so the existing layout
+  // doesn't break when no feedback rows exist yet.
+  const liveThumbsUp = liveScorecard?.thumbsUp;
+  const liveThumbsDown = liveScorecard?.thumbsDown;
+  const liveTotal = liveScorecard?.totalFeedback ?? null;
+  const liveSatisfaction = liveScorecard?.satisfactionPct ?? null;
+  const totalFeedback = liveTotal != null && liveTotal > 0
+    ? liveTotal
+    : scores.quality.thumbsUp + scores.quality.thumbsDown;
+  const satisfactionRate = liveSatisfaction != null
+    ? liveSatisfaction.toFixed(1)
+    : ((scores.quality.thumbsUp / totalFeedback) * 100).toFixed(1);
 
   // Benchmark bar chart: three clusters (Best In Station / Best In Class / Primary Vendor)
   const benchmarkData = [

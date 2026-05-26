@@ -24,6 +24,7 @@ from app.routes import (
     rewards,
     uploads,
     vehicles,
+    vendor_scorecard,
     vendor_workshops,
     work_orders,
 )
@@ -134,6 +135,7 @@ app.include_router(inspection_rules.router)
 app.include_router(work_orders.router)
 app.include_router(vendor_workshops.router)
 app.include_router(vendor_workshops.preferred_router)
+app.include_router(vendor_scorecard.router)
 app.include_router(vendor_workshops.bucks_router)
 app.include_router(dsp_settings.router)
 app.include_router(defect_reviews.router)

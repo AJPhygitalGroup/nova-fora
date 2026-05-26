@@ -1761,6 +1761,59 @@ export const rewards = {
 // ─────────────────────────────────────────────────────
 // Vendor bucks ledger / balance (iter-2 accrual engine)
 // ─────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────
+// Vendor Scorecard — feedback collection + aggregated metrics.
+// ─────────────────────────────────────────────────────
+export const vendorScorecard = {
+  /**
+   * GET /vendor-scorecard/pending-feedback?dspId=&days=14
+   * DSP-side: list of completed WOs they haven't reviewed yet.
+   */
+  pending({ dspId, days = 14 } = {}) {
+    const q = new URLSearchParams();
+    if (dspId != null && dspId !== '') q.set('dsp_id', String(dspId));
+    if (days) q.set('days', String(days));
+    return apiFetch(`/vendor-scorecard/pending-feedback?${q.toString()}`);
+  },
+
+  /**
+   * POST /vendor-scorecard/feedback
+   * body: { workOrderId, vote: 'up'|'down', reason?, escalate?,
+   *         impressiveAttribute?, negativeAttribute? }
+   */
+  submit(body) {
+    return apiFetch('/vendor-scorecard/feedback', {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /**
+   * GET /vendor-scorecard/{workshopId}?days=90
+   * Aggregated scorecard for a single workshop.
+   */
+  get(workshopId, { days = 90 } = {}) {
+    const q = new URLSearchParams();
+    if (days) q.set('days', String(days));
+    return apiFetch(
+      `/vendor-scorecard/${encodeURIComponent(workshopId)}?${q.toString()}`
+    );
+  },
+
+  /**
+   * GET /vendor-scorecard/{workshopId}/benchmarks
+   * Cross-vendor benchmarks for the comparison chart.
+   */
+  benchmarks(workshopId, { days = 90, dspId } = {}) {
+    const q = new URLSearchParams();
+    if (days) q.set('days', String(days));
+    if (dspId != null && dspId !== '') q.set('dsp_id', String(dspId));
+    return apiFetch(
+      `/vendor-scorecard/${encodeURIComponent(workshopId)}/benchmarks?${q.toString()}`
+    );
+  },
+};
+
 export const vendorBucks = {
   /**
    * GET /vendor-bucks/{workshopId}/balance?dsp_id=

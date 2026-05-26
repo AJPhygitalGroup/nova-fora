@@ -22,6 +22,7 @@ import {
   dashboards as dashboardsApi,
 } from '../api/client';
 import { adaptWO } from '../api/woAdapter';
+import PendingFeedbackListModal from './feedback/PendingFeedbackListModal';
 
 const tierConfig = {
   1: { label: 'Tier 1', range: '1–25 defects', cash: '$1', bucks: '$1', color: '#3b82f6', bg: 'bg-accent-blue/10', border: 'border-accent-blue/30', pending: 1 },
@@ -3455,6 +3456,9 @@ export default function RealDVIC({ user }) {
   const [vanUpdates, setVanUpdates] = useState({});
   const [createWOContext, setCreateWOContext] = useState(null); // { van, defect }
 
+  // Vendor Scorecard pending-feedback modal (DSP rates completed WOs).
+  const [pendingFeedbackOpen, setPendingFeedbackOpen] = useState(false);
+
   // Live charts (Daily Approved vs Repaired + Open Defects donut).
   // Replace `weeklyInspections` / `defectCategoryBreakdown` mocks
   // with backend-derived data scoped to this DSP.
@@ -3921,6 +3925,7 @@ export default function RealDVIC({ user }) {
                 trend={repairedThisWeekCount > 0 ? Math.round((repairedThisWeekCount / Math.max(totalDefectsToday, 1)) * 100) : undefined}
                 trendUp
                 warning={repairsPendingFeedback > 0 ? t('realDvic.metrics.pendingFeedbackFmt', { count: repairsPendingFeedback, defaultValue: `${repairsPendingFeedback} pending feedback` }) : undefined}
+                onWarningClick={() => setPendingFeedbackOpen(true)}
               />
             </div>
           </div>
@@ -4204,6 +4209,18 @@ export default function RealDVIC({ user }) {
         )}
         {showRepairHistory && <RepairHistoryModal repairedWOs={repairedWOs} user={user} onClose={() => setShowRepairHistory(false)} />}
         {showFlexFleet && <FlexFleetModal onClose={() => setShowFlexFleet(false)} />}
+        {pendingFeedbackOpen && (
+          <PendingFeedbackListModal
+            dspId={(() => {
+              const raw = user?.organizationId ?? user?.orgId;
+              if (raw == null) return null;
+              const m = String(raw).match(/(\d+)/);
+              return m ? Number(m[1]) : null;
+            })()}
+            onClose={() => setPendingFeedbackOpen(false)}
+            onChanged={() => { /* counts auto-refresh via autoTick */ }}
+          />
+        )}
       </AnimatePresence>
     </div>
   );
