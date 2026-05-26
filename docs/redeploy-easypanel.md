@@ -181,6 +181,35 @@ Save + Deploy de nuevo.
 7. Save + Deploy
 8. Mirá los logs (Logs tab) — debe arrancar uvicorn después de aplicar Alembic migrations (~30 s)
 
+### 5.4.1 IMPORTANTE — Workaround del bug de MinIO `_FILE` overrides
+
+MinIO de EasyPanel viene con `MINIO_ROOT_USER_FILE=access_key` y
+`MINIO_ROOT_PASSWORD_FILE=secret_key` precargados, que **anulan** los env
+`MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`. Como los archivos no existen,
+MinIO arranca con su default `minioadmin/minioadmin` — y los presigned
+URLs del API (firmados con `S3_ACCESS_KEY=admin`, `S3_SECRET_KEY=Salomo…`)
+devuelven `403 InvalidAccessKeyId` cuando el browser intenta subir fotos.
+
+**Fix una sola vez por VPS** (persiste en el data dir de MinIO; no se
+pierde con redeploys del API):
+
+```bash
+ssh -i ~/.ssh/nova_claude_key root@<VPS_IP>
+
+# Crear el usuario "admin" en MinIO con la password que el API espera
+docker exec $(docker ps -qf name=nova-fora_minio) sh -c '
+  mc alias set local http://localhost:9000 minioadmin minioadmin && \
+  mc admin user add local admin "Salomo91*Dios" && \
+  mc admin policy attach local consoleAdmin --user admin
+'
+```
+
+Después, probá subir una foto desde el wizard de inspección — debe devolver
+HTTP 200 en el PUT al presigned URL.
+
+Detectado 2026-05-26 cuando un inspector vio `Upload failed (403)` en el
+paso "Lectura del odómetro" del wizard.
+
 ### 5.5 Web (frontend Vite)
 
 1. **+ Service** → **App**

@@ -163,10 +163,16 @@ Síntomas en logs:
 Desde el repo local:
 
 ```bash
-ssh -i ~/.ssh/nova_vps root@187.127.251.190
+# Clave Claude (instalada 2026-05-22 cuando se rebuildeó el VPS, srv824918)
+ssh -i ~/.ssh/nova_claude_key root@31.97.8.99
 ```
 
-La clave privada `nova_vps` vive en `C:\Users\Jorge\.ssh\nova_vps` — **nunca** se commitea.
+La IP original (187.127.251.190) fue destruida 2026-05-22; el VPS actual es
+`srv824918` en 31.97.8.99. Las llaves SSH:
+- `~/.ssh/nova_claude_key` (ed25519) — usada por Claude para operaciones rutinarias
+- `~/.ssh/nova_vps` (Jorge) — backup de operador
+
+Ninguna se commitea — viven solo en `C:\Users\Jorge\.ssh\` localmente.
 
 ## Comandos útiles vía SSH
 
