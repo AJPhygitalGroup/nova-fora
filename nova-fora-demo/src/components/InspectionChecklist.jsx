@@ -1185,6 +1185,13 @@ function DefectDetailSheet({
                 parentId={createdId}
                 category="damage"
                 onChanged={handlePhotoChanged}
+                // Auto-pop the camera the moment the uploader mounts so
+                // the inspector goes Tap chip → fill fields → Save →
+                // Camera, instead of having an extra "Add photo" tap in
+                // between. Only when the photo is required AND nothing
+                // is uploaded yet (edit-mode re-opens shouldn't surprise
+                // an inspector who already attached photos previously).
+                autoOpenOnEmpty={requiresPhoto && !existingDefect?.photos?.length}
               />
               {requiresPhoto && photoCount === 0 && (
                 <p className="mt-2 text-[11px] text-accent-gold">
