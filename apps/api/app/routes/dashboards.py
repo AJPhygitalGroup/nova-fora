@@ -999,6 +999,145 @@ async def open_defects_breakdown(
 
 
 # ═════════════════════════════════════════════════════
+# DSP Home charts — RealDVIC dashboard wiring
+# ═════════════════════════════════════════════════════
+#
+# Same shape as the vendor-home endpoints but scoped to a single DSP
+# (the customer's own org). Tenancy: dsp_* users only on their own
+# org; site_admin can hit any.
+
+@router.get(
+    "/dsp/{dsp_id}/daily-defects",
+    response_model=list[DailyDefectsPoint],
+    summary="N-day bar series for DSP Home — approved vs repaired",
+)
+async def dsp_daily_defects(
+    dsp_id: int = Path(..., ge=1),
+    days: int = Query(default=7, ge=1, le=90),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[DailyDefectsPoint]:
+    """Mirrors the vendor-home version but restricted to a single DSP.
+    Approved = DefectReview rows of decision='approved' on vehicles
+    owned by this DSP. Repaired = WOs of status='completed' assigned
+    to this DSP.
+    """
+    if current.role != UserRole.SITE_ADMIN:
+        if current.organization_id != dsp_id:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "not your DSP")
+
+    today = datetime.now(timezone.utc).date()
+    start_dt = datetime.combine(
+        today - timedelta(days=days - 1),
+        datetime.min.time(),
+        tzinfo=timezone.utc,
+    )
+
+    approved_rows = (
+        await session.execute(
+            select(
+                func.date(DefectReview.created_at).label("d"),
+                func.count(DefectReview.id),
+            )
+            .join(Defect, Defect.id == DefectReview.defect_id)
+            .join(Vehicle, Vehicle.id == Defect.vehicle_id)
+            .where(Vehicle.dsp_id == dsp_id)
+            .where(DefectReview.created_at >= start_dt)
+            .where(DefectReview.decision == "approved")
+            .group_by(func.date(DefectReview.created_at))
+        )
+    ).all()
+    approved_map = {str(d): n for d, n in approved_rows}
+
+    repaired_rows = (
+        await session.execute(
+            select(
+                func.date(WorkOrder.completed_at).label("d"),
+                func.count(WorkOrder.id),
+            )
+            .where(WorkOrder.dsp_id == dsp_id)
+            .where(WorkOrder.status == WorkOrderStatus.COMPLETED.value)
+            .where(WorkOrder.completed_at >= start_dt)
+            .group_by(func.date(WorkOrder.completed_at))
+        )
+    ).all()
+    repaired_map = {str(d): n for d, n in repaired_rows}
+
+    out: list[DailyDefectsPoint] = []
+    for i in range(days):
+        d = today - timedelta(days=days - 1 - i)
+        key = d.isoformat()
+        out.append(DailyDefectsPoint(
+            date=key,
+            approved=int(approved_map.get(key, 0)),
+            repaired=int(repaired_map.get(key, 0)),
+        ))
+    return out
+
+
+@router.get(
+    "/dsp/{dsp_id}/open-defects-breakdown",
+    response_model=list[OpenDefectsSlice],
+    summary="Donut slices for DSP Home — open defects by source",
+)
+async def dsp_open_defects_breakdown(
+    dsp_id: int = Path(..., ge=1),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[OpenDefectsSlice]:
+    """Mirrors vendor-home open-defects but scoped to one DSP."""
+    if current.role != UserRole.SITE_ADMIN:
+        if current.organization_id != dsp_id:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "not your DSP")
+
+    from app.models.work_orders import DefectResolution, DefectResolutionStatus
+
+    terminal = (
+        DefectResolutionStatus.RESOLVED.value,
+        DefectResolutionStatus.DEFERRED.value,
+        DefectResolutionStatus.DECLINED.value,
+    )
+    closed_ids_sub = (
+        select(DefectResolution.defect_id)
+        .where(DefectResolution.status.in_(terminal))
+    ).subquery()
+
+    rows = (
+        await session.execute(
+            select(
+                Defect.source,
+                func.count(Defect.id),
+            )
+            .join(Vehicle, Vehicle.id == Defect.vehicle_id)
+            .where(Vehicle.dsp_id == dsp_id)
+            .where(~Defect.id.in_(select(closed_ids_sub.c.defect_id)))
+            .group_by(Defect.source)
+        )
+    ).all()
+
+    label_map = {
+        "inspection": "Inspection",
+        "maintenance_request": "Customer request",
+        "driver_report": "Driver report",
+        "customer_report": "Customer report",
+        "shop_finding": "Shop finding",
+        "other": "Other",
+    }
+
+    def _key(s):
+        return s.value if hasattr(s, "value") else str(s)
+    return [
+        OpenDefectsSlice(
+            key=_key(source),
+            label=label_map.get(_key(source), _key(source).replace("_", " ").title()),
+            count=int(n),
+        )
+        for source, n in rows
+        if n > 0
+    ]
+
+
+# ═════════════════════════════════════════════════════
 # Inspector Performance — list view (admin + DSP-owner)
 # ═════════════════════════════════════════════════════
 class InspectorPerfRow(BaseModel):

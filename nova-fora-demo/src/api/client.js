@@ -1606,6 +1606,21 @@ export const dashboards = {
       `/dashboards/vendor-home/${encodeURIComponent(vendorWorkshopId)}/open-defects-breakdown${qs ? '?' + qs : ''}`
     );
   },
+  // DSP Home (RealDVIC) charts — mirror of vendor-home but scoped
+  // to one DSP. The current DSP user is auto-scoped server-side.
+  dspDailyDefects(dspId, { days = 7 } = {}) {
+    const q = new URLSearchParams();
+    if (days) q.set('days', String(days));
+    return apiFetch(
+      `/dashboards/dsp/${encodeURIComponent(dspId)}/daily-defects?${q.toString()}`
+    );
+  },
+  dspOpenDefectsBreakdown(dspId) {
+    return apiFetch(
+      `/dashboards/dsp/${encodeURIComponent(dspId)}/open-defects-breakdown`
+    );
+  },
+
   // Inspector Performance list (admin / DSP-side).
   inspectorPerformance({ days = 30, dspId } = {}) {
     const q = new URLSearchParams();

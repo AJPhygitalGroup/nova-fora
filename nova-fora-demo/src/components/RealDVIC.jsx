@@ -19,6 +19,7 @@ import {
   defects as defectsApi,
   defectReviews as defectReviewsApi,
   workOrders as workOrdersApi,
+  dashboards as dashboardsApi,
 } from '../api/client';
 import { adaptWO } from '../api/woAdapter';
 
@@ -3454,6 +3455,31 @@ export default function RealDVIC({ user }) {
   const [vanUpdates, setVanUpdates] = useState({});
   const [createWOContext, setCreateWOContext] = useState(null); // { van, defect }
 
+  // Live charts (Daily Approved vs Repaired + Open Defects donut).
+  // Replace `weeklyInspections` / `defectCategoryBreakdown` mocks
+  // with backend-derived data scoped to this DSP.
+  const [chartDaily, setChartDaily] = useState(null);     // [{date, approved, repaired}]
+  const [chartDonut, setChartDonut] = useState(null);     // [{key,label,count}]
+  useEffect(() => {
+    const dspIdInt = (() => {
+      const raw = user?.organizationId ?? user?.orgId;
+      if (raw == null) return null;
+      const m = String(raw).match(/(\d+)/);
+      return m ? Number(m[1]) : null;
+    })();
+    if (!dspIdInt) return;
+    let alive = true;
+    Promise.all([
+      dashboardsApi.dspDailyDefects(dspIdInt, { days: 7 }).catch(() => null),
+      dashboardsApi.dspOpenDefectsBreakdown(dspIdInt).catch(() => null),
+    ]).then(([daily, donut]) => {
+      if (!alive) return;
+      if (Array.isArray(daily)) setChartDaily(daily);
+      if (Array.isArray(donut)) setChartDonut(donut);
+    });
+    return () => { alive = false; };
+  }, [user, autoTick]);
+
   // Live "Vans inspected today" — pulled from /inspections + /vehicles.
   // Server scopes by JWT: dsp_owner sees own DSP, vendor/tech sees all DSPs.
   //
@@ -3907,7 +3933,17 @@ export default function RealDVIC({ user }) {
               <h3 className="text-sm font-semibold text-white mb-4">{t('realDvic.charts.approvedVsRepaired', 'Daily Approved vs Repaired Defects')}</h3>
               <div className="h-[200px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={weeklyInspections}>
+                  {/* Real backend data when available, fall back to the
+                      mock shape so the chart still renders pre-fetch. */}
+                  <BarChart data={
+                    chartDaily
+                      ? chartDaily.map((p) => ({
+                          day: new Date(p.date).toLocaleDateString(undefined, { weekday: 'short' }),
+                          approved: p.approved,
+                          repaired: p.repaired,
+                        }))
+                      : weeklyInspections
+                  }>
                     <XAxis dataKey="day" tick={{ fill: '#829ab1', fontSize: 12 }} axisLine={false} tickLine={false} />
                     <YAxis tick={{ fill: '#829ab1', fontSize: 11 }} axisLine={false} tickLine={false} />
                     <Tooltip contentStyle={{ background: '#102a43', border: '1px solid #334e68', borderRadius: 8, fontSize: 12 }} />
@@ -3924,23 +3960,49 @@ export default function RealDVIC({ user }) {
             >
               <h3 className="text-sm font-semibold text-white mb-4">{t('realDvic.charts.openDefects', 'Open Defects')}</h3>
               <div className="h-[200px] flex items-center">
-                <ResponsiveContainer width="50%" height="100%">
-                  <PieChart>
-                    <Pie data={defectCategoryBreakdown} cx="50%" cy="50%" innerRadius={45} outerRadius={70} dataKey="value" stroke="none">
-                      {defectCategoryBreakdown.map((entry, i) => <Cell key={i} fill={entry.color} />)}
-                    </Pie>
-                    <Tooltip contentStyle={{ background: '#102a43', border: '1px solid #334e68', borderRadius: 8, fontSize: 12 }} formatter={(v) => [`${v}%`]} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="flex flex-col gap-1.5 text-xs">
-                  {defectCategoryBreakdown.map((cat) => (
-                    <div key={cat.name} className="flex items-center gap-2">
-                      <span className="w-2.5 h-2.5 rounded-full" style={{ background: cat.color }} />
-                      <span className="text-navy-300">{cat.name}</span>
-                      <span className="text-white font-semibold">{cat.value}%</span>
-                    </div>
-                  ))}
-                </div>
+                {(() => {
+                  // Real data when available; fall back to mock shape.
+                  // Source-key → palette color (same family vendor home uses).
+                  const PALETTE = {
+                    inspection: '#3b82f6',
+                    shop_finding: '#f97316',
+                    maintenance_request: '#a855f7',
+                    customer_report: '#a855f7',
+                    driver_report: '#eab308',
+                    other: '#94a3b8',
+                  };
+                  const live = chartDonut && chartDonut.length > 0
+                    ? (() => {
+                        const total = chartDonut.reduce((s, sl) => s + (sl.count || 0), 0) || 1;
+                        return chartDonut.map((sl) => ({
+                          name: sl.label,
+                          value: Math.round((sl.count / total) * 100),
+                          color: PALETTE[sl.key] || '#94a3b8',
+                        }));
+                      })()
+                    : defectCategoryBreakdown;
+                  return (
+                    <>
+                      <ResponsiveContainer width="50%" height="100%">
+                        <PieChart>
+                          <Pie data={live} cx="50%" cy="50%" innerRadius={45} outerRadius={70} dataKey="value" stroke="none">
+                            {live.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                          </Pie>
+                          <Tooltip contentStyle={{ background: '#102a43', border: '1px solid #334e68', borderRadius: 8, fontSize: 12 }} formatter={(v) => [`${v}%`]} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div className="flex flex-col gap-1.5 text-xs">
+                        {live.map((cat) => (
+                          <div key={cat.name} className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full" style={{ background: cat.color }} />
+                            <span className="text-navy-300">{cat.name}</span>
+                            <span className="text-white font-semibold">{cat.value}%</span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             </motion.div>
           </div>
