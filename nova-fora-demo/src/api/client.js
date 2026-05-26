@@ -1717,4 +1717,35 @@ export const rewards = {
   },
 };
 
+// ─────────────────────────────────────────────────────
+// Vendor bucks ledger / balance (iter-2 accrual engine)
+// ─────────────────────────────────────────────────────
+export const vendorBucks = {
+  /**
+   * GET /vendor-bucks/{workshopId}/balance?dsp_id=
+   * Returns: [{ vendorWorkshopId, dspId, dspName, balance }]
+   * — one row per DSP this workshop has accrued bucks for.
+   */
+  balance(workshopId, { dspId } = {}) {
+    const q = new URLSearchParams();
+    if (dspId != null && dspId !== '') q.set('dsp_id', String(dspId));
+    const qs = q.toString();
+    return apiFetch(
+      `/vendor-bucks/${encodeURIComponent(workshopId)}/balance${qs ? '?' + qs : ''}`,
+    );
+  },
+  /**
+   * GET /vendor-bucks/{workshopId}/ledger?dsp_id=&limit=
+   * Returns newest-first ledger entries (accrual / redemption / etc).
+   */
+  ledger(workshopId, { dspId, limit = 100 } = {}) {
+    const q = new URLSearchParams();
+    if (dspId != null && dspId !== '') q.set('dsp_id', String(dspId));
+    if (limit) q.set('limit', String(limit));
+    return apiFetch(
+      `/vendor-bucks/${encodeURIComponent(workshopId)}/ledger?${q.toString()}`,
+    );
+  },
+};
+
 export { APIError };

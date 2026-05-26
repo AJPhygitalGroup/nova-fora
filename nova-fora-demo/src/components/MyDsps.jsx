@@ -25,6 +25,7 @@ import {
   directory as directoryApi,
   vehicles as vehiclesApi,
   vendorWorkshops as vendorWorkshopsApi,
+  vendorBucks as vendorBucksApi,
   APIError,
 } from '../api/client';
 import { isVendorRole } from '../lib/permissions';
@@ -60,6 +61,10 @@ export default function MyDsps({ user }) {
   // DSP-ids where the current vendor user is marked as primary
   // (mockup p.10 "You are the primary vendor" gold ribbon).
   const [primaryDspIds, setPrimaryDspIds] = useState(new Set());
+  // Bucks balance per DSP (sum across the vendor's workshops). Shown
+  // as a small chip on each DSP card so the vendor knows how much
+  // their rewards program has accrued for that customer.
+  const [bucksByDsp, setBucksByDsp] = useState({});
   const [search, setSearch] = useState('');
   // Selected DSP for drill-down. Null = list view.
   const [selectedDsp, setSelectedDsp] = useState(null);
@@ -91,9 +96,9 @@ export default function MyDsps({ user }) {
       .then((res) => alive && setVehicles(res.items || []))
       .catch((err) => console.warn('vehicles fetch failed (DSP cards will show 0 vans):', err));
 
-    // Primary-vendor badges (mockup p.10) — only meaningful for vendor
-    // roles. Fetch workshops the user owns → fetch is_primary=true
-    // preferences scoped to each → collect the set of DSP ids.
+    // Primary-vendor badges (mockup p.10) + bucks balance per DSP
+    // (iter-2). Both are vendor-only and use the same workshop list,
+    // so we fetch them in the same async block.
     if (isVendorRole(user)) {
       (async () => {
         try {
@@ -102,25 +107,50 @@ export default function MyDsps({ user }) {
           const myWorkshops = (wsRes.items || []).filter(
             (w) => Number(w.organizationId) === myOrgInt,
           );
-          const allRows = await Promise.all(
-            myWorkshops.map((w) =>
-              vehiclesApi
-                .listPreferredVendors({
-                  vendorWorkshopId: parseOrgInt(w.id),
-                  isPrimary: true,
-                })
-                .catch(() => []),
+
+          // Run both lookups in parallel — each is per-workshop and
+          // the two queries are independent.
+          const [primaryRows, bucksRows] = await Promise.all([
+            Promise.all(
+              myWorkshops.map((w) =>
+                vehiclesApi
+                  .listPreferredVendors({
+                    vendorWorkshopId: parseOrgInt(w.id),
+                    isPrimary: true,
+                  })
+                  .catch(() => []),
+              ),
             ),
-          );
+            Promise.all(
+              myWorkshops.map((w) =>
+                vendorBucksApi
+                  .balance(parseOrgInt(w.id))
+                  .catch(() => []),
+              ),
+            ),
+          ]);
           if (!alive) return;
+
           const dspSet = new Set();
-          allRows.flat().forEach((row) => {
+          primaryRows.flat().forEach((row) => {
             if (row?.dspId != null) dspSet.add(Number(row.dspId));
           });
           setPrimaryDspIds(dspSet);
+
+          // Sum balances across workshops per DSP — one vendor org
+          // can own multiple shops, and each shop's bucks roll up to
+          // the same DSP relationship from the vendor's POV.
+          const bucksMap = {};
+          bucksRows.flat().forEach((row) => {
+            if (row?.dspId == null) return;
+            const amount = Number(row.balance || 0);
+            if (!bucksMap[row.dspId]) bucksMap[row.dspId] = 0;
+            bucksMap[row.dspId] += amount;
+          });
+          setBucksByDsp(bucksMap);
         } catch (e) {
-          // Non-fatal — cards just render without the badge.
-          console.warn('primary-vendor lookup failed', e);
+          // Non-fatal — cards just render without the badge/chip.
+          console.warn('vendor lookups failed', e);
         }
       })();
     }
@@ -229,7 +259,9 @@ export default function MyDsps({ user }) {
             const dspVans = vehiclesByDsp[dsp.id] || [];
             const groundedCount = dspVans.filter((v) => v.grounded).length;
             const activeCount = dspVans.filter((v) => v.isActive).length;
-            const isPrimary = primaryDspIds.has(parseOrgInt(dsp.id));
+            const dspIntId = parseOrgInt(dsp.id);
+            const isPrimary = primaryDspIds.has(dspIntId);
+            const bucks = bucksByDsp[dspIntId] || 0;
             return (
               <motion.button
                 key={dsp.id}
@@ -241,12 +273,22 @@ export default function MyDsps({ user }) {
                     : 'border-navy-700 bg-navy-900/60 hover:border-accent-blue hover:bg-navy-900'
                 }`}
               >
-                {isPrimary && (
-                  <div className="mb-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-gold/20 border border-accent-gold/50 text-accent-gold text-[10px] font-bold uppercase tracking-wider">
-                    <Star size={10} fill="currentColor" />
-                    {t('myDsps.primaryVendorBadge', 'You are the primary vendor')}
-                  </div>
-                )}
+                <div className="mb-2 flex items-center gap-1.5 flex-wrap">
+                  {isPrimary && (
+                    <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-gold/20 border border-accent-gold/50 text-accent-gold text-[10px] font-bold uppercase tracking-wider">
+                      <Star size={10} fill="currentColor" />
+                      {t('myDsps.primaryVendorBadge', 'You are the primary vendor')}
+                    </div>
+                  )}
+                  {bucks > 0 && (
+                    <div
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-green/15 border border-accent-green/40 text-accent-green text-[10px] font-bold"
+                      title={`Vendor bucks accrued for this customer — redeem against your rewards program tiers`}
+                    >
+                      ${bucks.toFixed(2)} in bucks
+                    </div>
+                  )}
+                </div>
                 <div className="flex items-start justify-between gap-3 mb-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 mb-1">
