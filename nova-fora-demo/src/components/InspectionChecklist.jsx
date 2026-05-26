@@ -290,6 +290,63 @@ export default function InspectionChecklist({
   const pageParts = activeParts.slice(pageStart, pageStart + PARTS_PER_PAGE);
   const remainingOnPage = pageParts.filter((p) => !partStatus[p.id] || partStatus[p.id] === 'unmarked').length;
 
+  // ─── Swipe navigation (touch screens) ──────────────────────────
+  // The inspector runs the wizard on their phone — swiping left/right
+  // between pages is more natural than tapping Next/Prev. When a swipe
+  // crosses the last/first page, we jump to the next/prev section so
+  // the whole wizard feels like one long swipeable deck.
+  //
+  // Filter rules so taps on Pass/N/A chips don't fire navigation:
+  //   - horizontal distance ≥ 60px
+  //   - vertical drift ≤ 50px (preserve vertical scroll)
+  //   - gesture duration ≤ 700ms (deliberate flick, not a slow drag)
+  //   - defect sheet must NOT be open (sheet handles its own gestures)
+  const touchStartRef = useRef(null);
+  const goToPrev = () => {
+    if (activePage > 0) {
+      setPageBySection((m) => ({ ...m, [activeSection]: activePage - 1 }));
+      return;
+    }
+    // First page → jump to previous section's last page.
+    const idx = tabs.findIndex((t) => t.id === activeSection);
+    if (idx <= 0) return;
+    const prevSec = tabs[idx - 1].id;
+    const prevParts = partsBySection[prevSec] || [];
+    const prevPageTotal = Math.max(1, Math.ceil(prevParts.length / PARTS_PER_PAGE));
+    setActiveSection(prevSec);
+    setPageBySection((m) => ({ ...m, [prevSec]: prevPageTotal - 1 }));
+  };
+  const goToNext = () => {
+    if (activePage < pageTotal - 1) {
+      setPageBySection((m) => ({ ...m, [activeSection]: activePage + 1 }));
+      return;
+    }
+    // Last page → jump to next section's first page.
+    const idx = tabs.findIndex((t) => t.id === activeSection);
+    if (idx < 0 || idx >= tabs.length - 1) return;
+    const nextSec = tabs[idx + 1].id;
+    setActiveSection(nextSec);
+    setPageBySection((m) => ({ ...m, [nextSec]: 0 }));
+  };
+  const handleSwipeStart = (e) => {
+    if (sheetState) return;
+    const t = e.touches?.[0];
+    if (!t) return;
+    touchStartRef.current = { x: t.clientX, y: t.clientY, time: Date.now() };
+  };
+  const handleSwipeEnd = (e) => {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!start || sheetState) return;
+    const t = e.changedTouches?.[0];
+    if (!t) return;
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    const dt = Date.now() - start.time;
+    if (Math.abs(dx) < 60 || Math.abs(dy) > 50 || dt > 700) return;
+    if (dx < 0) goToNext(); else goToPrev();
+  };
+
   // ─── Mark / pass-remaining handlers ────────────────────────────
   const markPart = async (part, status) => {
     setInlineError(null);
@@ -446,8 +503,12 @@ export default function InspectionChecklist({
         </div>
       </div>
 
-      {/* Active section pane */}
-      <div className="px-1 pb-32">
+      {/* Active section pane — touch swipe navigates pages/sections */}
+      <div
+        className="px-1 pb-32"
+        onTouchStart={handleSwipeStart}
+        onTouchEnd={handleSwipeEnd}
+      >
         {inlineError && (
           <div className="mb-3 rounded-md bg-accent-red/10 border border-accent-red/40 px-3 py-2 text-xs text-accent-red flex items-start gap-2">
             <AlertCircle size={14} className="shrink-0 mt-0.5" />
@@ -496,8 +557,14 @@ export default function InspectionChecklist({
                 >
                   <ChevronLeft size={16} /> {t('checklist.prev', 'Prev')}
                 </button>
-                <span className="text-xs font-semibold text-navy-300 bg-navy-800/60 px-3 py-1.5 rounded-full">
+                <span
+                  className="text-xs font-semibold text-navy-300 bg-navy-800/60 px-3 py-1.5 rounded-full flex flex-col items-center"
+                  title={t('checklist.swipeHint', 'Swipe left/right on touch screens')}
+                >
                   {t('checklist.pageFmt', { page: activePage + 1, total: pageTotal, defaultValue: `Page ${activePage + 1} of ${pageTotal}` })}
+                  <span className="block sm:hidden text-[9px] text-navy-400 mt-0.5 leading-none">
+                    ← {t('checklist.swipeHintShort', 'swipe')} →
+                  </span>
                 </span>
                 <button
                   disabled={activePage >= pageTotal - 1}
