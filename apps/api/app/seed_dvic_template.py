@@ -14,6 +14,21 @@ Branding policy:
     set requires_branding=True. The wizard hides them when the inspected
     vehicle has ownership=owner or ownership=rented.
 
+Section layout (2026-05-26 update — General section removed):
+  - The "General" section is gone. Items that used to live there moved to
+    the section where the inspector physically encounters them:
+      * License plate → Front Side AND Back Side (section IS the position;
+        no front/back picker needed since the section already says so).
+      * Inspection sticker → Front Side.
+      * Interior loose objects + interior cleanliness → In Cab.
+      * Vehicle documentation (paperwork) → In Cab (inspector reads from
+        inside the cab).
+      * Safety accessories (fire extinguisher, spare fuses, reflective
+        triangles) → In Cab (typically stored under/behind the driver seat).
+  - The seed runner deactivates orphaned rows automatically (rows that used
+    to exist in `dvic_template_item` but are no longer in this file get
+    `is_active=False`), so removing General is safe — no migration needed.
+
 Tuple shape (8-tuple, default requires_branding=False):
   (section, part_category, part, defect_type, position_or_None,
    description, ordering, photo_required)
@@ -42,28 +57,7 @@ DvicRow = tuple[S, str, P, T, Pos | None, str, int, bool] | \
 # Cargo DVIC — applies to regular_cargo_van + custom_delivery_van
 # ─────────────────────────────────────────────────────
 CARGO_ROWS: list[DvicRow] = [
-    # ═══════ § 1. General ═══════
-    # Vehicle Cleanliness — sensory defects, no photo needed for odor
-    (S.GENERAL, "Vehicle Cleanliness", P.INTERIOR_LOOSE_OBJECTS, T.HAS_LOOSE_OBJECTS, None,
-     "Interior of vehicle has loose objects/spilled liquid that could compromise safely driving the vehicle", 10, True),
-    (S.GENERAL, "Vehicle Cleanliness", P.INTERIOR_CLEANLINESS, T.DIRTY, None,
-     "Interior has trash or excessive grime/dust present", 20, True),
-    (S.GENERAL, "Vehicle Cleanliness", P.INTERIOR_CLEANLINESS, T.ODOR, None,
-     "Interior has odor", 30, False),
-    # License plate (moved from Back Side per user request — front/back picker)
-    (S.GENERAL, "License plates/tags", P.LICENSE_PLATE, T.MISSING, None,
-     "License plates/temp tags are damaged, missing, illegible, or expired", 40, True),
-    (S.GENERAL, "License plates/tags", P.LICENSE_PLATE, T.DAMAGED, None,
-     "License plate physically damaged or bent", 50, True),
-    # State Inspection sticker (added per user request)
-    (S.GENERAL, "State Inspection", P.INSPECTION_STICKER, T.MISSING, None,
-     "State Inspection sticker is missing", 60, True),
-    (S.GENERAL, "State Inspection", P.INSPECTION_STICKER, T.EXPIRED, None,
-     "State Inspection sticker is expired", 70, True),
-    (S.GENERAL, "State Inspection", P.INSPECTION_STICKER, T.DAMAGED, None,
-     "State Inspection sticker is damaged or illegible", 80, True),
-
-    # ═══════ § 2. Front Side ═══════
+    # ═══════ § 1. Front Side ═══════
     (S.FRONT_SIDE, "Suspension & underbody shield", P.SUSPENSION, T.MISALIGNED, None,
      "Noticeable leaning of vehicle (when parked)", 10, True),
     (S.FRONT_SIDE, "Suspension & underbody shield", P.UNDERCARRIAGE_OBJECT, T.HANGING, Pos.FRONT,
@@ -89,8 +83,20 @@ CARGO_ROWS: list[DvicRow] = [
      "Front bumper or attached items damaged, loose, or hanging", 80, True),
     (S.FRONT_SIDE, "Body and doors", P.HOOD, T.DAMAGED, None,
      "Hood damaged or won't latch", 90, True),
+    # License plate (front) — section IS the position, no picker
+    (S.FRONT_SIDE, "License plates/tags", P.LICENSE_PLATE, T.MISSING, None,
+     "Front license plate / temp tag is damaged, missing, illegible, or expired", 100, True),
+    (S.FRONT_SIDE, "License plates/tags", P.LICENSE_PLATE, T.DAMAGED, None,
+     "Front license plate physically damaged or bent", 110, True),
+    # State Inspection sticker — lives on the front windshield
+    (S.FRONT_SIDE, "State Inspection", P.INSPECTION_STICKER, T.MISSING, None,
+     "State Inspection sticker is missing", 120, True),
+    (S.FRONT_SIDE, "State Inspection", P.INSPECTION_STICKER, T.EXPIRED, None,
+     "State Inspection sticker is expired", 130, True),
+    (S.FRONT_SIDE, "State Inspection", P.INSPECTION_STICKER, T.DAMAGED, None,
+     "State Inspection sticker is damaged or illegible", 140, True),
 
-    # ═══════ § 3. Back Side ═══════
+    # ═══════ § 2. Back Side ═══════
     (S.BACK_SIDE, "Suspension & underbody shield", P.UNDERCARRIAGE_OBJECT, T.HANGING, Pos.REAR,
      "Loose or hanging objects underneath", 10, True),
     (S.BACK_SIDE, "Lights and light covers", P.LICENSE_PLATE_LIGHT, T.NOT_WORKING, None,
@@ -110,8 +116,13 @@ CARGO_ROWS: list[DvicRow] = [
      "Items attached to the body of the vehicle (for example: bumper, backup camera, or rear step) are missing, damaged, loose, unsecure, hanging, or held with a zip-tie, tape, or similar", 80, True),
     (S.BACK_SIDE, "Body and doors", P.REAR_CARGO_DOOR, T.WONT_CLOSE, None,
      "Rear cargo door won't close, latch, or lock", 90, True),
+    # License plate (back) — section IS the position, no picker
+    (S.BACK_SIDE, "License plates/tags", P.LICENSE_PLATE, T.MISSING, None,
+     "Rear license plate / temp tag is damaged, missing, illegible, or expired", 100, True),
+    (S.BACK_SIDE, "License plates/tags", P.LICENSE_PLATE, T.DAMAGED, None,
+     "Rear license plate physically damaged or bent", 110, True),
 
-    # ═══════ § 4. Driver Side ═══════
+    # ═══════ § 3. Driver Side ═══════
     # Front tire / wheel
     (S.DRIVER_SIDE, "Front tire, wheel and rim", P.WHEEL_NUT, T.DAMAGED, Pos.DRIVER_FRONT,
      "Wheel, wheel nuts, rim, or mounting equipment is damaged, cracked, loose, missing, or broken", 10, True),
@@ -151,7 +162,7 @@ CARGO_ROWS: list[DvicRow] = [
     (S.DRIVER_SIDE, "Back tire, wheel and rim", P.TIRE, T.SIDEWALL_DAMAGE, Pos.DRIVER_REAR,
      "Tire has objects, cuts, dents, swells, leaks, appears flat, or exposed wire on surface", 170, True),
 
-    # ═══════ § 5. Passenger Side ═══════
+    # ═══════ § 4. Passenger Side ═══════
     (S.PASSENGER_SIDE, "Front tire, wheel and rim", P.WHEEL_NUT, T.DAMAGED, Pos.PASSENGER_FRONT,
      "Wheel, wheel nuts, rim, or mounting equipment is damaged, cracked, loose, missing, or broken", 10, True),
     (S.PASSENGER_SIDE, "Front tire, wheel and rim", P.TIRE, T.LOW_TREAD, Pos.PASSENGER_FRONT,
@@ -187,7 +198,14 @@ CARGO_ROWS: list[DvicRow] = [
     (S.PASSENGER_SIDE, "Back tire, wheel and rim", P.TIRE, T.SIDEWALL_DAMAGE, Pos.PASSENGER_REAR,
      "Tire has objects, cuts, dents, swells, leaks, appears flat, or exposed wire on surface", 160, True),
 
-    # ═══════ § 6. In Cab ═══════
+    # ═══════ § 5. In Cab ═══════
+    # Vehicle Cleanliness (moved from General) — inspector checks from cab
+    (S.IN_CAB, "Vehicle Cleanliness", P.INTERIOR_LOOSE_OBJECTS, T.HAS_LOOSE_OBJECTS, None,
+     "Interior of vehicle has loose objects/spilled liquid that could compromise safely driving the vehicle", 1, True),
+    (S.IN_CAB, "Vehicle Cleanliness", P.INTERIOR_CLEANLINESS, T.DIRTY, None,
+     "Interior has trash or excessive grime/dust present", 2, True),
+    (S.IN_CAB, "Vehicle Cleanliness", P.INTERIOR_CLEANLINESS, T.ODOR, None,
+     "Interior has odor", 3, False),
     # Wipers — no driver/passenger picker (rule applies generically)
     (S.IN_CAB, "Wipers", P.WIPER_BLADE, T.NOT_WORKING, None,
      "Wiper blades are missing, damaged, or not working", 10, True),
@@ -261,25 +279,7 @@ CARGO_ROWS: list[DvicRow] = [
 # (mostly Cargo + DOT-specific items)
 # ─────────────────────────────────────────────────────
 DOT_ROWS: list[DvicRow] = [
-    # ═══════ § 1. General — DOT extras ═══════
-    (S.GENERAL, "Vehicle Documentation", P.PAPER_DOCUMENT, T.MISSING, None,
-     "Insurance information, registration, short haul exemption, or certification of lease is missing, damaged, illegible, or expired", 10, True),
-    (S.GENERAL, "Vehicle Documentation", P.PERIODIC_INSPECTION_STICKER, T.EXPIRED, None,
-     "DOT/CA BIT/State Inspection sticker is missing, damaged, illegible, or expired", 20, True),
-    (S.GENERAL, "Vehicle Cleanliness", P.INTERIOR_LOOSE_OBJECTS, T.HAS_LOOSE_OBJECTS, None,
-     "Interior of vehicle has loose objects/spilled liquid that could compromise safely driving the vehicle", 30, True),
-    (S.GENERAL, "Vehicle Cleanliness", P.INTERIOR_CLEANLINESS, T.DIRTY, None,
-     "Interior has trash or excessive grime/dust present", 40, True),
-    (S.GENERAL, "Vehicle Cleanliness", P.INTERIOR_CLEANLINESS, T.ODOR, None,
-     "Interior has odor", 50, False),
-    (S.GENERAL, "License plates/tags", P.LICENSE_PLATE, T.MISSING, None,
-     "License plates/temp tags are damaged, missing, illegible, or expired", 60, True),
-    (S.GENERAL, "Safety accessories", P.SPARE_FUSES, T.MISSING, None,
-     "Spare fuses or reflective triangles are missing", 70, True),
-    (S.GENERAL, "Safety accessories", P.FIRE_EXTINGUISHER, T.MISSING, None,
-     "Fire extinguisher is missing, not mounted, mounted with a tape, zip-tie or similar, or the dial/needle is not in the green zone", 80, True),
-
-    # ═══════ § 2. Front Side ═══════
+    # ═══════ § 1. Front Side ═══════
     (S.FRONT_SIDE, "Suspension & underbody shield", P.SUSPENSION, T.MISALIGNED, None,
      "Noticeable leaning of vehicle (when parked)", 10, True),
     (S.FRONT_SIDE, "Suspension & underbody shield", P.UNDERCARRIAGE_OBJECT, T.HANGING, Pos.FRONT,
@@ -294,8 +294,19 @@ DOT_ROWS: list[DvicRow] = [
      "Any lights or light covers are cracked (leaving hole or void), missing, or not working properly", 60, True),
     (S.FRONT_SIDE, "Body and doors", P.BUMPER, T.DAMAGED, Pos.FRONT,
      "Items attached to the body (bumpers, hood latches) are missing, damaged, loose, unsecure, hanging, or held with a zip-tie, tape, or similar", 70, True),
+    # License plate (front)
+    (S.FRONT_SIDE, "License plates/tags", P.LICENSE_PLATE, T.MISSING, None,
+     "Front license plate / temp tag is damaged, missing, illegible, or expired", 80, True),
+    # DOT/State Inspection sticker — typically on windshield, front-facing
+    (S.FRONT_SIDE, "State Inspection", P.PERIODIC_INSPECTION_STICKER, T.EXPIRED, None,
+     "DOT/CA BIT/State Inspection sticker is missing, damaged, illegible, or expired", 90, True),
 
-    # ═══════ § 4. Driver Side — DOT adds fuel cap, decals, mud flap ═══════
+    # ═══════ § 2. Back Side ═══════
+    # License plate (back)
+    (S.BACK_SIDE, "License plates/tags", P.LICENSE_PLATE, T.MISSING, None,
+     "Rear license plate / temp tag is damaged, missing, illegible, or expired", 10, True),
+
+    # ═══════ § 3. Driver Side — DOT adds fuel cap, decals, mud flap ═══════
     (S.DRIVER_SIDE, "Front tire, wheel and rim", P.TIRE, T.LOW_TREAD, Pos.DRIVER_FRONT,
      "Tire has insufficient tread (Less than 4/32 or 3.2mm) on inner most, middle, or outer most tread", 10, True),
     (S.DRIVER_SIDE, "Front tire, wheel and rim", P.TIRE, T.SIDEWALL_DAMAGE, Pos.DRIVER_FRONT,
@@ -321,7 +332,7 @@ DOT_ROWS: list[DvicRow] = [
     (S.DRIVER_SIDE, "Back tire, wheel and rim", P.TIRE, T.LOW_TREAD, Pos.DRIVER_REAR,
      "Tire has insufficient tread (Less than 2/32 or 1.6mm) on inner most, middle, or outer most tread", 120, True),
 
-    # ═══════ § 5. Passenger Side ═══════
+    # ═══════ § 4. Passenger Side ═══════
     (S.PASSENGER_SIDE, "Front tire, wheel and rim", P.TIRE, T.LOW_TREAD, Pos.PASSENGER_FRONT,
      "Tire has insufficient tread (Less than 4/32 or 3.2mm) on inner most, middle, or outer most tread", 10, True),
     (S.PASSENGER_SIDE, "Front tire, wheel and rim", P.TIRE, T.SIDEWALL_DAMAGE, Pos.PASSENGER_FRONT,
@@ -341,7 +352,22 @@ DOT_ROWS: list[DvicRow] = [
     (S.PASSENGER_SIDE, "Back tire, wheel and rim", P.TIRE, T.LOW_TREAD, Pos.PASSENGER_REAR,
      "Tire has insufficient tread (Less than 2/32 or 1.6mm) on inner most, middle, or outer most tread", 90, True),
 
-    # ═══════ § 6. In Cab — DOT adds Air pressure gauge ═══════
+    # ═══════ § 5. In Cab — DOT adds Air pressure gauge ═══════
+    # Vehicle Documentation (moved from General)
+    (S.IN_CAB, "Vehicle Documentation", P.PAPER_DOCUMENT, T.MISSING, None,
+     "Insurance information, registration, short haul exemption, or certification of lease is missing, damaged, illegible, or expired", 1, True),
+    # Vehicle Cleanliness (moved from General)
+    (S.IN_CAB, "Vehicle Cleanliness", P.INTERIOR_LOOSE_OBJECTS, T.HAS_LOOSE_OBJECTS, None,
+     "Interior of vehicle has loose objects/spilled liquid that could compromise safely driving the vehicle", 2, True),
+    (S.IN_CAB, "Vehicle Cleanliness", P.INTERIOR_CLEANLINESS, T.DIRTY, None,
+     "Interior has trash or excessive grime/dust present", 3, True),
+    (S.IN_CAB, "Vehicle Cleanliness", P.INTERIOR_CLEANLINESS, T.ODOR, None,
+     "Interior has odor", 4, False),
+    # Safety accessories (moved from General — typically stored under driver seat)
+    (S.IN_CAB, "Safety accessories", P.SPARE_FUSES, T.MISSING, None,
+     "Spare fuses or reflective triangles are missing", 5, True),
+    (S.IN_CAB, "Safety accessories", P.FIRE_EXTINGUISHER, T.MISSING, None,
+     "Fire extinguisher is missing, not mounted, mounted with a tape, zip-tie or similar, or the dial/needle is not in the green zone", 6, True),
     (S.IN_CAB, "Wipers", P.WIPER_BLADE, T.NOT_WORKING, None,
      "Wiper blades are missing, damaged, or not working", 10, True),
     (S.IN_CAB, "Brakes", P.AIR_PRESSURE_GAUGE, T.OVER_PRESSURE, None,
@@ -378,32 +404,7 @@ DOT_ROWS: list[DvicRow] = [
 # (insert_box_truck_dvic_template.py) and adapted to NF V2.2.
 # ─────────────────────────────────────────────────────
 BOX_TRUCK_ROWS: list[DvicRow] = [
-    # ═══════ § 1. General ═══════
-    # Vehicle Documentation
-    (S.GENERAL, "Vehicle Documentation", P.PAPER_DOCUMENT, T.MISSING, None,
-     "Insurance information, registration, short haul exemption, or "
-     "certification of lease is missing, damaged, illegible, or expired", 10, True),
-    (S.GENERAL, "Vehicle Documentation", P.INSPECTION_STICKER, T.MISSING, None,
-     "DOT/CA BIT/State Inspection sticker is missing, damaged, illegible, or expired", 20, True),
-    # Vehicle Cleanliness — sensory: odor has no photo
-    (S.GENERAL, "Vehicle Cleanliness", P.INTERIOR_LOOSE_OBJECTS, T.HAS_LOOSE_OBJECTS, None,
-     "Interior of vehicle has loose objects/spilled liquid that could compromise safely driving the vehicle", 30, True),
-    (S.GENERAL, "Vehicle Cleanliness", P.INTERIOR_CLEANLINESS, T.DIRTY, None,
-     "Interior has trash or excessive grime/dust present", 40, True),
-    (S.GENERAL, "Vehicle Cleanliness", P.INTERIOR_CLEANLINESS, T.ODOR, None,
-     "Interior has odor", 50, False),
-    # Safety accessories
-    (S.GENERAL, "Safety accessories", P.SPARE_FUSES, T.MISSING, None,
-     "Spare fuses are missing", 60, True),
-    (S.GENERAL, "Safety accessories", P.REFLECTIVE_TRIANGLES, T.MISSING, None,
-     "Reflective triangles are missing", 70, True),
-    (S.GENERAL, "Safety accessories", P.FIRE_EXTINGUISHER, T.MISSING, None,
-     "Fire extinguisher is missing, not mounted, mounted with tape/zip-tie, or dial/needle is not in the green zone", 80, True),
-    # License plate (kept in General for consistency with Cargo wizard)
-    (S.GENERAL, "License plates/tags", P.LICENSE_PLATE, T.MISSING, None,
-     "License plates/temp tags are damaged, missing, illegible, or expired", 90, True),
-
-    # ═══════ § 2. Front Side ═══════
+    # ═══════ § 1. Front Side ═══════
     (S.FRONT_SIDE, "Suspension & underbody shield", P.SUSPENSION, T.MISALIGNED, None,
      "Noticeable leaning of vehicle (when parked)", 10, True),
     (S.FRONT_SIDE, "Suspension & underbody shield", P.UNDERCARRIAGE_OBJECT, T.HANGING, Pos.FRONT,
@@ -417,8 +418,14 @@ BOX_TRUCK_ROWS: list[DvicRow] = [
     (S.FRONT_SIDE, "Body and doors", P.BUMPER, T.DAMAGED, Pos.FRONT,
      "Items attached to the body of the vehicle (for example: bumpers and hood latches) "
      "are missing, damaged, loose, unsecure, hanging, or held with a zip-tie, tape, or similar", 60, True),
+    # License plate (front)
+    (S.FRONT_SIDE, "License plates/tags", P.LICENSE_PLATE, T.MISSING, None,
+     "Front license plate / temp tag is damaged, missing, illegible, or expired", 70, True),
+    # Inspection sticker (windshield)
+    (S.FRONT_SIDE, "State Inspection", P.INSPECTION_STICKER, T.MISSING, None,
+     "DOT/CA BIT/State Inspection sticker is missing, damaged, illegible, or expired", 80, True),
 
-    # ═══════ § 3. Back Side ═══════
+    # ═══════ § 2. Back Side ═══════
     (S.BACK_SIDE, "Suspension & underbody shield", P.UNDERCARRIAGE_OBJECT, T.HANGING, Pos.REAR,
      "Loose or hanging objects underneath", 10, True),
     (S.BACK_SIDE, "Lights and light covers", P.LICENSE_PLATE_LIGHT, T.NOT_WORKING, None,
@@ -432,8 +439,11 @@ BOX_TRUCK_ROWS: list[DvicRow] = [
     (S.BACK_SIDE, "Body and doors", P.BUMPER, T.DAMAGED, Pos.REAR,
      "Items attached to the body of the vehicle (for example: bumper, back-up camera, lift gate, or rear step) "
      "are missing, damaged, loose, unsecure, hanging, or held with a zip-tie, tape, or similar", 60, True),
+    # License plate (back)
+    (S.BACK_SIDE, "License plates/tags", P.LICENSE_PLATE, T.MISSING, None,
+     "Rear license plate / temp tag is damaged, missing, illegible, or expired", 70, True),
 
-    # ═══════ § 4. Driver Side ═══════
+    # ═══════ § 3. Driver Side ═══════
     # Front tire/wheel/rim
     (S.DRIVER_SIDE, "Front tire, wheel and rim", P.WHEEL_NUT, T.DAMAGED, Pos.DRIVER_FRONT,
      "Wheel, wheel nut, rim, or mounting equipment is damaged, cracked, loose, missing, or broken", 10, True),
@@ -480,7 +490,7 @@ BOX_TRUCK_ROWS: list[DvicRow] = [
     (S.DRIVER_SIDE, "Back tire, wheel and rim", P.TIRE, T.SIDEWALL_DAMAGE, Pos.DRIVER_REAR,
      "Tire has objects, cuts, dents, swells, leaks, appears flat, or exposed wire on surface", 180, True),
 
-    # ═══════ § 5. Passenger Side ═══════
+    # ═══════ § 4. Passenger Side ═══════
     (S.PASSENGER_SIDE, "Side mirrors", P.SIDE_MIRROR, T.CRACKED, Pos.PASSENGER_SIDE,
      "Side mirror glass or window glass is cracked, damaged, or missing", 10, True),
     (S.PASSENGER_SIDE, "Side mirrors", P.SIDE_MIRROR, T.LOOSE, Pos.PASSENGER_SIDE,
@@ -519,7 +529,25 @@ BOX_TRUCK_ROWS: list[DvicRow] = [
     (S.PASSENGER_SIDE, "Back tire, wheel and rim", P.MUD_FLAP, T.DAMAGED, Pos.PASSENGER_REAR,
      "Mud flap is damaged, missing, unsecured or held up with a zip-tie, tape or similar [DOT Only]", 150, True),
 
-    # ═══════ § 6. In-Cab ═══════
+    # ═══════ § 5. In-Cab ═══════
+    # Vehicle Documentation (moved from General)
+    (S.IN_CAB, "Vehicle Documentation", P.PAPER_DOCUMENT, T.MISSING, None,
+     "Insurance information, registration, short haul exemption, or "
+     "certification of lease is missing, damaged, illegible, or expired", 1, True),
+    # Vehicle Cleanliness (moved from General)
+    (S.IN_CAB, "Vehicle Cleanliness", P.INTERIOR_LOOSE_OBJECTS, T.HAS_LOOSE_OBJECTS, None,
+     "Interior of vehicle has loose objects/spilled liquid that could compromise safely driving the vehicle", 2, True),
+    (S.IN_CAB, "Vehicle Cleanliness", P.INTERIOR_CLEANLINESS, T.DIRTY, None,
+     "Interior has trash or excessive grime/dust present", 3, True),
+    (S.IN_CAB, "Vehicle Cleanliness", P.INTERIOR_CLEANLINESS, T.ODOR, None,
+     "Interior has odor", 4, False),
+    # Safety accessories (moved from General — typically stored under driver seat)
+    (S.IN_CAB, "Safety accessories", P.SPARE_FUSES, T.MISSING, None,
+     "Spare fuses are missing", 5, True),
+    (S.IN_CAB, "Safety accessories", P.REFLECTIVE_TRIANGLES, T.MISSING, None,
+     "Reflective triangles are missing", 6, True),
+    (S.IN_CAB, "Safety accessories", P.FIRE_EXTINGUISHER, T.MISSING, None,
+     "Fire extinguisher is missing, not mounted, mounted with tape/zip-tie, or dial/needle is not in the green zone", 7, True),
     # Wipers
     (S.IN_CAB, "Wipers", P.WIPER_BLADE, T.NOT_WORKING, None,
      "Wiper blades are missing, damaged, or not working", 10, True),
@@ -562,7 +590,7 @@ BOX_TRUCK_ROWS: list[DvicRow] = [
     (S.IN_CAB, "Body and Doors", P.EXTERIOR_DOOR, T.WONT_LOCK, None,
      "One or more exterior doors (driver, passenger, cargo, or back door) cannot open, close, "
      "lock, or unlock properly from the inside of the vehicle", 170, True),
-    # Safety accessories
+    # Safety accessories (delivery device cradle)
     (S.IN_CAB, "Safety accessories", P.DELIVERY_DEVICE_CRADLE, T.DAMAGED, None,
      "Delivery device cradle is damaged, missing, or mounted with tape, zip-tie, or similar", 180, True),
     # Camera/monitor
