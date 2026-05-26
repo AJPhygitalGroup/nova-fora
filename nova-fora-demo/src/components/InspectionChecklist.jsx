@@ -290,6 +290,19 @@ export default function InspectionChecklist({
   const pageParts = activeParts.slice(pageStart, pageStart + PARTS_PER_PAGE);
   const remainingOnPage = pageParts.filter((p) => !partStatus[p.id] || partStatus[p.id] === 'unmarked').length;
 
+  // Section-complete + next-section computed once so the "continue" CTA
+  // can render at the right moment. The CTA only shows when EVERY part
+  // in the section is marked (not just the current page) — so an
+  // inspector on page 2 of 3 doesn't see it until they finish page 3.
+  const activeSectionCounts = sectionCounts[activeSection];
+  const activeSectionDone =
+    activeSectionCounts &&
+    activeSectionCounts.total > 0 &&
+    activeSectionCounts.marked >= activeSectionCounts.total;
+  const currentTabIdx = tabs.findIndex((tab) => tab.id === activeSection);
+  const nextSectionTab = activeSectionDone ? tabs[currentTabIdx + 1] : null;
+  const activeSectionLabel = tabs[currentTabIdx]?.label || '';
+
   // ─── Swipe navigation (touch screens) ──────────────────────────
   // The inspector runs the wizard on their phone — swiping left/right
   // between pages is more natural than tapping Next/Prev. When a swipe
@@ -327,6 +340,16 @@ export default function InspectionChecklist({
     const nextSec = tabs[idx + 1].id;
     setActiveSection(nextSec);
     setPageBySection((m) => ({ ...m, [nextSec]: 0 }));
+  };
+  // Jump directly to a section's first page and scroll the user back
+  // to the top of the new section. Used by the "Continue to {section}"
+  // CTA that appears when the active section flips to complete.
+  const jumpToSection = (sectionId) => {
+    setActiveSection(sectionId);
+    setPageBySection((m) => ({ ...m, [sectionId]: 0 }));
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   };
   const handleSwipeStart = (e) => {
     if (sheetState) return;
@@ -547,6 +570,60 @@ export default function InspectionChecklist({
                 {t('checklist.passRemainingFmt', { count: remainingOnPage, defaultValue: `Pass remaining ${remainingOnPage}` })}
               </button>
             )}
+
+            {/* Section-complete CTA — only when EVERY part in this
+                section (across all pages) is marked. Animates in so the
+                inspector notices that the section just flipped to done.
+                If there's a next section, the button takes them there;
+                if this is the last section, we point them to the sticky
+                Submit button at the bottom. */}
+            <AnimatePresence>
+              {activeSectionDone && nextSectionTab && (
+                <motion.button
+                  key={`next-section-${nextSectionTab.id}`}
+                  type="button"
+                  initial={{ opacity: 0, y: 8, scale: 0.97 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -8, scale: 0.97 }}
+                  transition={{ duration: 0.25 }}
+                  onClick={() => jumpToSection(nextSectionTab.id)}
+                  className="mt-4 w-full inline-flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl bg-gradient-to-r from-accent-green to-accent-blue text-white text-sm font-bold shadow-lg shadow-accent-green/25 hover:opacity-90 active:opacity-80 cursor-pointer"
+                >
+                  <Check size={16} />
+                  <span className="truncate">
+                    {t('checklist.sectionDoneContinueFmt', {
+                      section: nextSectionTab.label,
+                      defaultValue: `${activeSectionLabel} complete — continue to ${nextSectionTab.label}`,
+                    })}
+                  </span>
+                  <ChevronRight size={16} />
+                </motion.button>
+              )}
+              {activeSectionDone && !nextSectionTab && !allMarked && (
+                <motion.div
+                  key="all-but-not-marked"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  className="mt-4 px-4 py-3 rounded-xl bg-accent-green/15 border border-accent-green/40 text-accent-green text-sm font-semibold flex items-center justify-center gap-2 text-center"
+                >
+                  <Check size={16} />
+                  {t('checklist.lastSectionDone', 'Last section complete — review other tabs above before submitting.')}
+                </motion.div>
+              )}
+              {activeSectionDone && !nextSectionTab && allMarked && (
+                <motion.div
+                  key="all-marked-msg"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  className="mt-4 px-4 py-3 rounded-xl bg-accent-green/20 border-2 border-accent-green text-accent-green text-sm font-bold flex items-center justify-center gap-2 text-center"
+                >
+                  <Check size={16} />
+                  {t('checklist.allSectionsDone', 'All sections complete — tap Submit below to finalize the inspection.')}
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             {pageTotal > 1 && (
               <div className="mt-4 flex items-center justify-between gap-3">
