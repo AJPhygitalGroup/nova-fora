@@ -951,6 +951,32 @@ function PartRow({ part, status, defectsForPart, onMark, onOpenDefect }) {
           })}
         </div>
       )}
+
+      {/* Multi-instance "Add another" affordance — body_damage only.
+          Once at least one damage has been logged on this card, surface
+          explicit "+ Add Scratch" / "+ Add Dent" buttons so the inspector
+          knows they can keep stacking damages on the same panel without
+          creating extra cards. (The chip strip above ALSO triggers a new
+          instance on tap, but the buttons here are the discoverable
+          affordance — chips look like edit-toggles to many users.) */}
+      {part.id === 'body_damage' && defectsForPart.length > 0
+        && part.defectTypes && part.defectTypes.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-accent-red/30 flex flex-wrap items-center gap-1.5">
+          <span className="text-[10px] uppercase tracking-wide text-navy-400 font-semibold mr-1">
+            Add another:
+          </span>
+          {part.defectTypes.map((dt) => (
+            <button
+              key={`add-${dt.id}`}
+              onClick={() => onOpenDefect(part.id, dt.id)}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-semibold border border-dashed border-accent-blue/60 bg-accent-blue/10 text-accent-blue hover:bg-accent-blue/20 cursor-pointer"
+            >
+              <span className="text-sm leading-none">+</span>
+              <span>{dt.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
