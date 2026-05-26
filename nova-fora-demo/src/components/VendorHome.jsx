@@ -24,6 +24,7 @@
  * TODO markers so the visual structure is in place from day one.
  */
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { motion } from 'framer-motion';
 import {
   ClipboardList, AlertTriangle, Truck, Briefcase, CheckCircle2,
   CalendarCheck, Plus, RefreshCw, Loader2, Flame, PlayCircle,
@@ -32,7 +33,9 @@ import {
   vendorWorkshops as workshopsApi,
   dashboards as dashboardsApi,
 } from '../api/client';
+import { canInspect } from '../lib/permissions';
 import AdHocDefectsModal from './wo_v2/AdHocDefectsModal';
+import CreateInspectionWizard, { hasSavedWizardState } from './CreateInspectionWizard';
 
 export default function VendorHome({ user }) {
   const [workshops, setWorkshops] = useState([]);
@@ -42,6 +45,16 @@ export default function VendorHome({ user }) {
   const [counterErr, setCounterErr] = useState(null);
   const [loading, setLoading] = useState(true);
   const [adHocOpen, setAdHocOpen] = useState(false);
+
+  // ── Start Inspection banner state ──
+  // Vendor techs + vendor_admins can run post-repair inspections (see
+  // `canInspect` in lib/permissions.js). Auto-reopen the wizard if the
+  // browser tab was killed mid-walkaround — CreateInspectionWizard
+  // snapshots its state to sessionStorage on every step.
+  const userCanInspect = canInspect(user);
+  const [showStartInspection, setShowStartInspection] = useState(
+    userCanInspect && hasSavedWizardState,
+  );
 
   // Workshop bootstrap (mirrors ServiceWriterDashboard).
   useEffect(() => {
@@ -141,6 +154,37 @@ export default function VendorHome({ user }) {
         </button>
       </div>
 
+      {/* ── Start New Inspection banner — Vendor / Technician ── */}
+      {userCanInspect && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full mb-4 flex items-center gap-3 px-4 py-3 rounded-xl border border-accent-green/40 bg-gradient-to-r from-accent-green/15 via-accent-blue/10 to-accent-purple/10"
+        >
+          <div className="w-10 h-10 rounded-lg bg-accent-green/20 border border-accent-green/40 flex items-center justify-center shrink-0">
+            <PlayCircle size={18} className="text-accent-green" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-0.5">
+              <span className="text-sm font-semibold text-text-strong">Start a new QC DVIC</span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-blue/15 border border-accent-blue/40 text-accent-blue text-[10px] font-semibold">
+                Inspector workflow
+              </span>
+            </div>
+            <div className="text-xs text-text-muted">
+              Walk through the 5-section inspection and auto-create work orders for any defects found
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowStartInspection(true)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent-green text-white text-sm font-semibold hover:bg-accent-green/80 transition-all cursor-pointer shadow-lg shadow-accent-green/20"
+          >
+            <PlayCircle size={14} /> Start Inspection
+          </button>
+        </motion.div>
+      )}
+
       {/* ── Upcoming DVIC banner (Phase 1b will wire chips) ── */}
       <UpcomingDvicBanner workshopId={workshopId} />
 
@@ -194,6 +238,18 @@ export default function VendorHome({ user }) {
           workshopId={workshopId}
           dspId={dspFilter ? Number(dspFilter) : null}
           onClose={() => setAdHocOpen(false)}
+        />
+      )}
+
+      {/* ── Create Inspection wizard (5-section walkaround) ── */}
+      {showStartInspection && (
+        <CreateInspectionWizard
+          user={user}
+          onClose={() => setShowStartInspection(false)}
+          onSubmitted={() => {
+            setShowStartInspection(false);
+            loadCounters();
+          }}
         />
       )}
     </div>

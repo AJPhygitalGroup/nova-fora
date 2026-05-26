@@ -1,135 +1,106 @@
+/**
+ * VendorScorecard — Vendor (workshop) quality scorecard. 100% live:
+ * picks the workshop from /vendor-workshops, pulls aggregated DSP
+ * feedback from /vendor-scorecard/{ws_id}, and renders the four
+ * pillars. Sections we don't yet have data for (price catalog, speed
+ * counters, reward tier, service breakdown) render a "coming soon"
+ * placeholder rather than mock values — so the page never lies.
+ */
 import { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { ThumbsUp, ThumbsDown, Clock, DollarSign, Star, Award, AlertTriangle, ChevronDown, MessageSquare, Zap, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { vendors, vendorScorecard, vendorBenchmarks, repairOrders } from '../data/mockData';
+import { motion } from 'framer-motion';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import { ThumbsUp, ThumbsDown, Clock, DollarSign, Star, Award, AlertTriangle, MessageSquare, Zap, AlertCircle, Loader2 } from 'lucide-react';
 import { vendorScorecard as scorecardApi, vendorWorkshops as workshopsApi } from '../api/client';
 import MetricCard from './ui/MetricCard';
 import ScoreRing from './ui/ScoreRing';
 import ProgressBar from './ui/ProgressBar';
-import Badge from './ui/Badge';
 
-const tierColors = { Platinum: 'purple', Gold: 'gold', Silver: 'gray', Bronze: 'orange' };
+// Wire-key → display label for impressive/negative attribute chips.
+const ATTRIBUTE_LABEL = {
+  turnaround_time: 'Turnaround Time',
+  communication: 'Communication',
+  professionalism: 'Professionalism',
+  work_quality: 'Work Quality',
+  price: 'Price',
+};
 
-function FeedbackModal({ repair, onClose, onSubmit }) {
-  const [vote, setVote] = useState(null);
-  const [reason, setReason] = useState('');
-  const [escalate, setEscalate] = useState(false);
-
+function ComingSoon({ note }) {
   return (
-    <motion.div
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-      onClick={onClose}
-    >
-      <motion.div
-        initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
-        className="bg-navy-900 border border-navy-700 rounded-2xl p-6 max-w-md w-full"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="text-lg font-semibold text-white mb-1">Rate This Repair</h3>
-        <p className="text-sm text-navy-400 mb-4">{repair.id} &mdash; {repair.desc}</p>
-        <div className="flex gap-4 mb-4">
-          <button onClick={() => setVote('up')}
-            className={`flex-1 flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all cursor-pointer ${vote === 'up' ? 'border-accent-green bg-accent-green/10' : 'border-navy-700 hover:border-navy-500'}`}>
-            <ThumbsUp size={28} className={vote === 'up' ? 'text-accent-green' : 'text-navy-400'} />
-            <span className={`text-sm font-medium ${vote === 'up' ? 'text-accent-green' : 'text-navy-300'}`}>Good Job</span>
-          </button>
-          <button onClick={() => setVote('down')}
-            className={`flex-1 flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all cursor-pointer ${vote === 'down' ? 'border-accent-red bg-accent-red/10' : 'border-navy-700 hover:border-navy-500'}`}>
-            <ThumbsDown size={28} className={vote === 'down' ? 'text-accent-red' : 'text-navy-400'} />
-            <span className={`text-sm font-medium ${vote === 'down' ? 'text-accent-red' : 'text-navy-300'}`}>Needs Work</span>
-          </button>
-        </div>
-        <textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Tell us why (optional)..."
-          className="w-full bg-navy-800 border border-navy-700 rounded-lg p-3 text-sm text-white placeholder-navy-500 resize-none h-20 focus:outline-none focus:border-accent-blue" />
-        {vote === 'down' && (
-          <label className="flex items-center gap-2 mt-3 cursor-pointer">
-            <input type="checkbox" checked={escalate} onChange={(e) => setEscalate(e.target.checked)} className="accent-accent-red" />
-            <span className="text-sm text-accent-red flex items-center gap-1"><AlertTriangle size={14} /> Escalate — egregious quality issue</span>
-          </label>
-        )}
-        <div className="flex gap-3 mt-5">
-          <button onClick={onClose} className="flex-1 px-4 py-2.5 rounded-lg border border-navy-600 text-navy-300 text-sm font-medium hover:bg-navy-800 transition-colors cursor-pointer">Cancel</button>
-          <button onClick={() => { onSubmit({ vote, reason, escalate }); onClose(); }} disabled={!vote}
-            className="flex-1 px-4 py-2.5 rounded-lg bg-accent-blue text-white text-sm font-semibold disabled:opacity-40 hover:bg-accent-blue/80 transition-colors cursor-pointer">Submit Feedback</button>
-        </div>
-      </motion.div>
-    </motion.div>
+    <div className="flex flex-col items-center justify-center h-full min-h-[120px] text-center py-6">
+      <div className="text-[11px] uppercase tracking-wider text-navy-500 mb-1">Coming soon</div>
+      {note && <div className="text-xs text-navy-400 max-w-[220px]">{note}</div>}
+    </div>
   );
 }
 
-const IMPRESSIVE_ATTRIBUTES = ['Turnaround Time', 'Communication', 'Professionalism', 'Work Quality', 'Price'];
-const NEGATIVE_ATTRIBUTES = ['Turnaround Time', 'Communication', 'Professionalism', 'Work Quality', 'Price'];
-
 export default function VendorScorecard() {
-  const [selectedVendor, setSelectedVendor] = useState('V-101');
-  const [feedbackRepair, setFeedbackRepair] = useState(null);
-  const [showAllRepairs, setShowAllRepairs] = useState(false);
-  const [openAttribute, setOpenAttribute] = useState(null); // repair.id
-  const [attributeMap, setAttributeMap] = useState({}); // { [repairId]: 'Work Quality' }
-
-  const vendor = vendors.find((v) => v.id === selectedVendor);
-  const scores = vendorScorecard[selectedVendor];
-  const benchmarks = vendorBenchmarks[selectedVendor];
-  const vendorRepairs = repairOrders.filter((r) => r.vendor === selectedVendor);
-
-  // Live scorecard — fetched from /vendor-scorecard/{ws_id}. We map
-  // the mock vendor id (V-101) to the workshop's int id by looking up
-  // /vendor-workshops on mount. While the fetch is in flight or for
-  // workshops with no real-data yet, the mock fallback keeps painting.
+  const [workshops, setWorkshops] = useState([]);
+  const [selectedWorkshopId, setSelectedWorkshopId] = useState(null);
   const [liveScorecard, setLiveScorecard] = useState(null);
-  const [workshopMap, setWorkshopMap] = useState({}); // V-101 → 3 etc.
+  const [liveBenchmarks, setLiveBenchmarks] = useState(null);
+  const [scorecardLoading, setScorecardLoading] = useState(false);
+
+  // ── Load real workshops + auto-pick first ──
   useEffect(() => {
     workshopsApi.list({ includeInactive: false }).then((res) => {
-      const map = {};
-      (res.items || []).forEach((w) => {
-        // The mock 'V-101' / 'V-102' / 'V-103' IDs don't have a clean
-        // mapping to the real DB IDs. For now match by org_id +
-        // string-prefix to get something functional. iter-2 will
-        // expose a vendor picker scoped to real workshops.
-        map[w.id] = w;
-      });
-      setWorkshopMap(map);
+      const items = (res.items || []).filter((w) => w.isActive !== false);
+      setWorkshops(items);
+      if (items.length > 0) {
+        setSelectedWorkshopId((cur) => {
+          if (cur) return cur;
+          const raw = items[0].id;
+          if (typeof raw === 'number') return raw;
+          const m = String(raw).match(/(\d+)/);
+          return m ? Number(m[1]) : null;
+        });
+      }
     }).catch(() => {});
   }, []);
+
+  // ── Live scorecard + benchmarks for the selected workshop ──
   useEffect(() => {
-    // Resolve a real workshop id for the chosen mock vendor key.
-    // Fallback: pick the FIRST active workshop so the live panel has
-    // something to show until we wire a proper picker.
-    const candidate = workshopMap[selectedVendor] || Object.values(workshopMap)[0];
-    if (!candidate) return;
-    const wsId = (() => {
-      const raw = candidate.id;
-      if (typeof raw === 'number') return raw;
-      const m = String(raw).match(/(\d+)/);
-      return m ? Number(m[1]) : null;
-    })();
-    if (!wsId) return;
-    scorecardApi.get(wsId, { days: 90 })
-      .then(setLiveScorecard)
-      .catch(() => setLiveScorecard(null));
-  }, [selectedVendor, workshopMap]);
+    if (!selectedWorkshopId) return;
+    setScorecardLoading(true);
+    Promise.all([
+      scorecardApi.get(selectedWorkshopId, { days: 90 }).catch(() => null),
+      scorecardApi.benchmarks(selectedWorkshopId, { days: 90 }).catch(() => null),
+    ]).then(([sc, bm]) => {
+      setLiveScorecard(sc);
+      setLiveBenchmarks(bm);
+    }).finally(() => setScorecardLoading(false));
+  }, [selectedWorkshopId]);
 
-  // Prefer live numbers, fall back to mock so the existing layout
-  // doesn't break when no feedback rows exist yet.
-  const liveThumbsUp = liveScorecard?.thumbsUp;
-  const liveThumbsDown = liveScorecard?.thumbsDown;
-  const liveTotal = liveScorecard?.totalFeedback ?? null;
-  const liveSatisfaction = liveScorecard?.satisfactionPct ?? null;
-  const totalFeedback = liveTotal != null && liveTotal > 0
-    ? liveTotal
-    : scores.quality.thumbsUp + scores.quality.thumbsDown;
-  const satisfactionRate = liveSatisfaction != null
-    ? liveSatisfaction.toFixed(1)
-    : ((scores.quality.thumbsUp / totalFeedback) * 100).toFixed(1);
+  const currentWs = workshops.find((w) => {
+    const raw = w.id;
+    if (typeof raw === 'number') return raw === selectedWorkshopId;
+    const m = String(raw).match(/(\d+)/);
+    return m && Number(m[1]) === selectedWorkshopId;
+  });
+  const vendor = currentWs ? {
+    id: `WS-${selectedWorkshopId}`,
+    name: currentWs.name,
+    fullName: currentWs.name,
+    primaryVendor: currentWs.repairTypes?.[0] || 'general',
+  } : { id: '', name: '—', fullName: '—', primaryVendor: '—' };
 
-  // Benchmark bar chart: three clusters (Best In Station / Best In Class / Primary Vendor)
-  const benchmarkData = [
-    { group: 'Best In Station', within24h: benchmarks.bestInStation.within24h, within72h: benchmarks.bestInStation.within72h, rush: benchmarks.bestInStation.rushSameNight },
-    { group: 'Best In Class',   within24h: benchmarks.bestInClass.within24h,   within72h: benchmarks.bestInClass.within72h,   rush: benchmarks.bestInClass.rushSameNight },
-    { group: 'Primary Vendor',  within24h: benchmarks.primary.within24h,       within72h: benchmarks.primary.within72h,       rush: benchmarks.primary.rushSameNight },
-  ];
+  const liveThumbsUp = liveScorecard?.thumbsUp ?? 0;
+  const liveThumbsDown = liveScorecard?.thumbsDown ?? 0;
+  const liveTotal = liveScorecard?.totalFeedback ?? 0;
+  const liveSatisfaction = liveScorecard?.satisfactionPct;
+  const satisfactionRate = liveSatisfaction != null ? liveSatisfaction.toFixed(1) : null;
+  const topPositive = liveScorecard?.impressiveAttributes?.[0];
+  const topNegative = liveScorecard?.negativeAttributes?.[0];
+  const liveRecentFeedback = liveScorecard?.recent || [];
+
+  // Overall ring — use live satisfaction% as the overall score for now
+  // (the only quality metric we collect). Coming-soon when no data.
+  const overallScore = satisfactionRate != null ? Math.round(liveSatisfaction) : null;
+
+  const benchmarkData = liveBenchmarks ? [
+    { group: 'Best In Station', satisfaction: liveBenchmarks.bestInStationPct ?? 0 },
+    { group: 'Best In Class',   satisfaction: liveBenchmarks.bestInClassPct ?? 0 },
+    { group: 'Primary Vendor',  satisfaction: liveBenchmarks.primaryVendorPct ?? 0 },
+  ] : [];
 
   return (
     <div>
@@ -138,27 +109,53 @@ export default function VendorScorecard() {
         <p className="text-navy-400 text-sm">DFS value proposition &mdash; Quality, Speed, Price & Service at a glance</p>
       </div>
 
-      {/* Service-type selector */}
+      {/* Vendor picker — real workshops from /vendor-workshops */}
       <div className="flex flex-wrap gap-2 mb-6">
-        {vendors.map((v) => (
-          <button key={v.id} onClick={() => setSelectedVendor(v.id)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all cursor-pointer ${
-              selectedVendor === v.id
-                ? 'bg-accent-blue text-white shadow-lg shadow-accent-blue/20'
-                : 'bg-navy-800/60 text-navy-300 hover:bg-navy-700/60 border border-navy-700/40'
-            }`}
-          >
-            {v.name}
-          </button>
-        ))}
+        {workshops.length === 0 && (
+          <span className="text-xs text-navy-400">Loading vendors…</span>
+        )}
+        {workshops.map((w) => {
+          const wsIdInt = (() => {
+            const raw = w.id;
+            if (typeof raw === 'number') return raw;
+            const m = String(raw).match(/(\d+)/);
+            return m ? Number(m[1]) : null;
+          })();
+          const active = wsIdInt === selectedWorkshopId;
+          return (
+            <button
+              key={w.id}
+              onClick={() => setSelectedWorkshopId(wsIdInt)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all cursor-pointer ${
+                active
+                  ? 'bg-accent-blue text-white shadow-lg shadow-accent-blue/20'
+                  : 'bg-navy-800/60 text-navy-300 hover:bg-navy-700/60 border border-navy-700/40'
+              }`}
+            >
+              {w.name}
+            </button>
+          );
+        })}
       </div>
+
+      {scorecardLoading && (
+        <div className="flex items-center gap-2 text-xs text-navy-400 mb-4">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading scorecard…
+        </div>
+      )}
 
       {/* Overall Score + Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
         <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
           className="col-span-2 lg:col-span-1 bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl p-5 flex flex-col items-center justify-center"
         >
-          <ScoreRing score={scores.overall} size={100} strokeWidth={8} />
+          {overallScore != null ? (
+            <ScoreRing score={overallScore} size={100} strokeWidth={8} />
+          ) : (
+            <div className="w-[100px] h-[100px] rounded-full border-2 border-dashed border-navy-700 flex items-center justify-center text-navy-500 text-xs">
+              No data
+            </div>
+          )}
           <span className="text-sm font-semibold text-white mt-2">Overall Score</span>
           <span className="text-xs text-navy-400">{vendor.fullName}</span>
           <span className="text-[11px] text-navy-300 mt-1">
@@ -167,15 +164,43 @@ export default function VendorScorecard() {
           </span>
         </motion.div>
 
-        <MetricCard icon={ThumbsUp} label="Satisfaction" value={`${satisfactionRate}%`} subtitle={`${totalFeedback} reviews`} trend={2.3} trendUp color="accent-green" delay={0.05} />
-        <MetricCard icon={Clock} label="72-hour Completion" value={`${scores.speed.within72h}%`} subtitle="Target: 75%" trend={5.1} trendUp color="accent-blue" delay={0.1} />
-        <MetricCard icon={DollarSign} label="Enrolled Discount" value={scores.price.enrolledDiscount ? `${scores.price.avgDiscount}% off` : 'N/A'} subtitle="Rental & Owned Vehicles" color="accent-orange" delay={0.15} />
-        <MetricCard icon={Award} label="Reward Tier" value={scores.service.loyaltyTier} subtitle={`${scores.service.loyaltyAdoption}% adoption`} color="accent-purple" delay={0.2} />
+        <MetricCard
+          icon={ThumbsUp}
+          label="Satisfaction"
+          value={liveTotal > 0 ? `${satisfactionRate}%` : '—'}
+          subtitle={liveTotal > 0 ? `${liveTotal} reviews · 90d` : 'No feedback yet'}
+          color="accent-green"
+          delay={0.05}
+        />
+        <MetricCard
+          icon={Clock}
+          label="72-hour Completion"
+          value="—"
+          subtitle="Coming soon"
+          color="accent-blue"
+          delay={0.1}
+        />
+        <MetricCard
+          icon={DollarSign}
+          label="Enrolled Discount"
+          value="—"
+          subtitle="Coming soon"
+          color="accent-orange"
+          delay={0.15}
+        />
+        <MetricCard
+          icon={Award}
+          label="Reward Tier"
+          value="—"
+          subtitle="Coming soon"
+          color="accent-purple"
+          delay={0.2}
+        />
       </div>
 
       {/* Four Pillar Details */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-        {/* Quality & Safety */}
+        {/* Quality & Safety — LIVE */}
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
           className="bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl p-5"
         >
@@ -187,46 +212,46 @@ export default function VendorScorecard() {
           </div>
           <div className="grid grid-cols-2 gap-4 mb-4">
             <div>
-              <div className="text-xs text-navy-400 mb-1">Customer Feedback (DPMO)</div>
-              <div className="text-xl font-bold text-white">{scores.quality.dpmo.toLocaleString()}</div>
-              <div className="text-xs text-navy-500">{scores.quality.dpmo <= 10000 ? 'Excellent' : scores.quality.dpmo <= 20000 ? 'Good' : 'Needs Improvement'}</div>
+              <div className="text-xs text-navy-400 mb-1">Total Reviews</div>
+              <div className="text-xl font-bold text-white">{liveTotal}</div>
+              <div className="text-xs text-navy-500">{liveTotal === 0 ? 'No feedback yet' : 'Last 90 days'}</div>
             </div>
             <div>
               <div className="text-xs text-navy-400 mb-1">Escalations</div>
-              <div className={`text-xl font-bold ${scores.quality.escalations === 0 ? 'text-accent-green' : 'text-accent-red'}`}>{scores.quality.escalations}</div>
-              <div className="text-xs text-navy-500">{scores.quality.escalations === 0 ? 'Clean record' : 'Requires review'}</div>
+              <div className={`text-xl font-bold ${(liveScorecard?.escalations ?? 0) === 0 ? 'text-accent-green' : 'text-accent-red'}`}>
+                {liveScorecard?.escalations ?? 0}
+              </div>
+              <div className="text-xs text-navy-500">{(liveScorecard?.escalations ?? 0) === 0 ? 'Clean record' : 'Requires review'}</div>
             </div>
           </div>
           <div className="flex items-center gap-6 mb-4">
             <div className="flex items-center gap-2">
               <ThumbsUp size={14} className="text-accent-green" />
-              <span className="text-sm text-white font-semibold">{scores.quality.thumbsUp}</span>
+              <span className="text-sm text-white font-semibold">{liveThumbsUp}</span>
             </div>
             <div className="flex items-center gap-2">
               <ThumbsDown size={14} className="text-accent-red" />
-              <span className="text-sm text-white font-semibold">{scores.quality.thumbsDown}</span>
+              <span className="text-sm text-white font-semibold">{liveThumbsDown}</span>
             </div>
             <div className="flex-1">
-              <ProgressBar value={scores.quality.thumbsUp} max={totalFeedback} color="#22c55e" showPercent={false} height={6} />
+              <ProgressBar value={liveThumbsUp} max={Math.max(liveTotal, 1)} color="#22c55e" showPercent={false} height={6} />
             </div>
           </div>
-          {/* Top Defect */}
           <div className="pt-3 border-t border-navy-800 flex items-center gap-3">
             <AlertCircle size={14} className="text-accent-orange" />
-            <span className="text-xs text-navy-400">Top Defect:</span>
-            <span className="text-xs text-white font-medium">Turnaround time</span>
-            <span className="ml-auto text-sm font-bold text-accent-orange">{scores.quality.thumbsDown}</span>
+            <span className="text-xs text-navy-400">Top Negative:</span>
+            <span className="text-xs text-white font-medium">{topNegative?.label || '—'}</span>
+            <span className="ml-auto text-sm font-bold text-accent-orange">{topNegative?.count ?? 0}</span>
           </div>
-          {/* Top Positive Feedback */}
           <div className="pt-2 flex items-center gap-3">
             <ThumbsUp size={14} className="text-accent-green" />
-            <span className="text-xs text-navy-400">Top Positive Feedback:</span>
-            <span className="text-xs text-white font-medium">Work Quality</span>
-            <span className="ml-auto text-sm font-bold text-accent-green">{scores.quality.thumbsUp - 18}</span>
+            <span className="text-xs text-navy-400">Top Positive:</span>
+            <span className="text-xs text-white font-medium">{topPositive?.label || '—'}</span>
+            <span className="ml-auto text-sm font-bold text-accent-green">{topPositive?.count ?? 0}</span>
           </div>
         </motion.div>
 
-        {/* 72-hour Turnaround Time with grouped bars */}
+        {/* Satisfaction Benchmarks — LIVE */}
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}
           className="bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl p-5"
         >
@@ -234,28 +259,32 @@ export default function VendorScorecard() {
             <div className="w-8 h-8 rounded-lg bg-accent-blue/10 flex items-center justify-center">
               <Zap size={16} className="text-accent-blue" />
             </div>
-            <h3 className="text-base font-semibold text-white">72-hour Turnaround Time</h3>
+            <h3 className="text-base font-semibold text-white">Satisfaction Benchmark</h3>
           </div>
-          <div className="h-[180px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={benchmarkData} barSize={14}>
-                <XAxis dataKey="group" tick={{ fill: '#829ab1', fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: '#829ab1', fontSize: 11 }} axisLine={false} tickLine={false} domain={[0, 100]} />
-                <Tooltip contentStyle={{ background: '#102a43', border: '1px solid #334e68', borderRadius: 8, fontSize: 12 }} formatter={(v) => [`${v}%`]} />
-                <Bar dataKey="within24h" name="Within 24h" fill="#22c55e" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="within72h" name="Within 72h" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="rush" name="Rush (same night)" fill="#f59e0b" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="flex gap-4 mt-1 text-[11px] text-navy-400 justify-center">
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-accent-green" />Within 24h</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-accent-blue" />Within 72h</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-accent-gold" />Rush (same night)</span>
-          </div>
+          {liveBenchmarks ? (
+            <>
+              <div className="h-[180px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={benchmarkData} barSize={32}>
+                    <XAxis dataKey="group" tick={{ fill: '#829ab1', fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fill: '#829ab1', fontSize: 11 }} axisLine={false} tickLine={false} domain={[0, 100]} />
+                    <Tooltip contentStyle={{ background: '#102a43', border: '1px solid #334e68', borderRadius: 8, fontSize: 12 }} formatter={(v) => [`${v}%`]} />
+                    <Bar dataKey="satisfaction" name="Satisfaction" fill="#22c55e" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="flex gap-4 mt-1 text-[11px] text-navy-400 justify-center">
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-accent-green" />Satisfaction % (90d)</span>
+              </div>
+            </>
+          ) : (
+            <div className="h-[180px] flex items-center justify-center">
+              <ComingSoon note="Needs more feedback across the station to compute benchmarks." />
+            </div>
+          )}
         </motion.div>
 
-        {/* Price */}
+        {/* Price — placeholder */}
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
           className="bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl p-5"
         >
@@ -265,43 +294,10 @@ export default function VendorScorecard() {
             </div>
             <h3 className="text-base font-semibold text-white">Price</h3>
           </div>
-          <div className="space-y-3">
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-navy-300">Rental Labor Rate</span>
-              <span className="text-sm font-semibold text-white">
-                {scores.price.enrolledDiscount ? (
-                  <span className="text-accent-green">{scores.price.avgDiscount}% discount (enrolled)</span>
-                ) : (
-                  <span className="text-navy-400">Standard rate</span>
-                )}
-              </span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-navy-300">Enrollment Status</span>
-              <Badge variant={scores.price.enrolledDiscount ? 'green' : 'gray'}>
-                {scores.price.enrolledDiscount ? 'Enrolled' : 'Not Enrolled'}
-              </Badge>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-navy-300">Base Labor Rate</span>
-              <span className="text-sm font-semibold text-white">$196</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-navy-300">Oil Change</span>
-              <span className="text-sm font-semibold text-white">$89</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-navy-300">Side/Rear Steps</span>
-              <span className="text-sm font-semibold text-white">$150</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-navy-300">Side Mirror (R & R)</span>
-              <span className="text-sm font-semibold text-white">$280</span>
-            </div>
-          </div>
+          <ComingSoon note="Per-workshop labor-rate catalog + enrollment status will live here once the price endpoint is wired." />
         </motion.div>
 
-        {/* Service */}
+        {/* Service — placeholder */}
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}
           className="bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl p-5"
         >
@@ -311,191 +307,74 @@ export default function VendorScorecard() {
             </div>
             <h3 className="text-base font-semibold text-white">Service</h3>
           </div>
-          <div className="space-y-3">
-            {[
-              { label: 'Communication', value: scores.service.communication, max: 5 },
-              { label: 'Cleanliness', value: scores.service.cleanliness, max: 5 },
-              { label: 'Key Handling', value: scores.service.keyHandling, max: 5 },
-              { label: 'Rewards Adoption', value: scores.service.loyaltyAdoption, max: 100 },
-            ].map((item) => (
-              <div key={item.label}>
-                <div className="flex justify-between mb-1">
-                  <span className="text-xs text-navy-300">{item.label}</span>
-                  <span className="text-xs font-semibold text-white">
-                    {item.max === 5 ? `${item.value}/5.0` : `${item.value}%`}
-                  </span>
-                </div>
-                <ProgressBar value={item.value} max={item.max}
-                  color={item.value / item.max >= 0.8 ? '#22c55e' : item.value / item.max >= 0.6 ? '#3b82f6' : '#f59e0b'}
-                  showPercent={false} height={5} />
-              </div>
-            ))}
-            <div className="flex items-center gap-2 pt-1">
-              <Award size={14} className="text-accent-gold" />
-              <span className="text-xs text-navy-300">Reward Tier:</span>
-              <Badge variant={tierColors[scores.service.loyaltyTier]} size="md">{scores.service.loyaltyTier}</Badge>
-            </div>
-          </div>
+          <ComingSoon note="Communication / cleanliness / key handling / rewards-adoption breakdown lands when the service endpoint is wired." />
         </motion.div>
       </div>
 
-      {/* Repair Orders with Feedback */}
+      {/* Recent Customer Feedback — LIVE */}
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}
         className="bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl overflow-hidden"
       >
         <div className="flex items-center justify-between p-5 border-b border-navy-700/40">
           <div className="flex items-center gap-2">
             <MessageSquare size={16} className="text-accent-blue" />
-            <h3 className="text-base font-semibold text-white">Recent Repairs &mdash; Customer Feedback</h3>
+            <h3 className="text-base font-semibold text-white">Recent Customer Feedback</h3>
           </div>
-          <Badge variant="blue" size="md">{vendorRepairs.length} orders</Badge>
+          <span className="text-xs px-2 py-0.5 rounded-full bg-accent-blue/15 border border-accent-blue/40 text-accent-blue font-semibold">
+            {liveRecentFeedback.length} reviews · 90d
+          </span>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-navy-400 text-xs border-b border-navy-800">
-                <th className="text-left px-5 py-3 font-medium">Order</th>
-                <th className="text-left px-5 py-3 font-medium">Van</th>
-                <th className="text-left px-5 py-3 font-medium">Description</th>
-                <th className="text-left px-5 py-3 font-medium">Status</th>
-                <th className="text-left px-5 py-3 font-medium">Cost</th>
-                <th className="text-center px-5 py-3 font-medium">Feedback</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(showAllRepairs ? vendorRepairs : vendorRepairs.slice(0, 5)).map((repair) => (
-                <tr key={repair.id} className="border-b border-navy-800/50 hover:bg-navy-800/30 transition-colors">
-                  <td className="px-5 py-3 font-mono text-xs text-accent-blue">{repair.id}</td>
-                  <td className="px-5 py-3 text-navy-200">{repair.van}</td>
-                  <td className="px-5 py-3 text-navy-200 max-w-[250px] truncate">{repair.desc}</td>
-                  <td className="px-5 py-3">
-                    <Badge variant={repair.status === 'Completed' ? 'green' : 'orange'}>{repair.status}</Badge>
-                  </td>
-                  <td className="px-5 py-3 text-white font-semibold">${repair.cost}</td>
-                  <td className="px-5 py-3 text-center relative">
-                    {repair.feedback ? (
-                      repair.feedback === 'up' ? (
-                        <div className="relative inline-block">
-                          <button
-                            onClick={() => setOpenAttribute(openAttribute === repair.id ? null : repair.id)}
-                            className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-accent-green hover:bg-accent-green/10 transition-colors cursor-pointer"
-                            title="Select most impressive attribute"
-                          >
-                            <ThumbsUp size={14} />
-                            {attributeMap[repair.id] && (
-                              <span className="text-[10px] font-semibold">{attributeMap[repair.id]}</span>
-                            )}
-                            <ChevronDown size={10} className={`transition-transform ${openAttribute === repair.id ? 'rotate-180' : ''}`} />
-                          </button>
-                          <AnimatePresence>
-                            {openAttribute === repair.id && (
-                              <>
-                                <div className="fixed inset-0 z-10" onClick={() => setOpenAttribute(null)} />
-                                <motion.div
-                                  initial={{ opacity: 0, y: -4, scale: 0.95 }}
-                                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                                  exit={{ opacity: 0, y: -4, scale: 0.95 }}
-                                  transition={{ duration: 0.15 }}
-                                  className="absolute top-full right-0 mt-1 z-20 bg-navy-900 border border-navy-700 rounded-lg shadow-xl shadow-black/40 overflow-hidden min-w-[180px]"
-                                >
-                                  <div className="px-3 py-2 border-b border-navy-800 text-[10px] uppercase tracking-wide text-navy-400 font-semibold">
-                                    Most Impressive Attribute
-                                  </div>
-                                  {IMPRESSIVE_ATTRIBUTES.map((attr) => (
-                                    <button
-                                      key={attr}
-                                      onClick={() => {
-                                        setAttributeMap({ ...attributeMap, [repair.id]: attr });
-                                        setOpenAttribute(null);
-                                      }}
-                                      className={`w-full text-left px-3 py-2 text-xs hover:bg-navy-800 transition-colors cursor-pointer flex items-center justify-between ${
-                                        attributeMap[repair.id] === attr ? 'text-accent-green bg-accent-green/5' : 'text-navy-200'
-                                      }`}
-                                    >
-                                      <span>{attr}</span>
-                                      {attributeMap[repair.id] === attr && <CheckCircle2 size={12} className="text-accent-green" />}
-                                    </button>
-                                  ))}
-                                </motion.div>
-                              </>
-                            )}
-                          </AnimatePresence>
-                        </div>
-                      ) : (
-                        <div className="relative inline-block">
-                          <button
-                            onClick={() => setOpenAttribute(openAttribute === repair.id ? null : repair.id)}
-                            className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-accent-red hover:bg-accent-red/10 transition-colors cursor-pointer"
-                            title="Select biggest issue"
-                          >
-                            <ThumbsDown size={14} />
-                            {attributeMap[repair.id] && (
-                              <span className="text-[10px] font-semibold">{attributeMap[repair.id]}</span>
-                            )}
-                            <ChevronDown size={10} className={`transition-transform ${openAttribute === repair.id ? 'rotate-180' : ''}`} />
-                          </button>
-                          <AnimatePresence>
-                            {openAttribute === repair.id && (
-                              <>
-                                <div className="fixed inset-0 z-10" onClick={() => setOpenAttribute(null)} />
-                                <motion.div
-                                  initial={{ opacity: 0, y: -4, scale: 0.95 }}
-                                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                                  exit={{ opacity: 0, y: -4, scale: 0.95 }}
-                                  transition={{ duration: 0.15 }}
-                                  className="absolute top-full right-0 mt-1 z-20 bg-navy-900 border border-navy-700 rounded-lg shadow-xl shadow-black/40 overflow-hidden min-w-[180px]"
-                                >
-                                  <div className="px-3 py-2 border-b border-navy-800 text-[10px] uppercase tracking-wide text-navy-400 font-semibold">
-                                    Biggest Issue
-                                  </div>
-                                  {NEGATIVE_ATTRIBUTES.map((attr) => (
-                                    <button
-                                      key={attr}
-                                      onClick={() => {
-                                        setAttributeMap({ ...attributeMap, [repair.id]: attr });
-                                        setOpenAttribute(null);
-                                      }}
-                                      className={`w-full text-left px-3 py-2 text-xs hover:bg-navy-800 transition-colors cursor-pointer flex items-center justify-between ${
-                                        attributeMap[repair.id] === attr ? 'text-accent-red bg-accent-red/5' : 'text-navy-200'
-                                      }`}
-                                    >
-                                      <span>{attr}</span>
-                                      {attributeMap[repair.id] === attr && <CheckCircle2 size={12} className="text-accent-red" />}
-                                    </button>
-                                  ))}
-                                </motion.div>
-                              </>
-                            )}
-                          </AnimatePresence>
-                        </div>
-                      )
-                    ) : (
-                      <button onClick={() => setFeedbackRepair(repair)}
-                        className="px-3 py-1 text-xs bg-accent-blue/15 text-accent-blue rounded-full hover:bg-accent-blue/25 transition-colors cursor-pointer font-medium">
-                        Rate
-                      </button>
-                    )}
-                  </td>
+        {liveRecentFeedback.length === 0 ? (
+          <div className="p-10 text-center text-sm text-navy-400">
+            No customer feedback in the last 90 days. DSPs leave reviews from the
+            "Defects Repaired" tile on their home dashboard once a work order completes.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-navy-400 text-xs border-b border-navy-800">
+                  <th className="text-left px-5 py-3 font-medium">WO</th>
+                  <th className="text-left px-5 py-3 font-medium">Van</th>
+                  <th className="text-left px-5 py-3 font-medium">Customer</th>
+                  <th className="text-left px-5 py-3 font-medium">Reviewed by</th>
+                  <th className="text-center px-5 py-3 font-medium">Vote</th>
+                  <th className="text-left px-5 py-3 font-medium">Attribute</th>
+                  <th className="text-left px-5 py-3 font-medium">Note</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {vendorRepairs.length > 5 && (
-          <button onClick={() => setShowAllRepairs(!showAllRepairs)}
-            className="w-full py-3 text-sm text-accent-blue hover:bg-navy-800/30 transition-colors flex items-center justify-center gap-1 cursor-pointer">
-            {showAllRepairs ? 'Show Less' : `Show All (${vendorRepairs.length})`}
-            <ChevronDown size={14} className={`transition-transform ${showAllRepairs ? 'rotate-180' : ''}`} />
-          </button>
+              </thead>
+              <tbody>
+                {liveRecentFeedback.map((fb) => (
+                  <tr key={fb.feedbackId} className="border-b border-navy-800/50 hover:bg-navy-800/30 transition-colors">
+                    <td className="px-5 py-3 font-mono text-xs text-accent-blue">{fb.workOrderIdStr}</td>
+                    <td className="px-5 py-3 text-navy-200">{fb.vehicleIdStr || '—'}</td>
+                    <td className="px-5 py-3 text-navy-200">{fb.dspName || '—'}</td>
+                    <td className="px-5 py-3 text-navy-300 text-xs">{fb.submittedByName || 'system'}</td>
+                    <td className="px-5 py-3 text-center">
+                      {fb.vote === 'up' ? (
+                        <ThumbsUp size={14} className="text-accent-green inline-block" />
+                      ) : (
+                        <span className="inline-flex items-center gap-1">
+                          <ThumbsDown size={14} className="text-accent-red" />
+                          {fb.escalate && <AlertTriangle size={12} className="text-accent-red" />}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3 text-navy-200 text-xs">
+                      {fb.vote === 'up'
+                        ? (fb.impressiveAttribute ? (ATTRIBUTE_LABEL[fb.impressiveAttribute] || fb.impressiveAttribute) : '—')
+                        : (fb.negativeAttribute ? (ATTRIBUTE_LABEL[fb.negativeAttribute] || fb.negativeAttribute) : '—')}
+                    </td>
+                    <td className="px-5 py-3 text-navy-300 text-xs max-w-[280px] truncate" title={fb.reason || ''}>
+                      {fb.reason || '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </motion.div>
-
-      <AnimatePresence>
-        {feedbackRepair && (
-          <FeedbackModal repair={feedbackRepair} onClose={() => setFeedbackRepair(null)}
-            onSubmit={(data) => console.log('Feedback submitted:', data)} />
-        )}
-      </AnimatePresence>
     </div>
   );
 }
