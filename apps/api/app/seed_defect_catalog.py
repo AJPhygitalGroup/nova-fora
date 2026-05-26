@@ -205,6 +205,7 @@ PART_GROUP_DEFAULTS: list[tuple[P, G, str | None]] = [
     (P.SUSPENSION, G.AMR, None),
     (P.UNDERCARRIAGE_OBJECT, G.AMR, None),
     (P.BULKHEAD_DOOR, G.BODY, None),
+    (P.BODY_DAMAGE, G.BODY, None),
     (P.PERIODIC_INSPECTION_STICKER, G.CNMR, None),
     (P.FUEL_CAP, G.AMR, None),
     (P.BATTERY_COVER, G.AMR, None),
@@ -370,6 +371,8 @@ PART_SYSTEMS: list[tuple[P, S, bool, str | None]] = [
     # attached
     (P.MUD_FLAP, S.BODY_STEPS, True, "attached"),
     (P.LIFT_GATE, S.BODY_STEPS, True, "attached"),
+    # body cosmetic — Body damage card (scratch / dent), 4 outer sections
+    (P.BODY_DAMAGE, S.BODY_STEPS, True, "cosmetic"),
     # mirror light shows under both Lights and Mirrors (secondary appearance)
     # Skipping for the Fase 1 starter — single-system mapping only.
 ]
@@ -581,6 +584,24 @@ RULES: list[RuleSpec] = [
      [], False, True, {}, {}, None, None),
     (P.GEAR_GREASE, T.OTHER, (VC.STEP_VAN_DOT,), C.SEV3,
      [], False, True, {}, {}, None, None),
+
+    # ── Body cosmetic (scratch / dent) ──────────────
+    # The wizard renders 4 separate "Body damage" cards (front / back /
+    # driver / passenger). Multiple instances per (vehicle, inspection,
+    # section) are allowed — disambiguated by details.damage_seq through
+    # the relaxed unique index in 20260526_2000_defects_uq_damage_seq.
+    # SEV3 by default (cosmetic, not safety-critical); SW can escalate
+    # during triage if multiple panels are affected.
+    (P.BODY_DAMAGE, T.SCRATCH, ALL_CLASSES, C.SEV3,
+     [Pos.FRONT.value, Pos.REAR.value,
+      Pos.DRIVER_SIDE.value, Pos.PASSENGER_SIDE.value],
+     True, False,
+     {}, {}, None, None),
+    (P.BODY_DAMAGE, T.DENT, ALL_CLASSES, C.SEV3,
+     [Pos.FRONT.value, Pos.REAR.value,
+      Pos.DRIVER_SIDE.value, Pos.PASSENGER_SIDE.value],
+     True, False,
+     {}, {}, None, None),
 
     # ── Compliance ────────────────────────────────────
     (P.INSPECTION_STICKER, T.EXPIRED, ALL_CLASSES, C.SEV2,

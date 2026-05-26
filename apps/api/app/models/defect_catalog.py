@@ -259,6 +259,13 @@ class DefectPart(str, Enum):
     # attached
     LIFT_GATE = "lift_gate"
     MUD_FLAP = "mud_flap"
+    # body cosmetic — the catch-all "Body damage" wizard card. Lives in the
+    # outer sections (front/back/driver/passenger). Multiple instances per
+    # (vehicle, inspection, section) are allowed via details.damage_seq —
+    # the inspector can log 3 different scratches on the driver side and
+    # they stay as 3 separate Defect rows without colliding on the unique
+    # index. See the index in migration 20260526_2000_defects_uq_damage_seq.
+    BODY_DAMAGE = "body_damage"
     # PM umbrella — not surfaced in the inspector wizard (no PART_SYSTEMS
     # row). Exists solely so the DSP "Create Work Order → Schedule PM"
     # flow can mint a defect with one of the PM defect_types below and
@@ -356,6 +363,9 @@ class DefectType(str, Enum):
     # cleanliness
     DIRTY = "dirty"
     HAS_LOOSE_OBJECTS = "has_loose_objects"
+    # body-cosmetic — pair with part=BODY_DAMAGE for scratch/dent reporting.
+    SCRATCH = "scratch"
+    DENT = "dent"
     # mount / pressure / approval / catchall
     MOUNT_DAMAGED = "mount_damaged"
     OVER_PRESSURE = "over_pressure"

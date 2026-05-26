@@ -428,7 +428,44 @@ export default function InspectionChecklist({
   };
 
   // ─── Sheet open/close + defect commit/remove ──────────────────
+  // For body_damage we look up the DVIC item for the active section to
+  // grab its preset position (FRONT / REAR / DRIVER_SIDE / PASSENGER_SIDE)
+  // — the chip itself doesn't carry section context. We also pass
+  // forceNew=true so each tap creates a fresh damage instance (instead of
+  // the default "edit the existing one") and compute the next damage_seq
+  // from defects already logged on this (part, position) so the unique
+  // index (uq_defects_…) doesn't collide.
+  const BODY_DAMAGE_PART = 'body_damage';
+  const isMultiInstancePart = (partId) => partId === BODY_DAMAGE_PART;
+  const findPresetPositionFor = (partId) => {
+    if (!tpl) return null;
+    const sec = (tpl.sections || []).find((s) => s.id === activeSection);
+    if (!sec) return null;
+    for (const cat0 of sec.categories || []) {
+      for (const item of cat0.items || []) {
+        if (item.part === partId && item.position) return item.position;
+      }
+    }
+    return null;
+  };
+  const nextDamageSeq = (partId, position) => {
+    const same = (defects || []).filter(
+      (d) => d.part === partId && (d.position || null) === (position || null),
+    );
+    let max = 0;
+    for (const d of same) {
+      const seq = Number(d?.details?.damage_seq);
+      if (Number.isFinite(seq) && seq > max) max = seq;
+    }
+    return max + 1;
+  };
   const openDefectSheet = (part, defectType) => {
+    if (isMultiInstancePart(part)) {
+      const presetPosition = findPresetPositionFor(part);
+      const damageSeq = nextDamageSeq(part, presetPosition);
+      setSheetState({ part, defectType, forceNew: true, presetPosition, damageSeq });
+      return;
+    }
     setSheetState({ part, defectType });
   };
   const closeDefectSheet = () => setSheetState(null);
@@ -775,9 +812,15 @@ export default function InspectionChecklist({
             vehicleClass={vehicleClass}
             partId={sheetState.part}
             defectTypeId={sheetState.defectType}
-            existingDefect={(defects || []).find(
-              (d) => d.part === sheetState.part && d.defectType === sheetState.defectType,
-            )}
+            existingDefect={
+              // forceNew suppresses the "edit existing" branch so each tap
+              // creates a fresh instance (body_damage uses this).
+              sheetState.forceNew ? null : (defects || []).find(
+                (d) => d.part === sheetState.part && d.defectType === sheetState.defectType,
+              )
+            }
+            presetPosition={sheetState.presetPosition || null}
+            damageSeq={sheetState.damageSeq || null}
             onCommitted={handleDefectCommitted}
             onRemoved={handleDefectRemoved}
             onClose={closeDefectSheet}
@@ -927,6 +970,14 @@ function DefectDetailSheet({
   partId,
   defectTypeId,
   existingDefect,
+  // For section-pinned parts (body_damage), the parent passes the
+  // DVIC item's preset position so we save the right position (FRONT /
+  // REAR / DRIVER_SIDE / PASSENGER_SIDE) without showing a picker.
+  presetPosition = null,
+  // For multi-instance parts, the parent computes the next damage_seq
+  // so each new instance gets a unique slot in the COALESCE-on-details
+  // unique index without colliding with previously-saved rows.
+  damageSeq = null,
   onCommitted,
   onRemoved,
   onClose,
@@ -954,7 +1005,12 @@ function DefectDetailSheet({
     : defectType?.requiresPhoto !== false;  // default true
   const detailsSchema = defectType?.detailsSchema || {};
 
-  const [position, setPosition] = useState(existingDefect?.position || '');
+  const [position, setPosition] = useState(
+    existingDefect?.position || presetPosition || ''
+  );
+  // Hide the position picker when the parent already pinned a position
+  // (true for body_damage which derives position from the active section).
+  const positionLockedByPreset = !!presetPosition && !existingDefect;
   const [notes, setNotes] = useState(existingDefect?.notes || '');
   const [details, setDetails] = useState(existingDefect?.details || {});
   const [submitting, setSubmitting] = useState(false);
@@ -991,6 +1047,12 @@ function DefectDetailSheet({
         onClose();
         return;
       }
+      // Inject damage_seq into details for multi-instance parts so the
+      // (vehicle, insp, part, position, type, details.damage_seq) unique
+      // index has a distinct slot per damage on the same panel.
+      const finalDetails = damageSeq != null
+        ? { ...details, damage_seq: damageSeq }
+        : details;
       const created = await defectsApi.create({
         vehicleId,
         inspectionId,
@@ -999,7 +1061,7 @@ function DefectDetailSheet({
         defectType: defectType.id,
         position: position || null,
         notes: notes.trim() || null,
-        details,
+        details: finalDetails,
       });
       setCreatedId(created.id);
       // If photo isn't required, we're done — commit and close.
@@ -1094,8 +1156,10 @@ function DefectDetailSheet({
             </div>
           )}
 
-          {/* Position — radio pills */}
-          {validPositions.length > 0 && (
+          {/* Position — radio pills. Hidden when the parent pinned a
+              preset position (body_damage uses this — the section IS the
+              position so a picker would only add a redundant tap). */}
+          {validPositions.length > 0 && !positionLockedByPreset && (
             <div>
               <label className="text-xs font-semibold text-navy-300 mb-1.5 block">
                 {t('checklist.sheet.position', 'Position')}

@@ -231,6 +231,7 @@ PART_LABELS_ES: dict[P, dict[str, str]] = {
     # attached
     P.LIFT_GATE: {"label": "Plataforma elevadora"},
     P.MUD_FLAP: {"label": "Loderas"},
+    P.BODY_DAMAGE: {"label": "Daño de carrocería"},
     P.PM_SERVICE: {"label": "Servicio PM"},
 }
 
@@ -310,6 +311,8 @@ TYPE_LABELS_ES: dict[T, dict[str, str]] = {
     T.HAS_LOOSE_OBJECTS: {"label": "Tiene objetos sueltos"},
     # mount / pressure / approval / catchall
     T.MOUNT_DAMAGED: {"label": "Soporte dañado"},
+    T.SCRATCH: {"label": "Rayón"},
+    T.DENT: {"label": "Abolladura"},
     T.OVER_PRESSURE: {"label": "Presión alta"},
     T.NON_APPROVED: {"label": "No aprobado"},
     T.OBSTRUCTED: {"label": "Obstruido"},

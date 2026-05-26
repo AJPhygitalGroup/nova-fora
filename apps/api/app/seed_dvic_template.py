@@ -108,6 +108,10 @@ CARGO_ROWS: list[DvicRow] = [
      "Coolant reservoir — check for leaks, low level, broken tank, or missing cap", 170, True),
     (S.FRONT_SIDE, "Fluids", P.POWER_STEERING_FLUID, T.LEAKING, None,
      "Power steering fluid reservoir — check for leaks, low level, broken tank, or missing cap", 180, True),
+    # Body damage — multi-instance card. Position preset to FRONT so the
+    # defect row carries side-of-vehicle info without showing a picker.
+    (S.FRONT_SIDE, "Body damage", P.BODY_DAMAGE, T.SCRATCH, Pos.FRONT,
+     "Body damage on the front — log scratches or dents with photos", 200, True),
 
     # ═══════ § 2. Back Side ═══════
     (S.BACK_SIDE, "Suspension & underbody shield", P.UNDERCARRIAGE_OBJECT, T.HANGING, Pos.REAR,
@@ -134,6 +138,9 @@ CARGO_ROWS: list[DvicRow] = [
      "Rear license plate / temp tag is damaged, missing, illegible, or expired", 100, True),
     (S.BACK_SIDE, "License plates/tags", P.LICENSE_PLATE, T.DAMAGED, None,
      "Rear license plate physically damaged or bent", 110, True),
+    # Body damage on the rear
+    (S.BACK_SIDE, "Body damage", P.BODY_DAMAGE, T.SCRATCH, Pos.REAR,
+     "Body damage on the back — log scratches or dents with photos", 120, True),
 
     # ═══════ § 3. Driver Side ═══════
     # Front tire / wheel
@@ -176,6 +183,9 @@ CARGO_ROWS: list[DvicRow] = [
      "Tire has insufficient tread (Less than 2/32 or 1.6mm) on inner most, middle, or outer most tread", 160, True),
     (S.DRIVER_SIDE, "Back tire, wheel and rim", P.TIRE, T.SIDEWALL_DAMAGE, Pos.DRIVER_REAR,
      "Tire has objects, cuts, dents, swells, leaks, appears flat, or exposed wire on surface", 170, True),
+    # Body damage on driver side
+    (S.DRIVER_SIDE, "Body damage", P.BODY_DAMAGE, T.SCRATCH, Pos.DRIVER_SIDE,
+     "Body damage on the driver side — log scratches or dents with photos", 180, True),
 
     # ═══════ § 4. Passenger Side ═══════
     (S.PASSENGER_SIDE, "Front tire, wheel and rim", P.WHEEL_NUT, T.DAMAGED, Pos.PASSENGER_FRONT,
@@ -212,6 +222,9 @@ CARGO_ROWS: list[DvicRow] = [
      "Tire has insufficient tread (Less than 2/32 or 1.6mm) on inner most, middle, or outer most tread", 150, True),
     (S.PASSENGER_SIDE, "Back tire, wheel and rim", P.TIRE, T.SIDEWALL_DAMAGE, Pos.PASSENGER_REAR,
      "Tire has objects, cuts, dents, swells, leaks, appears flat, or exposed wire on surface", 160, True),
+    # Body damage on passenger side
+    (S.PASSENGER_SIDE, "Body damage", P.BODY_DAMAGE, T.SCRATCH, Pos.PASSENGER_SIDE,
+     "Body damage on the passenger side — log scratches or dents with photos", 170, True),
 
     # ═══════ § 5. In Cab ═══════
     # Vehicle Cleanliness (moved from General) — inspector checks from cab
@@ -326,11 +339,17 @@ DOT_ROWS: list[DvicRow] = [
      "Power steering fluid reservoir — check for leaks, low level, broken tank, or missing cap", 130, True),
     (S.FRONT_SIDE, "Fluids", P.GEAR_GREASE, T.LEAKING, None,
      "Gear grease (differential) — check for leaks, low level, broken tank, or missing cap", 140, True),
+    # Body damage on the front
+    (S.FRONT_SIDE, "Body damage", P.BODY_DAMAGE, T.SCRATCH, Pos.FRONT,
+     "Body damage on the front — log scratches or dents with photos", 150, True),
 
     # ═══════ § 2. Back Side ═══════
     # License plate (back)
     (S.BACK_SIDE, "License plates/tags", P.LICENSE_PLATE, T.MISSING, None,
      "Rear license plate / temp tag is damaged, missing, illegible, or expired", 10, True),
+    # Body damage on the rear
+    (S.BACK_SIDE, "Body damage", P.BODY_DAMAGE, T.SCRATCH, Pos.REAR,
+     "Body damage on the back — log scratches or dents with photos", 20, True),
 
     # ═══════ § 3. Driver Side — DOT adds fuel cap, decals, mud flap ═══════
     (S.DRIVER_SIDE, "Front tire, wheel and rim", P.TIRE, T.LOW_TREAD, Pos.DRIVER_FRONT,
@@ -357,6 +376,9 @@ DOT_ROWS: list[DvicRow] = [
      "Wheel, wheel nuts, rim, or mounting equipment damaged, cracked, loose, missing, or broken", 110, True),
     (S.DRIVER_SIDE, "Back tire, wheel and rim", P.TIRE, T.LOW_TREAD, Pos.DRIVER_REAR,
      "Tire has insufficient tread (Less than 2/32 or 1.6mm) on inner most, middle, or outer most tread", 120, True),
+    # Body damage on driver side
+    (S.DRIVER_SIDE, "Body damage", P.BODY_DAMAGE, T.SCRATCH, Pos.DRIVER_SIDE,
+     "Body damage on the driver side — log scratches or dents with photos", 130, True),
 
     # ═══════ § 4. Passenger Side ═══════
     (S.PASSENGER_SIDE, "Front tire, wheel and rim", P.TIRE, T.LOW_TREAD, Pos.PASSENGER_FRONT,
@@ -377,6 +399,9 @@ DOT_ROWS: list[DvicRow] = [
      "Wheel, wheel nuts, rim, or mounting equipment damaged, cracked, loose, missing, or broken", 80, True),
     (S.PASSENGER_SIDE, "Back tire, wheel and rim", P.TIRE, T.LOW_TREAD, Pos.PASSENGER_REAR,
      "Tire has insufficient tread (Less than 2/32 or 1.6mm) on inner most, middle, or outer most tread", 90, True),
+    # Body damage on passenger side
+    (S.PASSENGER_SIDE, "Body damage", P.BODY_DAMAGE, T.SCRATCH, Pos.PASSENGER_SIDE,
+     "Body damage on the passenger side — log scratches or dents with photos", 100, True),
 
     # ═══════ § 5. In Cab — DOT adds Air pressure gauge ═══════
     # Vehicle Documentation (moved from General)
@@ -459,6 +484,9 @@ BOX_TRUCK_ROWS: list[DvicRow] = [
      "Coolant reservoir — check for leaks, low level, broken tank, or missing cap", 110, True),
     (S.FRONT_SIDE, "Fluids", P.POWER_STEERING_FLUID, T.LEAKING, None,
      "Power steering fluid reservoir — check for leaks, low level, broken tank, or missing cap", 120, True),
+    # Body damage on the front
+    (S.FRONT_SIDE, "Body damage", P.BODY_DAMAGE, T.SCRATCH, Pos.FRONT,
+     "Body damage on the front — log scratches or dents with photos", 130, True),
 
     # ═══════ § 2. Back Side ═══════
     (S.BACK_SIDE, "Suspension & underbody shield", P.UNDERCARRIAGE_OBJECT, T.HANGING, Pos.REAR,
@@ -477,6 +505,9 @@ BOX_TRUCK_ROWS: list[DvicRow] = [
     # License plate (back)
     (S.BACK_SIDE, "License plates/tags", P.LICENSE_PLATE, T.MISSING, None,
      "Rear license plate / temp tag is damaged, missing, illegible, or expired", 70, True),
+    # Body damage on the rear
+    (S.BACK_SIDE, "Body damage", P.BODY_DAMAGE, T.SCRATCH, Pos.REAR,
+     "Body damage on the back — log scratches or dents with photos", 80, True),
 
     # ═══════ § 3. Driver Side ═══════
     # Front tire/wheel/rim
@@ -524,6 +555,9 @@ BOX_TRUCK_ROWS: list[DvicRow] = [
      "Tire has insufficient tread (Less than 2/32 or 1.6mm) on inner most, middle, or outer most tread", 170, True),
     (S.DRIVER_SIDE, "Back tire, wheel and rim", P.TIRE, T.SIDEWALL_DAMAGE, Pos.DRIVER_REAR,
      "Tire has objects, cuts, dents, swells, leaks, appears flat, or exposed wire on surface", 180, True),
+    # Body damage on driver side
+    (S.DRIVER_SIDE, "Body damage", P.BODY_DAMAGE, T.SCRATCH, Pos.DRIVER_SIDE,
+     "Body damage on the driver side — log scratches or dents with photos", 190, True),
 
     # ═══════ § 4. Passenger Side ═══════
     (S.PASSENGER_SIDE, "Side mirrors", P.SIDE_MIRROR, T.CRACKED, Pos.PASSENGER_SIDE,
@@ -563,6 +597,9 @@ BOX_TRUCK_ROWS: list[DvicRow] = [
      "Wheel, wheel nuts, rim, or mounting equipment is damaged, cracked, loose, missing, or broken", 140, True),
     (S.PASSENGER_SIDE, "Back tire, wheel and rim", P.MUD_FLAP, T.DAMAGED, Pos.PASSENGER_REAR,
      "Mud flap is damaged, missing, unsecured or held up with a zip-tie, tape or similar [DOT Only]", 150, True),
+    # Body damage on passenger side
+    (S.PASSENGER_SIDE, "Body damage", P.BODY_DAMAGE, T.SCRATCH, Pos.PASSENGER_SIDE,
+     "Body damage on the passenger side — log scratches or dents with photos", 160, True),
 
     # ═══════ § 5. In-Cab ═══════
     # Vehicle Documentation (moved from General)
