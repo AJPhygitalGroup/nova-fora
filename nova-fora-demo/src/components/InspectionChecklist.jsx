@@ -628,13 +628,19 @@ export default function InspectionChecklist({
                 // presetPosition (i.e., most parts), fall back to filtering
                 // by part_id alone — keeps every other card behaving
                 // exactly as before.
+                //
+                // The status MUST come from scopedStatusOf — falling back
+                // to partStatus[p.id] for the no-defect case would re-leak
+                // the global "any defect on this part" signal back into
+                // the card and lock it into defect state (which then hides
+                // the Pass/N/A buttons → the inspector can't dismiss that
+                // section). The Front Side regression that motivated this
+                // fix went exactly that way.
                 const myDefects = (defects || []).filter((d) =>
                   d.part === p.id
                   && (!p.presetPosition || d.position === p.presetPosition)
                 );
-                const myStatus = myDefects.length > 0
-                  ? 'defect'
-                  : (partStatus[p.id] || 'unmarked');
+                const myStatus = scopedStatusOf(p);
                 return (
                   <PartRow
                     key={p.id}
