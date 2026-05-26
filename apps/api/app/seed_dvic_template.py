@@ -143,8 +143,10 @@ CARGO_ROWS: list[DvicRow] = [
      "Tire has insufficient tread (Less than 2/32 or 1.6mm) on inner most, middle, or outer most tread", 20, True),
     (S.DRIVER_SIDE, "Front tire, wheel and rim", P.TIRE, T.SIDEWALL_DAMAGE, Pos.DRIVER_FRONT,
      "Tire has objects, cuts, dents, swells, leaks, appears flat, or exposed wire on surface", 30, True),
-    (S.DRIVER_SIDE, "Suspension & underbody shield", P.BRAKE_FLUID, T.LEAKING, None,
-     "Active non-clear fluid leaking on the ground", 40, True),
+    # NOTE 2026-05-26: removed the Driver Side / Suspension "Active non-clear
+    # fluid leaking on the ground" check (was P.BRAKE_FLUID/LEAKING) — it
+    # duplicated the Front Side / Fluids / Brake fluid card the inspector
+    # already taps. Leaks belong in the Fluids category now.
     (S.DRIVER_SIDE, "Suspension & underbody shield", P.UNDERCARRIAGE_OBJECT, T.HANGING, Pos.DRIVER_SIDE,
      "Loose or hanging objects underneath", 50, True),
     # Side mirrors with NEW turn light items
@@ -335,8 +337,8 @@ DOT_ROWS: list[DvicRow] = [
      "Tire has insufficient tread (Less than 4/32 or 3.2mm) on inner most, middle, or outer most tread", 10, True),
     (S.DRIVER_SIDE, "Front tire, wheel and rim", P.TIRE, T.SIDEWALL_DAMAGE, Pos.DRIVER_FRONT,
      "Tire has objects, cuts, dents, swells, leaks, appears flat, or exposed wire on surface", 20, True),
-    (S.DRIVER_SIDE, "Suspension & underbody shield", P.BRAKE_FLUID, T.LEAKING, None,
-     "Active non-clear fluid leaking on the ground", 30, True),
+    # NOTE 2026-05-26: removed duplicate Driver Side / Suspension fluid-leak
+    # check (was P.BRAKE_FLUID/LEAKING) — see same note in CARGO_ROWS above.
     (S.DRIVER_SIDE, "Charging port and fluids", P.FUEL_CAP, T.MISSING, Pos.DRIVER_SIDE,
      "Fuel cap is missing or broken", 40, True),
     (S.DRIVER_SIDE, "Side mirrors", P.SIDE_MIRROR, T.CRACKED, Pos.DRIVER_SIDE,
