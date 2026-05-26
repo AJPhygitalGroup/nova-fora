@@ -402,12 +402,18 @@ export default function InspectionChecklist({
   };
 
   // ─── Mark / pass-remaining handlers ────────────────────────────
-  const markPart = async (part, status) => {
+  const markPart = async (part, status, position = null) => {
     setInlineError(null);
     const prev = partMarks[part];
     setPartMarks((m) => ({ ...m, [part]: status }));
     try {
-      await inspectionsApi.markPart(inspectionId, { part, status });
+      // `position` is sent for section-pinned parts (body_damage's
+      // Front/Back/Driver/Passenger cards). The backend uses it to
+      // scope the has-defect guard so passing one side doesn't fail
+      // just because another side of the same part has a logged damage.
+      const body = { part, status };
+      if (position) body.position = position;
+      await inspectionsApi.markPart(inspectionId, body);
     } catch (err) {
       // Roll back the optimistic write
       setPartMarks((m) => {
@@ -956,7 +962,7 @@ function PartRow({ part, status, defectsForPart, onMark, onOpenDefect }) {
           {!isDefect && (
             <>
               <button
-                onClick={() => onMark(part.id, isPass ? null : 'pass')}
+                onClick={() => onMark(part.id, isPass ? null : 'pass', part.presetPosition || null)}
                 disabled={isPass && false /* TODO: support unpass via DELETE */}
                 className={`w-9 h-9 rounded-full inline-flex items-center justify-center text-sm font-bold border transition-all cursor-pointer ${
                   isPass
@@ -968,7 +974,7 @@ function PartRow({ part, status, defectsForPart, onMark, onOpenDefect }) {
                 ✓
               </button>
               <button
-                onClick={() => onMark(part.id, isNa ? null : 'na')}
+                onClick={() => onMark(part.id, isNa ? null : 'na', part.presetPosition || null)}
                 className={`px-2 h-9 rounded-full inline-flex items-center justify-center text-[10px] font-bold border transition-all cursor-pointer ${
                   isNa
                     ? 'bg-navy-600 text-white border-navy-600'

@@ -610,10 +610,19 @@ async def list_inspection_photos(
 
 
 class PartMarkRequest(BaseModel):
-    """Body for POST /inspections/{id}/part-marks — single-part toggle."""
+    """Body for POST /inspections/{id}/part-marks — single-part toggle.
+
+    `position` is optional. When sent (e.g. body_damage cards which exist
+    per-section), the has-defect guard only blocks Pass/N/A when a defect
+    exists at THAT specific position — so the inspector can pass the
+    Back Side panel even if Front Side body damage was logged. When
+    omitted, the guard checks the part globally (legacy behavior for
+    single-instance parts).
+    """
 
     part: str = Field(min_length=1, max_length=40)
     status: InspectionPartMarkStatus
+    position: str | None = Field(default=None, max_length=30)
 
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
@@ -701,18 +710,26 @@ async def mark_inspection_part(
 
     # Reject any part that already has defects on this inspection —
     # silently flipping a defected part to pass would mask real work.
-    has_defect = (
-        await session.execute(
-            select(func.count())
-            .select_from(Defect)
-            .where(Defect.inspection_id == insp.id)
-            .where(Defect.part == body.part)
-        )
-    ).scalar_one()
+    # When `position` is provided (multi-section parts like body_damage),
+    # scope the check to that specific position so the inspector can pass
+    # one side even if another side has a logged damage.
+    defect_q = (
+        select(func.count())
+        .select_from(Defect)
+        .where(Defect.inspection_id == insp.id)
+        .where(Defect.part == body.part)
+    )
+    if body.position is not None:
+        defect_q = defect_q.where(Defect.position == body.position)
+    has_defect = (await session.execute(defect_q)).scalar_one()
     if has_defect:
+        where_label = (
+            f"position {body.position!r}" if body.position
+            else "this inspection"
+        )
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            f"part {body.part!r} has defects on this inspection; remove them "
+            f"part {body.part!r} has defects on {where_label}; remove them "
             "before marking pass/na",
         )
 
