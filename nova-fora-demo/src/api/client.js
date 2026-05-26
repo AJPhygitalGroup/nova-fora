@@ -1588,6 +1588,32 @@ export const dashboards = {
     );
   },
 
+  // Daily approved vs repaired — 7-day bar chart on VendorHome.
+  dailyDefects(vendorWorkshopId, { days = 7, dspId } = {}) {
+    const q = new URLSearchParams();
+    if (days) q.set('days', String(days));
+    if (dspId != null && dspId !== '') q.set('dsp_id', String(dspId));
+    return apiFetch(
+      `/dashboards/vendor-home/${encodeURIComponent(vendorWorkshopId)}/daily-defects?${q.toString()}`
+    );
+  },
+  // Open defects donut — grouped by source.
+  openDefectsBreakdown(vendorWorkshopId, { dspId } = {}) {
+    const q = new URLSearchParams();
+    if (dspId != null && dspId !== '') q.set('dsp_id', String(dspId));
+    const qs = q.toString();
+    return apiFetch(
+      `/dashboards/vendor-home/${encodeURIComponent(vendorWorkshopId)}/open-defects-breakdown${qs ? '?' + qs : ''}`
+    );
+  },
+  // Inspector Performance list (admin / DSP-side).
+  inspectorPerformance({ days = 30, dspId } = {}) {
+    const q = new URLSearchParams();
+    if (days) q.set('days', String(days));
+    if (dspId != null && dspId !== '') q.set('dsp_id', String(dspId));
+    return apiFetch(`/dashboards/inspector-performance?${q.toString()}`);
+  },
+
   // Upcoming DVIC — per-DSP "ready for tonight" confirmation chips.
   upcomingDvic(vendorWorkshopId) {
     return apiFetch(

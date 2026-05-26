@@ -600,6 +600,28 @@ async def bucks_balance(
     return out
 
 
+@bucks_router.post(
+    "/expire-now",
+    summary="Run the expiry sweep manually (admin) — writes 'expiry' rows for past-due accruals",
+)
+async def bucks_expire_now(
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Manual trigger for the expiry job. iter-2 plumbing — iter-3 will
+    schedule via cron. Site-admin only.
+    """
+    if current.role != UserRole.SITE_ADMIN:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "site_admin only")
+    from app.services.vendor_bucks import expire_aged_entries
+    created = await expire_aged_entries(session, actor_id=current.id)
+    await session.commit()
+    return {
+        "expired_count": len(created),
+        "total_amount": str(sum((row.amount for row in created), start=__import__("decimal").Decimal(0))),
+    }
+
+
 @bucks_router.get(
     "/{vendor_workshop_id}/ledger",
     response_model=list[BucksLedgerRow],

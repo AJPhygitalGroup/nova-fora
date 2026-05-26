@@ -182,25 +182,10 @@ export default function VendorHome({ user }) {
         />
       </div>
 
-      {/* ── Two-column: chart + donut + filters (Phase 1b placeholders) ── */}
+      {/* ── Two-column: bar chart + donut ── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-6">
-        <div className="lg:col-span-2 rounded-lg border border-navy-700 bg-navy-900 p-4">
-          <div className="text-sm font-semibold text-text-strong mb-2">
-            Daily Approved vs Repaired Defects
-          </div>
-          <div className="h-48 flex items-center justify-center text-xs text-text-muted">
-            Chart will land in Phase 1b — backend endpoint pending.
-          </div>
-        </div>
-        <div className="rounded-lg border border-navy-700 bg-navy-900 p-4">
-          <div className="text-sm font-semibold text-text-strong mb-2">
-            Open Defects breakdown
-          </div>
-          <div className="h-48 flex flex-col items-center justify-center text-xs text-text-muted gap-1">
-            <div>Donut chart (VSA / RSI / Other)</div>
-            <div>Source + Defect Age filters — Phase 1b</div>
-          </div>
-        </div>
+        <DailyDefectsChart workshopId={workshopId} dspId={dspFilter} />
+        <OpenDefectsDonut workshopId={workshopId} dspId={dspFilter} />
       </div>
 
       {/* ── Ad-hoc Defects modal ─────────────────────── */}
@@ -460,4 +445,199 @@ function parseOrgInt(raw) {
   if (raw == null) return null;
   const m = String(raw).match(/(\d+)/);
   return m ? Number(m[1]) : null;
+}
+
+// ─────────────────────────────────────────────────────
+// DailyDefectsChart — SVG bar pairs, 7-day series.
+// Two bars per day: approved (green) on top of repaired (grey).
+// Self-fetches; takes workshop + dsp filter from parent.
+// ─────────────────────────────────────────────────────
+function DailyDefectsChart({ workshopId, dspId }) {
+  const [points, setPoints] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!workshopId) return;
+    setLoading(true);
+    dashboardsApi
+      .dailyDefects(workshopId, { days: 7, dspId: dspId || undefined })
+      .then((r) => setPoints(Array.isArray(r) ? r : (r?.items || [])))
+      .catch(() => setPoints([]))
+      .finally(() => setLoading(false));
+  }, [workshopId, dspId]);
+
+  // Compute scale + dimensions for the SVG bars.
+  const maxVal = Math.max(1, ...points.flatMap((p) => [p.approved || 0, p.repaired || 0]));
+  const barWidth = 12;
+  const gap = 4;
+  const groupWidth = barWidth * 2 + gap;
+  const groupGap = 28;
+  const chartH = 140;
+  const chartPad = 24;
+  const groupCount = points.length;
+  const chartW = chartPad * 2 + groupCount * groupWidth + (groupCount - 1) * groupGap;
+
+  return (
+    <section className="lg:col-span-2 rounded-lg border border-navy-700 bg-navy-900 p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div className="text-sm font-semibold text-text-strong">
+          Daily Approved vs Repaired Defects
+        </div>
+        <div className="flex items-center gap-3 text-[10px] text-text-muted">
+          <span className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-sm bg-accent-green"></span> Approved
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-sm bg-text-muted/40"></span> Repaired
+          </span>
+        </div>
+      </div>
+      {loading && points.length === 0 ? (
+        <div className="h-40 flex items-center justify-center text-xs text-text-muted">
+          <Loader2 className="w-4 h-4 animate-spin mr-1" /> Loading…
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <svg width={chartW} height={chartH + 30} className="block">
+            {/* Y-axis ticks */}
+            <g className="text-[9px] fill-text-muted">
+              <text x={0} y={10}>{maxVal}</text>
+              <text x={0} y={chartH / 2 + 4}>{Math.round(maxVal / 2)}</text>
+              <text x={0} y={chartH - 2}>0</text>
+            </g>
+            {/* Bars */}
+            {points.map((p, i) => {
+              const x = chartPad + i * (groupWidth + groupGap);
+              const aH = ((p.approved || 0) / maxVal) * chartH;
+              const rH = ((p.repaired || 0) / maxVal) * chartH;
+              const aY = chartH - aH;
+              const rY = chartH - rH;
+              return (
+                <g key={p.date}>
+                  <rect x={x} y={aY} width={barWidth} height={aH} rx={2} className="fill-accent-green" />
+                  <rect x={x + barWidth + gap} y={rY} width={barWidth} height={rH} rx={2} className="fill-text-muted/40" />
+                  <text
+                    x={x + groupWidth / 2}
+                    y={chartH + 14}
+                    textAnchor="middle"
+                    className="text-[9px] fill-text-muted"
+                  >
+                    {new Date(p.date).toLocaleDateString(undefined, { weekday: 'short' })}
+                  </text>
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// OpenDefectsDonut — SVG donut of open defects grouped by source.
+// Slice angles computed from totals; renders inside a single circle
+// with stroke-dasharray tricks (no chart lib dependency).
+// ─────────────────────────────────────────────────────
+function OpenDefectsDonut({ workshopId, dspId }) {
+  const [slices, setSlices] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!workshopId) return;
+    setLoading(true);
+    dashboardsApi
+      .openDefectsBreakdown(workshopId, { dspId: dspId || undefined })
+      .then((r) => setSlices(Array.isArray(r) ? r : (r?.items || [])))
+      .catch(() => setSlices([]))
+      .finally(() => setLoading(false));
+  }, [workshopId, dspId]);
+
+  const total = slices.reduce((s, sl) => s + (sl.count || 0), 0);
+  // Tailwind palette mapped to the source keys we expect.
+  const PALETTE = {
+    inspection: 'stroke-accent-blue',
+    shop_finding: 'stroke-accent-orange',
+    maintenance_request: 'stroke-accent-purple',
+    customer_report: 'stroke-accent-purple',
+    driver_report: 'stroke-accent-gold',
+    other: 'stroke-text-muted',
+  };
+  const SWATCH = {
+    inspection: 'bg-accent-blue',
+    shop_finding: 'bg-accent-orange',
+    maintenance_request: 'bg-accent-purple',
+    customer_report: 'bg-accent-purple',
+    driver_report: 'bg-accent-gold',
+    other: 'bg-text-muted',
+  };
+
+  // Donut geometry — single SVG, each slice is a stroke arc.
+  const r = 50;
+  const circumference = 2 * Math.PI * r;
+  let offset = 0;
+
+  return (
+    <section className="rounded-lg border border-navy-700 bg-navy-900 p-4">
+      <div className="text-sm font-semibold text-text-strong mb-3">
+        Open Defects breakdown
+      </div>
+      {loading && slices.length === 0 ? (
+        <div className="h-40 flex items-center justify-center text-xs text-text-muted">
+          <Loader2 className="w-4 h-4 animate-spin mr-1" /> Loading…
+        </div>
+      ) : total === 0 ? (
+        <div className="h-40 flex items-center justify-center text-xs text-text-muted">
+          No open defects.
+        </div>
+      ) : (
+        <div className="flex items-center gap-4">
+          <svg width={130} height={130} viewBox="0 0 130 130" className="shrink-0 -rotate-90">
+            <circle cx={65} cy={65} r={r} className="fill-none stroke-navy-800" strokeWidth={16} />
+            {slices.map((sl) => {
+              const frac = sl.count / total;
+              const dash = frac * circumference;
+              const cls = PALETTE[sl.key] || 'stroke-text-muted';
+              const el = (
+                <circle
+                  key={sl.key}
+                  cx={65}
+                  cy={65}
+                  r={r}
+                  className={`fill-none ${cls}`}
+                  strokeWidth={16}
+                  strokeDasharray={`${dash} ${circumference - dash}`}
+                  strokeDashoffset={-offset}
+                />
+              );
+              offset += dash;
+              return el;
+            })}
+            <text
+              x={65}
+              y={71}
+              textAnchor="middle"
+              className="text-[14px] font-bold fill-text-strong rotate-90"
+              style={{ transform: 'rotate(90deg)', transformOrigin: '65px 65px' }}
+            >
+              {total}
+            </text>
+          </svg>
+          <ul className="text-xs space-y-1 flex-1 min-w-0">
+            {slices.map((sl) => {
+              const swatchCls = SWATCH[sl.key] || 'bg-text-muted';
+              const pct = total > 0 ? Math.round((sl.count / total) * 100) : 0;
+              return (
+                <li key={sl.key} className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-sm ${swatchCls}`} />
+                  <span className="text-text-strong truncate flex-1">{sl.label}</span>
+                  <span className="text-text-muted">{pct}%</span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
 }

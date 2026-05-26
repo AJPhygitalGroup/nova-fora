@@ -15,6 +15,7 @@ import { inspectionRules as inspectionRulesApi, catalog as defectCatalogApi, inv
 import { isOrgAdmin as isOrgAdminRole, isVendorRole } from '../lib/permissions';
 import Badge from './ui/Badge';
 import RewardsTab from './admin/RewardsTab';
+import InspectorPerformanceTab from './admin/InspectorPerformanceTab';
 
 // V2.2 vehicle classes — drive both the DVIC checklist and this admin
 // catalog view. Labels intentionally describe the *physical* vehicle type;
@@ -2355,6 +2356,7 @@ export default function AdminPanel({ user }) {
     { id: 'org',         label: t('tabs.organization', 'Organization'), icon: Building2,    available: isOrgAdmin },
     { id: 'pm',          label: t('tabs.pm', 'Preventive Maintenance'), icon: RefreshCw,    available: isOrgAdmin },
     { id: 'rewards',     label: t('tabs.rewards', 'Rewards'),           icon: Gift,         available: isVendor || isSiteAdmin },
+    { id: 'inspectors',  label: t('tabs.inspectors', 'Inspector Performance'), icon: Shield, available: isDspOwner || isSiteAdmin },
     { id: 'defects',     label: t('tabs.defects', 'Defect Rules'),      icon: CheckCheck,   available: isDspOwner || isSiteAdmin },
   ].filter((tab) => tab.available);
 
@@ -2405,6 +2407,7 @@ export default function AdminPanel({ user }) {
           {activeTab === 'org' && <OrganizationTab user={user} />}
           {activeTab === 'pm' && <PMTab user={user} />}
           {activeTab === 'rewards' && <RewardsTab user={user} />}
+          {activeTab === 'inspectors' && <InspectorPerformanceTab />}
           {activeTab === 'defects' && <DefectRulesTab user={user} />}
         </motion.div>
       </AnimatePresence>

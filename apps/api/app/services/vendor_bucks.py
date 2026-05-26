@@ -131,3 +131,65 @@ async def accrue_for_completed_wo(
     if created:
         await session.flush()
     return created
+
+
+async def expire_aged_entries(
+    session: AsyncSession,
+    *,
+    actor_id: int | None = None,
+) -> list[VendorBucksLedger]:
+    """Sweep accrual rows whose `expires_at` is in the past and write
+    matching 'expiry' rows so the running balance drops to zero for
+    expired credits.
+
+    Idempotent: for each expired accrual, we skip if an offsetting
+    'expiry' row already exists for the same defect_id. Re-runs are
+    safe and cheap (small ledger).
+
+    Returns the rows it created.
+    """
+    today = date.today()
+
+    expired_accruals = list(
+        (
+            await session.execute(
+                select(VendorBucksLedger)
+                .where(VendorBucksLedger.entry_type == "accrual")
+                .where(VendorBucksLedger.expires_at.is_not(None))
+                .where(VendorBucksLedger.expires_at < today)
+            )
+        ).scalars().all()
+    )
+
+    created: list[VendorBucksLedger] = []
+    for accrual in expired_accruals:
+        existing_expiry = (
+            await session.execute(
+                select(VendorBucksLedger)
+                .where(VendorBucksLedger.entry_type == "expiry")
+                .where(VendorBucksLedger.defect_id == accrual.defect_id)
+                .where(VendorBucksLedger.vendor_workshop_id == accrual.vendor_workshop_id)
+                .where(VendorBucksLedger.dsp_id == accrual.dsp_id)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if existing_expiry is not None:
+            continue
+
+        row = VendorBucksLedger(
+            vendor_workshop_id=accrual.vendor_workshop_id,
+            dsp_id=accrual.dsp_id,
+            rewards_program_id=accrual.rewards_program_id,
+            defect_id=accrual.defect_id,
+            work_order_id=accrual.work_order_id,
+            entry_type="expiry",
+            amount=-Decimal(accrual.amount),
+            notes=f"Expired accrual {accrual.id}",
+            created_by_id=actor_id,
+        )
+        session.add(row)
+        created.append(row)
+
+    if created:
+        await session.flush()
+    return created

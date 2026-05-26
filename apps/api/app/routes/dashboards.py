@@ -808,3 +808,285 @@ async def confirm_upcoming_dvic(
         confirmed_at=row.confirmed_at,
         confirmation_date=today.isoformat(),
     )
+
+
+# ═════════════════════════════════════════════════════
+# Chart data — Vendor Home Phase-1b (mockup p.2 charts)
+# ═════════════════════════════════════════════════════
+#
+# 1. Daily Approved vs Repaired — 7-day bar chart.
+# 2. Open Defects breakdown — donut grouped by `defects.source`.
+#
+# Both endpoints scope to the workshop's served DSPs (same set the
+# Vendor Home tiles use) with an optional dsp_id filter.
+
+class DailyDefectsPoint(BaseModel):
+    date: str               # ISO "YYYY-MM-DD"
+    approved: int
+    repaired: int
+
+
+@router.get(
+    "/vendor-home/{vendor_workshop_id}/daily-defects",
+    response_model=list[DailyDefectsPoint],
+    summary="N-day bar-chart series: approved vs repaired defects",
+)
+async def daily_defects(
+    vendor_workshop_id: int = Path(..., ge=1),
+    days: int = Query(default=7, ge=1, le=90),
+    dsp_id: int | None = Query(default=None),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[DailyDefectsPoint]:
+    """Approved = `defect_reviews` rows of decision='approved' per day.
+    Repaired = `work_orders` of status='completed' per day (proxy for
+    "defects closed" — iter-2 will switch to DR.status='resolved' once
+    that signal stabilises).
+    """
+    if current.role != UserRole.SITE_ADMIN:
+        allowed = await _vendor_workshop_ids_for(session, current)
+        if vendor_workshop_id not in allowed:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "workshop not under your vendor")
+
+    scoped = await _dsp_ids_for_workshop(session, vendor_workshop_id)
+    if dsp_id is not None:
+        scoped = [dsp_id] if dsp_id in scoped else []
+    if not scoped:
+        # Return empty buckets so the chart renders flat zeros
+        # instead of an empty axis.
+        today = datetime.now(timezone.utc).date()
+        return [
+            DailyDefectsPoint(date=(today - timedelta(days=days - 1 - i)).isoformat(), approved=0, repaired=0)
+            for i in range(days)
+        ]
+
+    today = datetime.now(timezone.utc).date()
+    start_dt = datetime.combine(today - timedelta(days=days - 1), datetime.min.time(), tzinfo=timezone.utc)
+
+    # Approved per day (defect_reviews JOIN defects JOIN vehicles for tenancy)
+    approved_rows = (
+        await session.execute(
+            select(
+                func.date(DefectReview.created_at).label("d"),
+                func.count(DefectReview.id),
+            )
+            .join(Defect, Defect.id == DefectReview.defect_id)
+            .join(Vehicle, Vehicle.id == Defect.vehicle_id)
+            .where(Vehicle.dsp_id.in_(scoped))
+            .where(DefectReview.created_at >= start_dt)
+            .where(DefectReview.decision == "approved")
+            .group_by(func.date(DefectReview.created_at))
+        )
+    ).all()
+    approved_map = {str(d): n for d, n in approved_rows}
+
+    # Repaired per day (WOs completed in the workshop, scoped to served DSPs)
+    repaired_rows = (
+        await session.execute(
+            select(
+                func.date(WorkOrder.completed_at).label("d"),
+                func.count(WorkOrder.id),
+            )
+            .where(WorkOrder.vendor_workshop_id == vendor_workshop_id)
+            .where(WorkOrder.dsp_id.in_(scoped))
+            .where(WorkOrder.status == WorkOrderStatus.COMPLETED.value)
+            .where(WorkOrder.completed_at >= start_dt)
+            .group_by(func.date(WorkOrder.completed_at))
+        )
+    ).all()
+    repaired_map = {str(d): n for d, n in repaired_rows}
+
+    out: list[DailyDefectsPoint] = []
+    for i in range(days):
+        d = today - timedelta(days=days - 1 - i)
+        key = d.isoformat()
+        out.append(DailyDefectsPoint(
+            date=key,
+            approved=int(approved_map.get(key, 0)),
+            repaired=int(repaired_map.get(key, 0)),
+        ))
+    return out
+
+
+class OpenDefectsSlice(BaseModel):
+    label: str
+    key: str
+    count: int
+
+
+@router.get(
+    "/vendor-home/{vendor_workshop_id}/open-defects-breakdown",
+    response_model=list[OpenDefectsSlice],
+    summary="Donut slices: open defects grouped by source",
+)
+async def open_defects_breakdown(
+    vendor_workshop_id: int = Path(..., ge=1),
+    dsp_id: int | None = Query(default=None),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[OpenDefectsSlice]:
+    """Open = defects whose latest DefectResolution is NOT terminal
+    (resolved / deferred / declined), OR has no DR at all. Grouped by
+    `defects.source` with friendly labels.
+
+    Mockup labels (VSA / RSI / Other) come from Amazon's scorecard
+    taxonomy; we don't have that mapping yet, so iter-1 surfaces
+    Inspection / Customer request / Shop finding / Other (the actual
+    DefectSource values).
+    """
+    if current.role != UserRole.SITE_ADMIN:
+        allowed = await _vendor_workshop_ids_for(session, current)
+        if vendor_workshop_id not in allowed:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "workshop not under your vendor")
+
+    scoped = await _dsp_ids_for_workshop(session, vendor_workshop_id)
+    if dsp_id is not None:
+        scoped = [dsp_id] if dsp_id in scoped else []
+    if not scoped:
+        return []
+
+    # Open defects in the scope. We use the same "no terminal DR" rule
+    # as wo-summary. Cheap aggregation: count per source.
+    from app.models.work_orders import DefectResolution, DefectResolutionStatus
+
+    terminal = (
+        DefectResolutionStatus.RESOLVED.value,
+        DefectResolutionStatus.DEFERRED.value,
+        DefectResolutionStatus.DECLINED.value,
+    )
+    # Subquery: defect ids that DO have a terminal DR — used to exclude.
+    closed_ids_sub = (
+        select(DefectResolution.defect_id)
+        .where(DefectResolution.status.in_(terminal))
+    ).subquery()
+
+    rows = (
+        await session.execute(
+            select(
+                Defect.source,
+                func.count(Defect.id),
+            )
+            .join(Vehicle, Vehicle.id == Defect.vehicle_id)
+            .where(Vehicle.dsp_id.in_(scoped))
+            .where(~Defect.id.in_(select(closed_ids_sub.c.defect_id)))
+            .group_by(Defect.source)
+        )
+    ).all()
+
+    label_map = {
+        "inspection": "Inspection",
+        "maintenance_request": "Customer request",
+        "driver_report": "Driver report",
+        "customer_report": "Customer report",
+        "shop_finding": "Shop finding",
+        "other": "Other",
+    }
+    # `source` comes back as the DefectSource enum (column is mapped
+    # to it). Stringify via .value so we get 'inspection' not
+    # 'DefectSource.INSPECTION'. Defensive str() fallback for any
+    # already-string rows.
+    def _key(s):
+        return s.value if hasattr(s, "value") else str(s)
+    return [
+        OpenDefectsSlice(
+            key=_key(source),
+            label=label_map.get(_key(source), _key(source).replace("_", " ").title()),
+            count=int(n),
+        )
+        for source, n in rows
+        if n > 0
+    ]
+
+
+# ═════════════════════════════════════════════════════
+# Inspector Performance — list view (admin + DSP-owner)
+# ═════════════════════════════════════════════════════
+class InspectorPerfRow(BaseModel):
+    inspector_id: int
+    inspector_name: str
+    inspector_email: str | None = None
+    organization_id: int | None = None
+    organization_name: str | None = None
+    total_reported: int = 0
+    illegitimate_count: int = 0
+    illegitimate_pct: float | None = None
+    window_days: int
+
+
+@router.get(
+    "/inspector-performance",
+    response_model=list[InspectorPerfRow],
+    summary="List inspectors with their illegitimate-defect KPI",
+)
+async def inspector_performance(
+    days: int = Query(default=30, ge=1, le=365),
+    dsp_id: int | None = Query(default=None),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[InspectorPerfRow]:
+    """Rolls up the per-inspector KPI for the dashboard. Tenancy:
+      - site_admin: all inspectors (optionally filtered by dsp_id)
+      - dsp_*: only their own org's inspectors
+      - vendor-side: hidden (returns empty list — not a vendor concern)
+    """
+    from sqlalchemy import distinct
+    from app.models.user import User as UserModel
+    from app.models.work_orders import DefectReview as DefectReviewModel
+
+    # Scope: which users count as inspectors? Anyone who has reported
+    # at least one defect in the window. Filter by org for DSP roles.
+    base_user_q = select(UserModel).where(UserModel.is_active.is_(True)) \
+        if hasattr(UserModel, "is_active") else select(UserModel)
+
+    if current.role == UserRole.SITE_ADMIN:
+        if dsp_id is not None:
+            base_user_q = base_user_q.where(UserModel.organization_id == dsp_id)
+    elif current.role.value.startswith("dsp_"):
+        base_user_q = base_user_q.where(UserModel.organization_id == current.organization_id)
+    else:
+        return []
+
+    candidate_users = (await session.execute(base_user_q)).scalars().all()
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    out: list[InspectorPerfRow] = []
+    for u in candidate_users:
+        total = (
+            await session.execute(
+                select(func.count(Defect.id))
+                .where(Defect.reported_by_id == u.id)
+                .where(Defect.reported_at >= cutoff)
+            )
+        ).scalar() or 0
+        if total == 0:
+            continue  # not an inspector in this window
+        illegit = (
+            await session.execute(
+                select(func.count(distinct(DefectReviewModel.defect_id)))
+                .join(Defect, Defect.id == DefectReviewModel.defect_id)
+                .where(Defect.reported_by_id == u.id)
+                .where(Defect.reported_at >= cutoff)
+                .where(DefectReviewModel.decision == "rejected")
+                .where(DefectReviewModel.reject_reason_code == "illegitimate_defect")
+            )
+        ).scalar() or 0
+        org = (
+            await session.execute(
+                select(Organization).where(Organization.id == u.organization_id)
+            )
+        ).scalar_one_or_none()
+        pct = round((illegit / total) * 100, 1) if total > 0 else None
+        out.append(InspectorPerfRow(
+            inspector_id=u.id,
+            inspector_name=u.full_name,
+            inspector_email=u.email,
+            organization_id=u.organization_id,
+            organization_name=org.name if org else None,
+            total_reported=int(total),
+            illegitimate_count=int(illegit),
+            illegitimate_pct=pct,
+            window_days=days,
+        ))
+    # Worst performers first so site_admin sees red flags at the top.
+    out.sort(key=lambda r: ((r.illegitimate_pct or 0), -r.total_reported), reverse=True)
+    return out
