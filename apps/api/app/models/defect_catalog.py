@@ -232,6 +232,14 @@ class DefectPart(str, Enum):
     DEF_FLUID = "def_fluid"
     ENGINE_OIL = "engine_oil"
     GEAR_OIL = "gear_oil"
+    # Washer fluid is the reservoir liquid; distinct from WASHER_SYSTEM
+    # which is the pump/spray mechanism (different defect surface: a leak
+    # vs. a non-working pump).
+    WASHER_FLUID = "washer_fluid"
+    # Gear grease is the semi-solid lubricant for step van differentials;
+    # distinct from GEAR_OIL. Step Van DOT only — applicability rules
+    # restrict it to STEP_VAN_DOT.
+    GEAR_GREASE = "gear_grease"
     FUEL_CAP = "fuel_cap"
     BATTERY_12V = "battery_12v"
     BATTERY_COVER = "battery_cover"
@@ -326,8 +334,11 @@ class DefectType(str, Enum):
     STUD_BROKEN = "stud_broken"
     HUB_CAP_MISSING = "hub_cap_missing"
     # fluid-specific
-    LOW_FLUID = "low_fluid"
+    LOW_FLUID = "low_fluid"             # surfaced in the wizard as "Need refill"
     EMPTY = "empty"
+    TANK_BROKEN = "tank_broken"         # reservoir cracked / split / no longer holds fluid
+    MISSING_CAP = "missing_cap"         # cap on the fluid reservoir is missing
+    OTHER = "other"                     # generic catch-all for fluid defects not covered by above
     # documentation
     EXPIRED = "expired"
     ILLEGIBLE = "illegible"

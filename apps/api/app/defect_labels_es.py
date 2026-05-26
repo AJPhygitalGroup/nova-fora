@@ -210,6 +210,8 @@ PART_LABELS_ES: dict[P, dict[str, str]] = {
     P.DEF_FLUID: {"label": "Fluido DEF"},
     P.ENGINE_OIL: {"label": "Aceite de motor"},
     P.GEAR_OIL: {"label": "Aceite de transmisión"},
+    P.WASHER_FLUID: {"label": "Líquido limpiaparabrisas"},
+    P.GEAR_GREASE: {"label": "Grasa de engranaje"},
     P.FUEL_CAP: {"label": "Tapón de gasolina"},
     P.BATTERY_12V: {"label": "Batería 12V"},
     P.BATTERY_COVER: {"label": "Tapa de la batería"},
@@ -284,8 +286,11 @@ TYPE_LABELS_ES: dict[T, dict[str, str]] = {
     T.STUD_BROKEN: {"label": "Birlo roto"},
     T.HUB_CAP_MISSING: {"label": "Falta el tapón"},
     # fluid-specific
-    T.LOW_FLUID: {"label": "Nivel bajo"},
+    T.LOW_FLUID: {"label": "Necesita recarga"},
     T.EMPTY: {"label": "Vacío"},
+    T.TANK_BROKEN: {"label": "Tanque roto"},
+    T.MISSING_CAP: {"label": "Tapón faltante"},
+    T.OTHER: {"label": "Otro"},
     # documentation
     T.EXPIRED: {"label": "Vencido"},
     T.ILLEGIBLE: {"label": "Ilegible"},

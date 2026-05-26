@@ -263,6 +263,8 @@ PART_GROUP_DEFAULTS: list[tuple[P, G, str | None]] = [
     (P.COOLANT, G.PM, None),
     (P.BRAKE_FLUID, G.PM, None),
     (P.POWER_STEERING_FLUID, G.PM, None),
+    (P.WASHER_FLUID, G.PM, None),
+    (P.GEAR_GREASE, G.PM, None),
     # compliance
     (P.LICENSE_PLATE, G.CNMR, None),
     (P.INSPECTION_STICKER, G.CNMR, None),
@@ -347,6 +349,8 @@ PART_SYSTEMS: list[tuple[P, S, bool, str | None]] = [
     (P.COOLANT, S.FLUIDS_UNDER_HOOD, True, None),
     (P.BRAKE_FLUID, S.FLUIDS_UNDER_HOOD, True, None),
     (P.POWER_STEERING_FLUID, S.FLUIDS_UNDER_HOOD, True, None),
+    (P.WASHER_FLUID, S.FLUIDS_UNDER_HOOD, True, None),
+    (P.GEAR_GREASE, S.FLUIDS_UNDER_HOOD, True, None),
     # compliance
     (P.LICENSE_PLATE, S.COMPLIANCE, True, None),
     (P.INSPECTION_STICKER, S.COMPLIANCE, True, None),
@@ -514,6 +518,69 @@ RULES: list[RuleSpec] = [
      [], False, True, {}, {}, None, None),
     (P.BRAKE_FLUID, T.LEAKING, ALL_CLASSES, C.SEV1,
      [], False, True, {}, {}, "Brake fluid leak grounds the vehicle.", None),
+
+    # ── Fluids: full 5-type matrix for the inspector wizard's Fluids card ─
+    # Added 2026-05-26. Each universal fluid (brake / washer / coolant /
+    # power steering) gets the canonical 5 defect types so the wizard's
+    # chip strip stays consistent across fluids. Severity tiers reflect
+    # operational risk: a broken tank or full leak grounds the truck (SEV1);
+    # missing cap or low level slows next-day ops (SEV2/SEV3); "Other" is
+    # a SEV3 catchall that the SW can re-classify when they triage.
+    # Brake fluid LEAKING is already SEV1 above and is intentionally left
+    # in place — we don't redeclare it here so the seed doesn't UPSERT a
+    # duplicate row on the (part, defect_type) unique constraint.
+    (P.BRAKE_FLUID, T.LOW_FLUID, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {}, None, None),
+    (P.BRAKE_FLUID, T.TANK_BROKEN, ALL_CLASSES, C.SEV1,
+     [], False, True, {}, {}, "Cracked brake fluid reservoir = imminent loss of pressure.", None),
+    (P.BRAKE_FLUID, T.MISSING_CAP, ALL_CLASSES, C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.BRAKE_FLUID, T.OTHER, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {}, None, None),
+
+    (P.WASHER_FLUID, T.LEAKING, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {}, None, None),
+    (P.WASHER_FLUID, T.LOW_FLUID, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {}, None, None),
+    (P.WASHER_FLUID, T.TANK_BROKEN, ALL_CLASSES, C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.WASHER_FLUID, T.MISSING_CAP, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {}, None, None),
+    (P.WASHER_FLUID, T.OTHER, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {}, None, None),
+
+    # Coolant LEAKING is already SEV2 above; add the remaining 4 types.
+    (P.COOLANT, T.LOW_FLUID, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {}, None, None),
+    (P.COOLANT, T.TANK_BROKEN, ALL_CLASSES, C.SEV1,
+     [], False, True, {}, {}, "Coolant tank crack risks overheating mid-route.", None),
+    (P.COOLANT, T.MISSING_CAP, ALL_CLASSES, C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.COOLANT, T.OTHER, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {}, None, None),
+
+    (P.POWER_STEERING_FLUID, T.LEAKING, ALL_CLASSES, C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.POWER_STEERING_FLUID, T.LOW_FLUID, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {}, None, None),
+    (P.POWER_STEERING_FLUID, T.TANK_BROKEN, ALL_CLASSES, C.SEV1,
+     [], False, True, {}, {}, "Power steering tank crack — loss of assist while driving.", None),
+    (P.POWER_STEERING_FLUID, T.MISSING_CAP, ALL_CLASSES, C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.POWER_STEERING_FLUID, T.OTHER, ALL_CLASSES, C.SEV3,
+     [], False, True, {}, {}, None, None),
+
+    # Gear grease — Step Van DOT only (drivetrain differential lube).
+    (P.GEAR_GREASE, T.LEAKING, (VC.STEP_VAN_DOT,), C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.GEAR_GREASE, T.LOW_FLUID, (VC.STEP_VAN_DOT,), C.SEV3,
+     [], False, True, {}, {}, None, None),
+    (P.GEAR_GREASE, T.TANK_BROKEN, (VC.STEP_VAN_DOT,), C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.GEAR_GREASE, T.MISSING_CAP, (VC.STEP_VAN_DOT,), C.SEV2,
+     [], False, True, {}, {}, None, None),
+    (P.GEAR_GREASE, T.OTHER, (VC.STEP_VAN_DOT,), C.SEV3,
+     [], False, True, {}, {}, None, None),
 
     # ── Compliance ────────────────────────────────────
     (P.INSPECTION_STICKER, T.EXPIRED, ALL_CLASSES, C.SEV2,

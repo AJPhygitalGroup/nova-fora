@@ -95,6 +95,19 @@ CARGO_ROWS: list[DvicRow] = [
      "State Inspection sticker is expired", 130, True),
     (S.FRONT_SIDE, "State Inspection", P.INSPECTION_STICKER, T.DAMAGED, None,
      "State Inspection sticker is damaged or illegible", 140, True),
+    # Under-hood fluids — one card per fluid; the chip strip is supplied
+    # by the catalog (Leaking / Need refill / Tank broken / Missing cap /
+    # Other). One DVIC row per fluid is enough; we use T.LEAKING as the
+    # anchor row since it's the most common defect_type for a leak-prone
+    # reservoir. Severity + photo expectations are owned by the catalog.
+    (S.FRONT_SIDE, "Fluids", P.BRAKE_FLUID, T.LEAKING, None,
+     "Brake fluid reservoir — check for leaks, low level, broken tank, or missing cap", 150, True),
+    (S.FRONT_SIDE, "Fluids", P.WASHER_FLUID, T.LEAKING, None,
+     "Windshield washer fluid reservoir — check for leaks, low level, broken tank, or missing cap", 160, True),
+    (S.FRONT_SIDE, "Fluids", P.COOLANT, T.LEAKING, None,
+     "Coolant reservoir — check for leaks, low level, broken tank, or missing cap", 170, True),
+    (S.FRONT_SIDE, "Fluids", P.POWER_STEERING_FLUID, T.LEAKING, None,
+     "Power steering fluid reservoir — check for leaks, low level, broken tank, or missing cap", 180, True),
 
     # ═══════ § 2. Back Side ═══════
     (S.BACK_SIDE, "Suspension & underbody shield", P.UNDERCARRIAGE_OBJECT, T.HANGING, Pos.REAR,
@@ -300,6 +313,17 @@ DOT_ROWS: list[DvicRow] = [
     # DOT/State Inspection sticker — typically on windshield, front-facing
     (S.FRONT_SIDE, "State Inspection", P.PERIODIC_INSPECTION_STICKER, T.EXPIRED, None,
      "DOT/CA BIT/State Inspection sticker is missing, damaged, illegible, or expired", 90, True),
+    # Under-hood fluids — Step Van adds Gear Grease on top of the universal four.
+    (S.FRONT_SIDE, "Fluids", P.BRAKE_FLUID, T.LEAKING, None,
+     "Brake fluid reservoir — check for leaks, low level, broken tank, or missing cap", 100, True),
+    (S.FRONT_SIDE, "Fluids", P.WASHER_FLUID, T.LEAKING, None,
+     "Windshield washer fluid reservoir — check for leaks, low level, broken tank, or missing cap", 110, True),
+    (S.FRONT_SIDE, "Fluids", P.COOLANT, T.LEAKING, None,
+     "Coolant reservoir — check for leaks, low level, broken tank, or missing cap", 120, True),
+    (S.FRONT_SIDE, "Fluids", P.POWER_STEERING_FLUID, T.LEAKING, None,
+     "Power steering fluid reservoir — check for leaks, low level, broken tank, or missing cap", 130, True),
+    (S.FRONT_SIDE, "Fluids", P.GEAR_GREASE, T.LEAKING, None,
+     "Gear grease (differential) — check for leaks, low level, broken tank, or missing cap", 140, True),
 
     # ═══════ § 2. Back Side ═══════
     # License plate (back)
@@ -424,6 +448,15 @@ BOX_TRUCK_ROWS: list[DvicRow] = [
     # Inspection sticker (windshield)
     (S.FRONT_SIDE, "State Inspection", P.INSPECTION_STICKER, T.MISSING, None,
      "DOT/CA BIT/State Inspection sticker is missing, damaged, illegible, or expired", 80, True),
+    # Under-hood fluids — same 4 universals as Cargo (no Gear Grease for Box Truck).
+    (S.FRONT_SIDE, "Fluids", P.BRAKE_FLUID, T.LEAKING, None,
+     "Brake fluid reservoir — check for leaks, low level, broken tank, or missing cap", 90, True),
+    (S.FRONT_SIDE, "Fluids", P.WASHER_FLUID, T.LEAKING, None,
+     "Windshield washer fluid reservoir — check for leaks, low level, broken tank, or missing cap", 100, True),
+    (S.FRONT_SIDE, "Fluids", P.COOLANT, T.LEAKING, None,
+     "Coolant reservoir — check for leaks, low level, broken tank, or missing cap", 110, True),
+    (S.FRONT_SIDE, "Fluids", P.POWER_STEERING_FLUID, T.LEAKING, None,
+     "Power steering fluid reservoir — check for leaks, low level, broken tank, or missing cap", 120, True),
 
     # ═══════ § 2. Back Side ═══════
     (S.BACK_SIDE, "Suspension & underbody shield", P.UNDERCARRIAGE_OBJECT, T.HANGING, Pos.REAR,

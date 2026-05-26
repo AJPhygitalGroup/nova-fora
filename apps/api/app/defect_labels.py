@@ -210,6 +210,8 @@ PART_LABELS: dict[P, dict[str, str]] = {
     P.DEF_FLUID: {"label": "DEF fluid", "icon": "🧪"},
     P.ENGINE_OIL: {"label": "Engine oil", "icon": "🛢️"},
     P.GEAR_OIL: {"label": "Gear oil", "icon": "⚙️"},
+    P.WASHER_FLUID: {"label": "Windshield washer fluid", "icon": "💦"},
+    P.GEAR_GREASE: {"label": "Gear grease", "icon": "⚙️"},
     P.FUEL_CAP: {"label": "Fuel cap", "icon": "⛽"},
     P.BATTERY_12V: {"label": "12V battery", "icon": "🔋"},
     P.BATTERY_COVER: {"label": "Battery cover", "icon": "🔋"},
@@ -286,8 +288,11 @@ TYPE_LABELS: dict[T, dict[str, str]] = {
     T.STUD_BROKEN: {"label": "Stud broken", "icon": "🧨"},
     T.HUB_CAP_MISSING: {"label": "Hub cap missing", "icon": "🚫"},
     # fluid-specific
-    T.LOW_FLUID: {"label": "Low fluid", "icon": "📉"},
+    T.LOW_FLUID: {"label": "Need refill", "icon": "📉"},
     T.EMPTY: {"label": "Empty", "icon": "🪫"},
+    T.TANK_BROKEN: {"label": "Tank broken", "icon": "🧨"},
+    T.MISSING_CAP: {"label": "Missing cap", "icon": "🔓"},
+    T.OTHER: {"label": "Other", "icon": "❓"},
     # documentation
     T.EXPIRED: {"label": "Expired", "icon": "📅"},
     T.ILLEGIBLE: {"label": "Illegible", "icon": "🔍"},
