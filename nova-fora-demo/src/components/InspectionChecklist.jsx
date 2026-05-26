@@ -207,7 +207,16 @@ export default function InspectionChecklist({
           if (!item.part || seen.has(item.part)) continue;
           seen.add(item.part);
           const partObj = cat.parts.find((p) => p.id === item.part);
-          if (partObj) objs.push(partObj);
+          if (partObj) {
+            // Stamp the DVIC item's preset position onto the partObj so the
+            // PartRow rendered in *this* section knows which position to
+            // scope its defectsForPart + status against. Critical for
+            // multi-section parts like body_damage where the SAME part_id
+            // appears on Front / Back / Driver / Passenger cards: without
+            // this, a defect logged on one side bleeds the 'defect' state
+            // into all four cards.
+            objs.push({ ...partObj, presetPosition: item.position || null });
+          }
         }
       }
       out[section.id] = objs;
@@ -246,6 +255,23 @@ export default function InspectionChecklist({
     return out;
   }, [defects, partMarks]);
 
+  // Section-scoped status. For section-pinned parts (presetPosition set),
+  // a 'defect' anywhere else on the same part_id must NOT bleed in — the
+  // card's own state depends on whether there's a defect with the matching
+  // position. Used by sectionCounts + remainingOnPage so navigation tally
+  // matches what the inspector actually sees on each card.
+  const scopedStatusOf = (part) => {
+    if (!part) return 'unmarked';
+    if (part.presetPosition) {
+      const hasDefectHere = (defects || []).some(
+        (d) => d.part === part.id && d.position === part.presetPosition,
+      );
+      if (hasDefectHere) return 'defect';
+      return partMarks[part.id] || 'unmarked';
+    }
+    return partStatus[part.id] || 'unmarked';
+  };
+
   // If the active section is no longer in the visible tabs (e.g. it
   // had zero parts on this vehicle class), jump to the first visible
   // tab so the pane has something to render.
@@ -264,12 +290,14 @@ export default function InspectionChecklist({
       const total = parts.length;
       let marked = 0;
       for (const p of parts) {
-        if (partStatus[p.id] && partStatus[p.id] !== 'unmarked') marked += 1;
+        const s = scopedStatusOf(p);
+        if (s && s !== 'unmarked') marked += 1;
       }
       out[sys.id] = { total, marked };
     }
     return out;
-  }, [tabs, partsBySection, partStatus]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabs, partsBySection, partStatus, defects, partMarks]);
 
   // Total across all tabs (route + extras) for the sticky complete bar.
   const totalCount = useMemo(() => {
@@ -288,7 +316,10 @@ export default function InspectionChecklist({
   const activePage = Math.min(pageBySection[activeSection] || 0, pageTotal - 1);
   const pageStart = activePage * PARTS_PER_PAGE;
   const pageParts = activeParts.slice(pageStart, pageStart + PARTS_PER_PAGE);
-  const remainingOnPage = pageParts.filter((p) => !partStatus[p.id] || partStatus[p.id] === 'unmarked').length;
+  const remainingOnPage = pageParts.filter((p) => {
+    const s = scopedStatusOf(p);
+    return !s || s === 'unmarked';
+  }).length;
 
   // Section-complete + next-section computed once so the "continue" CTA
   // can render at the right moment. The CTA only shows when EVERY part
@@ -391,7 +422,10 @@ export default function InspectionChecklist({
   const passRemainingOnPage = async () => {
     if (!pageParts.length) return;
     const candidates = pageParts
-      .filter((p) => !partStatus[p.id] || partStatus[p.id] === 'unmarked')
+      .filter((p) => {
+        const s = scopedStatusOf(p);
+        return !s || s === 'unmarked';
+      })
       .map((p) => p.id);
     if (candidates.length === 0) return;
     setInlineError(null);
@@ -586,16 +620,32 @@ export default function InspectionChecklist({
         ) : (
           <>
             <div className="space-y-2">
-              {pageParts.map((p) => (
-                <PartRow
-                  key={p.id}
-                  part={p}
-                  status={partStatus[p.id] || 'unmarked'}
-                  defectsForPart={(defects || []).filter((d) => d.part === p.id)}
-                  onMark={markPart}
-                  onOpenDefect={openDefectSheet}
-                />
-              ))}
+              {pageParts.map((p) => {
+                // When a part is pinned to a section position (e.g.
+                // body_damage on Front Side carries presetPosition='front'),
+                // scope both defectsForPart AND status by that position so
+                // each section's card has independent state. Without
+                // presetPosition (i.e., most parts), fall back to filtering
+                // by part_id alone — keeps every other card behaving
+                // exactly as before.
+                const myDefects = (defects || []).filter((d) =>
+                  d.part === p.id
+                  && (!p.presetPosition || d.position === p.presetPosition)
+                );
+                const myStatus = myDefects.length > 0
+                  ? 'defect'
+                  : (partStatus[p.id] || 'unmarked');
+                return (
+                  <PartRow
+                    key={p.id}
+                    part={p}
+                    status={myStatus}
+                    defectsForPart={myDefects}
+                    onMark={markPart}
+                    onOpenDefect={openDefectSheet}
+                  />
+                );
+              })}
             </div>
 
             {remainingOnPage > 0 && (
