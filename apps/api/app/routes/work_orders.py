@@ -1622,6 +1622,19 @@ async def complete_wo(
     await refresh_rr_status(
         session, repair_request_id=wo.repair_request_id, actor_id=current.id
     )
+    # Vendor bucks accrual — credit the DSP for each paid defect closed
+    # in this WO. Idempotent (skips defects that already have an
+    # accrual row), no-ops if the vendor has no active rewards program.
+    try:
+        from app.services.vendor_bucks import accrue_for_completed_wo
+        await accrue_for_completed_wo(
+            session, work_order_id=wo.id, actor_id=current.id,
+        )
+    except Exception as e:  # noqa: BLE001
+        # Never block the WO complete on a rewards-ledger failure;
+        # log and move on. The vendor's bucks balance just stays at the
+        # last accrued value until the next completion retries.
+        log.warning("vendor_bucks accrual failed for WO %s: %s", wo.id, e)
     await session.commit()
     await session.refresh(wo)
     await _publish_wo_changed(wo, "completed")

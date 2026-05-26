@@ -1588,6 +1588,19 @@ export const dashboards = {
     );
   },
 
+  // Upcoming DVIC — per-DSP "ready for tonight" confirmation chips.
+  upcomingDvic(vendorWorkshopId) {
+    return apiFetch(
+      `/dashboards/vendor-home/${encodeURIComponent(vendorWorkshopId)}/upcoming-dvic`
+    );
+  },
+  confirmUpcomingDvic(vendorWorkshopId, dspId) {
+    return apiFetch(
+      `/dashboards/vendor-home/${encodeURIComponent(vendorWorkshopId)}/upcoming-dvic/${encodeURIComponent(dspId)}/confirm`,
+      { method: 'POST' },
+    );
+  },
+
   /**
    * GET /dashboards/dsp/{dspId}/counters — DSP-scoped.
    * Returns: { vansInService, approveCost, approveDefects, confirmPickup,

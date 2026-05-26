@@ -142,7 +142,7 @@ export default function VendorHome({ user }) {
       </div>
 
       {/* ── Upcoming DVIC banner (Phase 1b will wire chips) ── */}
-      <UpcomingDvicBanner workshopName={workshopName} />
+      <UpcomingDvicBanner workshopId={workshopId} />
 
       {counterErr && (
         <div className="mb-3 px-3 py-2 rounded-md bg-accent-red/10 border border-accent-red/40 text-sm text-accent-red flex items-center gap-2">
@@ -217,10 +217,42 @@ export default function VendorHome({ user }) {
 
 // ─────────────────────────────────────────────────────
 // Upcoming DVIC banner — confirm tonight's inspections
+// Wired to /dashboards/vendor-home/{ws}/upcoming-dvic; chips
+// flip from red ("Tap to confirm") to green ("Confirmed") on
+// successful POST. Each chip is one DSP the workshop services.
 // ─────────────────────────────────────────────────────
-function UpcomingDvicBanner({ workshopName }) {
-  // Phase 1b will wire this to /dashboards/vendor-home/{ws}/upcoming-dvic.
-  // For now it's a visual placeholder so the layout matches the mockup.
+function UpcomingDvicBanner({ workshopId }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [busyId, setBusyId] = useState(null);
+  const [err, setErr] = useState(null);
+
+  const load = useCallback(() => {
+    if (!workshopId) return;
+    setLoading(true);
+    setErr(null);
+    dashboardsApi
+      .upcomingDvic(workshopId)
+      .then((r) => setRows(Array.isArray(r) ? r : (r?.items || [])))
+      .catch((e) => setErr(e.detail || e.message || 'Failed'))
+      .finally(() => setLoading(false));
+  }, [workshopId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const confirm = async (dspId) => {
+    setErr(null);
+    setBusyId(dspId);
+    try {
+      const updated = await dashboardsApi.confirmUpcomingDvic(workshopId, dspId);
+      setRows((cur) => cur.map((r) => r.dspId === dspId ? { ...r, ...updated } : r));
+    } catch (e) {
+      setErr(e.detail || e.message || 'Failed to confirm');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   return (
     <section className="rounded-lg border border-accent-green/40 bg-accent-green/5 px-4 py-3 mb-4 flex items-center gap-3 flex-wrap">
       <PlayCircle className="w-5 h-5 text-accent-green shrink-0" />
@@ -234,28 +266,59 @@ function UpcomingDvicBanner({ workshopName }) {
         <div className="text-[11px] text-text-muted mt-0.5">
           Confirm QC DVIC scheduled tonight for each customer — unconfirmed inspections will not be completed.
         </div>
+        {err && (
+          <div className="text-[10px] text-accent-red mt-1">{err}</div>
+        )}
       </div>
-      {/* Per-DSP chips — Phase 1b will populate from API */}
+      {/* Per-DSP chips wired to upcoming_dvic endpoint */}
       <div className="flex gap-2 flex-wrap">
-        <button
-          type="button"
-          className="px-3 py-1.5 rounded-md bg-accent-red/15 border border-accent-red/40 text-accent-red text-xs font-semibold hover:bg-accent-red/25"
-          title="Tap to confirm CEIB tonight"
-          disabled
-        >
-          CEIB
-        </button>
-        <button
-          type="button"
-          className="px-3 py-1.5 rounded-md bg-accent-green/20 border border-accent-green/50 text-accent-green text-xs font-semibold"
-          title="REJE confirmed — keys + vans ready"
-          disabled
-        >
-          REJE Confirmed
-        </button>
+        {loading && (
+          <Loader2 className="w-4 h-4 animate-spin text-text-muted" />
+        )}
+        {!loading && rows.length === 0 && (
+          <span className="text-[11px] text-text-muted italic">
+            No DSPs serviced yet.
+          </span>
+        )}
+        {!loading && rows.map((r) => {
+          const isBusy = busyId === r.dspId;
+          if (r.confirmed) {
+            return (
+              <span
+                key={r.dspId}
+                className="px-3 py-1.5 rounded-md bg-accent-green/20 border border-accent-green/50 text-accent-green text-xs font-semibold cursor-default"
+                title={`Confirmed ${r.confirmedAt ? new Date(r.confirmedAt).toLocaleTimeString() : ''}`}
+              >
+                {dspShort(r.dspName)} ✓ Confirmed
+              </span>
+            );
+          }
+          return (
+            <button
+              key={r.dspId}
+              type="button"
+              onClick={() => confirm(r.dspId)}
+              disabled={isBusy}
+              className="px-3 py-1.5 rounded-md bg-accent-red/15 border border-accent-red/40 text-accent-red text-xs font-semibold hover:bg-accent-red/25 disabled:opacity-40 flex items-center gap-1"
+              title="Tap to confirm tonight"
+            >
+              {isBusy && <Loader2 className="w-3 h-3 animate-spin" />}
+              {dspShort(r.dspName)}
+            </button>
+          );
+        })}
       </div>
     </section>
   );
+}
+
+// Short pillable label — first word of the DSP name or 4-char abbrev.
+function dspShort(name) {
+  if (!name) return 'DSP';
+  const first = name.split(/\s+/)[0];
+  // Use uppercase abbreviation of vowel-stripped first word so it fits
+  // in a chip (Safety First LLC → SAFETY → SFTY).
+  return first.length <= 6 ? first.toUpperCase() : first.slice(0, 4).toUpperCase();
 }
 
 // ─────────────────────────────────────────────────────

@@ -18,6 +18,8 @@ Convention notes:
 """
 from app.models.work_orders.customer_preferred_vendor import CustomerPreferredVendor
 from app.models.work_orders.decline_reason_code import DeclineReasonCode
+from app.models.work_orders.dvic_nightly_confirmation import DvicNightlyConfirmation
+from app.models.work_orders.vendor_bucks_ledger import VendorBucksLedger
 from app.models.work_orders.rewards_program import RewardsProgram, RewardsTier
 from app.models.work_orders.defect_resolution import (
     DefectResolution,
@@ -78,6 +80,7 @@ __all__ = [
     # Tables
     "CustomerPreferredVendor",
     "DeclineReasonCode",
+    "DvicNightlyConfirmation",
     "RewardsProgram",
     "RewardsTier",
     "DefectResolution",
@@ -85,6 +88,7 @@ __all__ = [
     "DspSetting",
     "RepairRequest",
     "RepairRequestDefect",
+    "VendorBucksLedger",
     "VendorWorkshop",
     "WoActivityLog",
     "WorkOrder",

@@ -16,7 +16,7 @@ Schema choices:
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -33,6 +33,7 @@ from app.models.work_orders import (
     CustomerPreferredVendor,
     RepairType,
     StatusTrackingMode,
+    VendorBucksLedger,
     VendorWorkshop,
 )
 
@@ -45,6 +46,14 @@ router = APIRouter(prefix="/vendor-workshops", tags=["vendor-workshops"])
 preferred_router = APIRouter(
     prefix="/customer-preferred-vendors",
     tags=["customer-preferred-vendors"],
+)
+
+# Rewards ledger / balance — same router-split rationale as
+# preferred-vendors (avoid /vendor-workshops/{id} dynamic-route
+# collision). Mounted in main.py alongside the workshop router.
+bucks_router = APIRouter(
+    prefix="/vendor-bucks",
+    tags=["vendor-bucks"],
 )
 
 
@@ -487,3 +496,150 @@ async def delete_preferred_vendor(
     await session.delete(row)
     await session.commit()
     return None
+
+
+# ═════════════════════════════════════════════════════
+# Vendor bucks ledger — read-only iter-1 (accrual entries only)
+# ═════════════════════════════════════════════════════
+#
+# GET /vendor-bucks/{vendor_workshop_id}/balance?dsp_id=
+#   → sum of all amount rows per (ws, dsp). Optionally filter to one DSP.
+#
+# GET /vendor-bucks/{vendor_workshop_id}/ledger?dsp_id=
+#   → newest-first list of ledger rows. Used for the audit drawer.
+#
+# Tenancy: workshop owners + site_admin; DSP owner can read their own
+# (so they see "how many bucks am I sitting on with this vendor").
+
+from decimal import Decimal as _Decimal
+
+
+class BucksBalanceRow(BaseModel):
+    vendor_workshop_id: int
+    dsp_id: int
+    dsp_name: str | None = None
+    balance: _Decimal
+
+
+class BucksLedgerRow(BaseModel):
+    id: int
+    vendor_workshop_id: int
+    dsp_id: int
+    dsp_name: str | None = None
+    rewards_program_id: int | None = None
+    defect_id: int | None = None
+    work_order_id: int | None = None
+    entry_type: str
+    amount: _Decimal
+    expires_at: date | None = None
+    notes: str | None = None
+    created_at: datetime
+
+
+async def _bucks_authz_ok(session: AsyncSession, user: User, ws_id: int, dsp_id: int | None) -> bool:
+    """Workshop owner can always read theirs; DSP owner can read theirs
+    (when filtered to that DSP); site_admin reads anything.
+    """
+    if user.role == UserRole.SITE_ADMIN:
+        return True
+    if user.role in (UserRole.DSP_OWNER, UserRole.DSP_MANAGER):
+        return dsp_id is not None and user.organization_id == dsp_id
+    # vendor-side: must own the workshop
+    if user.organization_id is None:
+        return False
+    ws = (
+        await session.execute(
+            select(VendorWorkshop).where(VendorWorkshop.id == ws_id)
+        )
+    ).scalar_one_or_none()
+    return ws is not None and ws.organization_id == user.organization_id
+
+
+@bucks_router.get(
+    "/{vendor_workshop_id}/balance",
+    response_model=list[BucksBalanceRow],
+    summary="Per-DSP bucks balance for a workshop (sum of ledger amounts)",
+)
+async def bucks_balance(
+    vendor_workshop_id: int = Path(..., ge=1),
+    dsp_id: int | None = None,
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[BucksBalanceRow]:
+    from sqlalchemy import func
+    if not await _bucks_authz_ok(session, current, vendor_workshop_id, dsp_id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not allowed")
+
+    q = (
+        select(
+            VendorBucksLedger.vendor_workshop_id,
+            VendorBucksLedger.dsp_id,
+            func.coalesce(func.sum(VendorBucksLedger.amount), 0).label("balance"),
+        )
+        .where(VendorBucksLedger.vendor_workshop_id == vendor_workshop_id)
+        .group_by(
+            VendorBucksLedger.vendor_workshop_id,
+            VendorBucksLedger.dsp_id,
+        )
+    )
+    if dsp_id is not None:
+        q = q.where(VendorBucksLedger.dsp_id == dsp_id)
+    rows = (await session.execute(q)).all()
+
+    out: list[BucksBalanceRow] = []
+    for ws_id, did, bal in rows:
+        org = (
+            await session.execute(select(Organization).where(Organization.id == did))
+        ).scalar_one_or_none()
+        out.append(BucksBalanceRow(
+            vendor_workshop_id=ws_id,
+            dsp_id=did,
+            dsp_name=org.name if org else None,
+            balance=_Decimal(bal),
+        ))
+    return out
+
+
+@bucks_router.get(
+    "/{vendor_workshop_id}/ledger",
+    response_model=list[BucksLedgerRow],
+    summary="Bucks ledger entries for a workshop, newest first",
+)
+async def bucks_ledger(
+    vendor_workshop_id: int = Path(..., ge=1),
+    dsp_id: int | None = None,
+    limit: int = 100,
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[BucksLedgerRow]:
+    if not await _bucks_authz_ok(session, current, vendor_workshop_id, dsp_id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not allowed")
+
+    q = (
+        select(VendorBucksLedger, Organization)
+        .outerjoin(Organization, Organization.id == VendorBucksLedger.dsp_id)
+        .where(VendorBucksLedger.vendor_workshop_id == vendor_workshop_id)
+        .order_by(VendorBucksLedger.created_at.desc())
+        .limit(limit)
+    )
+    if dsp_id is not None:
+        q = q.where(VendorBucksLedger.dsp_id == dsp_id)
+    rows = (await session.execute(q)).all()
+
+    return [
+        BucksLedgerRow(
+            id=r.id,
+            vendor_workshop_id=r.vendor_workshop_id,
+            dsp_id=r.dsp_id,
+            dsp_name=org.name if org else None,
+            rewards_program_id=r.rewards_program_id,
+            defect_id=r.defect_id,
+            work_order_id=r.work_order_id,
+            entry_type=r.entry_type,
+            amount=r.amount,
+            expires_at=r.expires_at,
+            notes=r.notes,
+            created_at=r.created_at,
+        )
+        for r, org in rows
+    ]

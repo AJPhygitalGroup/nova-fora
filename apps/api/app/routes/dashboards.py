@@ -41,6 +41,7 @@ from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
 from app.models.work_orders import (
     DefectReview,
+    DvicNightlyConfirmation,
     RepairRequest,
     RepairRequestDefect,
     VendorWorkshop,
@@ -668,3 +669,142 @@ async def ad_hoc_defects(
             dsp_name=org.name if org else None,
         ))
     return out
+
+
+# ═════════════════════════════════════════════════════
+# Upcoming DVIC — vendor confirms each DSP for tonight (mockup p.2)
+# ═════════════════════════════════════════════════════
+#
+# One chip per DSP the workshop services. Today-scoped: each call
+# returns the served DSPs + whether the workshop has confirmed
+# that DSP's tonight inspection yet.
+#
+# Confirmation lives in `dvic_nightly_confirmations` keyed on
+# (vendor_workshop_id, dsp_id, confirmation_date). Posting twice
+# for the same triple is idempotent (the UNIQUE constraint kicks
+# in; the POST handler returns the existing row).
+
+class UpcomingDvicRow(BaseModel):
+    dsp_id: int
+    dsp_name: str | None = None
+    confirmed: bool
+    confirmed_at: datetime | None = None
+    confirmation_date: str   # ISO date (YYYY-MM-DD)
+
+
+@router.get(
+    "/vendor-home/{vendor_workshop_id}/upcoming-dvic",
+    response_model=list[UpcomingDvicRow],
+    summary="Tonight's per-DSP confirmation state for the Upcoming DVIC chips",
+)
+async def upcoming_dvic(
+    vendor_workshop_id: int = Path(..., ge=1),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[UpcomingDvicRow]:
+    """Returns one row per DSP the workshop has WOs with (the
+    "served set"), each tagged confirmed/unconfirmed for today.
+    """
+    if current.role != UserRole.SITE_ADMIN:
+        allowed = await _vendor_workshop_ids_for(session, current)
+        if vendor_workshop_id not in allowed:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, "workshop not under your vendor"
+            )
+    today = datetime.now(timezone.utc).date()
+
+    served_ids = await _dsp_ids_for_workshop(session, vendor_workshop_id)
+    if not served_ids:
+        return []
+
+    # Fetch the orgs + their existing confirmations for today in two queries.
+    orgs = (
+        await session.execute(
+            select(Organization).where(Organization.id.in_(served_ids))
+        )
+    ).scalars().all()
+    confirmations = (
+        await session.execute(
+            select(DvicNightlyConfirmation)
+            .where(DvicNightlyConfirmation.vendor_workshop_id == vendor_workshop_id)
+            .where(DvicNightlyConfirmation.confirmation_date == today)
+        )
+    ).scalars().all()
+    by_dsp = {c.dsp_id: c for c in confirmations}
+
+    rows: list[UpcomingDvicRow] = []
+    for o in sorted(orgs, key=lambda x: x.name or ''):
+        c = by_dsp.get(o.id)
+        rows.append(UpcomingDvicRow(
+            dsp_id=o.id,
+            dsp_name=o.name,
+            confirmed=c is not None,
+            confirmed_at=c.confirmed_at if c else None,
+            confirmation_date=today.isoformat(),
+        ))
+    return rows
+
+
+@router.post(
+    "/vendor-home/{vendor_workshop_id}/upcoming-dvic/{dsp_id}/confirm",
+    response_model=UpcomingDvicRow,
+    status_code=status.HTTP_201_CREATED,
+    summary="Confirm a DSP is ready for tonight's inspection",
+)
+async def confirm_upcoming_dvic(
+    vendor_workshop_id: int = Path(..., ge=1),
+    dsp_id: int = Path(..., ge=1),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> UpcomingDvicRow:
+    """Idempotent: re-confirming returns the existing row without
+    creating a duplicate. The UI flips the chip to green immediately
+    after a successful POST.
+    """
+    if current.role != UserRole.SITE_ADMIN:
+        allowed = await _vendor_workshop_ids_for(session, current)
+        if vendor_workshop_id not in allowed:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, "workshop not under your vendor"
+            )
+
+    # Workshop must actually service this DSP (don't allow random pairings).
+    served_ids = await _dsp_ids_for_workshop(session, vendor_workshop_id)
+    if dsp_id not in served_ids:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "this workshop has no work orders with that DSP",
+        )
+
+    today = datetime.now(timezone.utc).date()
+    row = (
+        await session.execute(
+            select(DvicNightlyConfirmation)
+            .where(DvicNightlyConfirmation.vendor_workshop_id == vendor_workshop_id)
+            .where(DvicNightlyConfirmation.dsp_id == dsp_id)
+            .where(DvicNightlyConfirmation.confirmation_date == today)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if row is None:
+        row = DvicNightlyConfirmation(
+            vendor_workshop_id=vendor_workshop_id,
+            dsp_id=dsp_id,
+            confirmation_date=today,
+            confirmed_by_id=current.id,
+        )
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+
+    org = (
+        await session.execute(select(Organization).where(Organization.id == dsp_id))
+    ).scalar_one_or_none()
+    return UpcomingDvicRow(
+        dsp_id=dsp_id,
+        dsp_name=org.name if org else None,
+        confirmed=True,
+        confirmed_at=row.confirmed_at,
+        confirmation_date=today.isoformat(),
+    )

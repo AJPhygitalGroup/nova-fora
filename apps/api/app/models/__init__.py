@@ -50,6 +50,7 @@ from app.models.vehicle_note import VehicleNote
 from app.models.work_orders import (
     CustomerPreferredVendor,
     DeclineReasonCode,
+    DvicNightlyConfirmation,
     RewardsProgram,
     RewardsTier,
     DefectResolution,
@@ -67,6 +68,7 @@ from app.models.work_orders import (
     RepairRequestStatus,
     RepairType,
     StatusTrackingMode,
+    VendorBucksLedger,
     VendorWorkshop,
     WoActivityLog,
     WoActivityLogEntityType,
