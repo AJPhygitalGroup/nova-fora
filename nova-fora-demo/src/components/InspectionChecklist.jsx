@@ -524,8 +524,8 @@ export default function InspectionChecklist({
     closeDefectSheet();
   };
 
-  const handleDefectRemoved = (defectId, part) => {
-    onRemoveDefect?.(defectId, part);
+  const handleDefectRemoved = (defectId, part, opts) => {
+    onRemoveDefect?.(defectId, part, opts);
     closeDefectSheet();
   };
 
@@ -1100,7 +1100,24 @@ function DefectDetailSheet({
   // (true for body_damage which derives position from the active section).
   const positionLockedByPreset = !!presetPosition && !existingDefect;
   const [notes, setNotes] = useState(existingDefect?.notes || '');
-  const [details, setDetails] = useState(existingDefect?.details || {});
+  // Initialize details with REQUIRED boolean fields defaulted to false.
+  // Without this, schemas like windshield/cracked (`in_drivers_line_of_sight`)
+  // submit with `details: {}` when the inspector doesn't tick the checkbox
+  // and the API rejects with "details validation failed: '<field>' is a
+  // required property". Booleans are unique here — text/number fields
+  // would fail validation if we defaulted them to a value, but a missing
+  // required boolean almost always means "no" in inspector UX.
+  const [details, setDetails] = useState(() => {
+    if (existingDefect?.details) return { ...existingDefect.details };
+    const initial = {};
+    const schema = defectType?.detailsSchema || {};
+    const required = Array.isArray(schema.required) ? schema.required : [];
+    const props = schema.properties || {};
+    for (const name of required) {
+      if (props[name]?.type === 'boolean') initial[name] = false;
+    }
+    return initial;
+  });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
@@ -1185,7 +1202,11 @@ function DefectDetailSheet({
     if (!window.confirm(t('checklist.sheet.confirmRemove', 'Remove this defect from the inspection?'))) return;
     try {
       await defectsApi.delete(existingDefect.id);
-      onRemoved(existingDefect.id, part.id);
+      // Tell the parent we already deleted (and confirmed) so it skips
+      // its own confirm + API call — otherwise the inspector gets a
+      // second confirm dialog and the wizard fires a redundant
+      // DELETE that 404s.
+      onRemoved(existingDefect.id, part.id, { alreadyDeleted: true });
     } catch (err) {
       setError(err?.detail || err?.message || 'Remove failed');
     }

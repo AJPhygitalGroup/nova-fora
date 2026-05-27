@@ -411,15 +411,33 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
     ]);
   }, []);
 
-  const handleRemoveDefect = useCallback(async (defect) => {
-    if (!confirm(`Remove "${defect.partLabel || defect.part || 'defect'}"?`)) return;
-    try {
-      await defectsApi.delete(defect.id);
-      setDefects((prev) => prev.filter((d) => d.id !== defect.id));
-    } catch (err) {
-      alert(`Remove failed: ${err?.detail || err?.message || 'unknown'}`);
+  // Called from BOTH the inline trash icon in the defect-log row AND from
+  // the defect-detail-sheet's Remove button. Both forward
+  // (defectId, part, opts?) — NOT a full defect object. Earlier this
+  // expected `(defect)` and read `defect.id` → `undefined` → "Remove
+  // failed: invalid defect id" (project_inspection_bugs.md, 2026-05-27).
+  //
+  // `opts.alreadyDeleted=true` is set by the sheet's Remove button, which
+  // already ran its own confirm + delete; the wizard then skips both to
+  // avoid a duplicate confirm dialog + a redundant DELETE that 404s.
+  const handleRemoveDefect = useCallback(async (defectId, part, opts) => {
+    if (defectId == null) {
+      alert('Remove failed: missing defect id');
+      return;
     }
-  }, []);
+    if (!opts?.alreadyDeleted) {
+      const existing = (defects || []).find((d) => d.id === defectId);
+      const label = existing?.partLabel || part || 'defect';
+      if (!confirm(`Remove "${label}"?`)) return;
+      try {
+        await defectsApi.delete(defectId);
+      } catch (err) {
+        alert(`Remove failed: ${err?.detail || err?.message || 'unknown'}`);
+        return;
+      }
+    }
+    setDefects((prev) => prev.filter((d) => d.id !== defectId));
+  }, [defects]);
 
   // Stable handler for the step-5 odometer PhotoUploader. Same rationale as
   // handleDefectCommitted: keep the function identity stable so PhotoUploader
