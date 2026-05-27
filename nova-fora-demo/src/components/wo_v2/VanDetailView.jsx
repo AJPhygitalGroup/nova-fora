@@ -389,9 +389,20 @@ function RoCard({ row, terminal, vehicleClass, onChanged, onOpenRo }) {
   return (
     <div className={`rounded-md border-l-4 ${roBorder(row.woStatus)} bg-navy-800/30 px-3 py-2`}>
       <div className="flex items-center gap-2 flex-wrap mb-2">
-        <span className="text-sm font-semibold text-accent-blue">
-          {row.roNumber || row.workOrderIdStr}
-        </span>
+        {/* Order is referenced by the vendor's RO# everywhere — show the
+            real RO# when set; otherwise a 'Pending RO#' placeholder
+            (typical for pending_acceptance state, before the SW types
+            in their shop's RO#). The Nova Fora WO-NNNN is intentionally
+            NOT shown — it's an internal id and confused the SW. */}
+        {row.roNumber ? (
+          <span className="text-sm font-semibold text-accent-blue">
+            {row.roNumber}
+          </span>
+        ) : (
+          <span className="text-sm font-semibold text-text-muted italic">
+            Pending RO#
+          </span>
+        )}
         <span className={`px-1.5 py-0.5 text-[10px] rounded ${statusPillClass(row.woStatus)} uppercase font-semibold`}>
           {prettyStatus(row.woStatus)}
         </span>

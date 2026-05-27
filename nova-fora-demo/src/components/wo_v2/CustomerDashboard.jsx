@@ -18,7 +18,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Truck, Loader2, AlertTriangle, RefreshCw, DollarSign,
-  CalendarCheck, Check, Wrench, ChevronRight,
+  CalendarCheck, Check, Wrench, ChevronRight, ChevronDown, ArrowUp, ArrowDown, ChevronsUpDown,
 } from 'lucide-react';
 import {
   workOrders as woApi,
@@ -78,6 +78,19 @@ export default function CustomerDashboard({ user }) {
   // Default to "All vans" so the DSP sees the full fleet at a glance —
   // matches the SW dashboard which shows everything until you pick a chip.
   const [statusFilter, setStatusFilter] = useState('all');
+
+  // Column sort: { key: 'van' | 'vendor' | 'status', dir: 'asc' | 'desc' } or null.
+  // null = natural order from the server (created_at desc). Clicking a
+  // header cycles null → asc → desc → null so the customer can always
+  // get back to default by clicking the same column twice.
+  const [sortBy, setSortBy] = useState(null);
+  const cycleSort = (key) => {
+    setSortBy((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: 'asc' };
+      if (prev.dir === 'asc') return { key, dir: 'desc' };
+      return null;
+    });
+  };
   // Modal state for the customer-side approval flows. Each carries a
   // wo id; null = closed. The detail modal already has its own state.
   const [costModalWoId, setCostModalWoId] = useState(null);
@@ -132,9 +145,41 @@ export default function CustomerDashboard({ user }) {
 
   const filteredWos = useMemo(() => {
     const filter = STATUS_FILTERS.find((f) => f.id === statusFilter);
-    if (!filter) return wos;
-    return wos.filter(filter.test);
-  }, [wos, statusFilter]);
+    const base = (!filter ? wos : wos.filter(filter.test));
+    if (!sortBy) return base;
+    // Copy before sort — never mutate `wos` in place because React would
+    // miss the re-render trigger on a same-reference array.
+    const out = [...base];
+    const cmp = (a, b) => {
+      let av; let bv;
+      if (sortBy.key === 'van') {
+        // Van fleet id is what the customer sees on the row (e.g. "Van 51");
+        // numeric sort so "Van 10" doesn't come before "Van 2".
+        av = String(a.vehicleFleetId || a.vehicleIdStr || a.vehicleId || '');
+        bv = String(b.vehicleFleetId || b.vehicleIdStr || b.vehicleId || '');
+        return av.localeCompare(bv, undefined, { numeric: true, sensitivity: 'base' });
+      }
+      if (sortBy.key === 'vendor') {
+        av = (a.workshopName || '').toLowerCase();
+        bv = (b.workshopName || '').toLowerCase();
+        return av.localeCompare(bv);
+      }
+      if (sortBy.key === 'status') {
+        // Sort by the SAME derived status key the StatusPill renders so
+        // the order matches what's on screen. We sort by the position of
+        // each key in the canonical flow so "Pending" comes before
+        // "In Progress" before "Completed" (instead of alphabetical).
+        const order = STATUS_OPTIONS.map((o) => o.key);
+        const ai = order.indexOf(deriveStatusKey(a));
+        const bi = order.indexOf(deriveStatusKey(b));
+        return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+      }
+      return 0;
+    };
+    out.sort(cmp);
+    if (sortBy.dir === 'desc') out.reverse();
+    return out;
+  }, [wos, statusFilter, sortBy]);
 
   const openWo = openWoId
     ? wos.find((w) => w.id === openWoId || w.workOrderId === openWoId)
@@ -252,9 +297,9 @@ export default function CustomerDashboard({ user }) {
       {/* ── WO table ───────────────────────────────── */}
       <div className="rounded-lg border border-navy-700 overflow-hidden bg-navy-900">
         <div className="grid grid-cols-12 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-text-muted border-b border-navy-700">
-          <div className="col-span-3">Van</div>
-          <div className="col-span-2">Vendor</div>
-          <div className="col-span-2">Status</div>
+          <SortHeader className="col-span-3" label="Van"    sortKey="van"    sortBy={sortBy} onClick={cycleSort} />
+          <SortHeader className="col-span-2" label="Vendor" sortKey="vendor" sortBy={sortBy} onClick={cycleSort} />
+          <SortHeader className="col-span-2" label="Status" sortKey="status" sortBy={sortBy} onClick={cycleSort} />
           <div className="col-span-4 text-right">Actions</div>
           <div className="col-span-1 text-right" />
         </div>
@@ -361,6 +406,34 @@ function KpiTile({ label, value, icon: Icon, color, bg, border, loading, active,
   );
 }
 
+// Clickable column header for the WO table. Cycles unsorted → asc →
+// desc → unsorted on each click. Arrow indicator shows the current
+// direction; inactive columns get a muted dual-arrow icon so the
+// affordance is discoverable.
+function SortHeader({ label, sortKey, sortBy, onClick, className = '' }) {
+  const active = sortBy?.key === sortKey;
+  const dir = active ? sortBy.dir : null;
+  const Arrow = dir === 'asc' ? ArrowUp : dir === 'desc' ? ArrowDown : ChevronsUpDown;
+  return (
+    <button
+      type="button"
+      onClick={() => onClick(sortKey)}
+      className={`flex items-center gap-1 text-left ${active ? 'text-text-strong' : 'text-text-muted'} hover:text-text-strong cursor-pointer ${className}`}
+      title={
+        !active
+          ? `Sort by ${label}`
+          : dir === 'asc'
+            ? `Sort by ${label} (descending)`
+            : `Clear sort by ${label}`
+      }
+    >
+      <span>{label}</span>
+      <Arrow className={`w-3 h-3 shrink-0 ${active ? 'opacity-100' : 'opacity-50'}`} />
+    </button>
+  );
+}
+
+
 function WoRow({ wo, onOpen, onOpenRo, onApproveCost, onApproveDefects }) {
   const ro = primaryRo(wo);
   const showConfirm = ro && ro.pickupType && !ro.scheduledStartAt;
@@ -380,13 +453,66 @@ function WoRow({ wo, onOpen, onOpenRo, onApproveCost, onApproveDefects }) {
   // Wrap click handlers so clicking a button doesn't open the detail.
   const stop = (fn) => (e) => { e.stopPropagation(); e.preventDefault(); fn && fn(); };
 
+  // Expandable defect peek — same pattern the SW dashboard uses. Lazy-fetch
+  // detail on first expand so the customer doesn't pay for defects they
+  // never look at, then cache so re-toggling is instant.
+  const [expanded, setExpanded] = useState(false);
+  const [defects, setDefects] = useState(null);
+  const [loadingDefects, setLoadingDefects] = useState(false);
+  const toggleExpand = async () => {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && defects == null) {
+      setLoadingDefects(true);
+      try {
+        const detail = await woApi.get(wo.id);
+        setDefects(detail.defects || []);
+      } catch {
+        setDefects([]);
+      } finally {
+        setLoadingDefects(false);
+      }
+    }
+  };
+
+  // Outer element is a div (not button) so the inner expand chevron + RO#
+  // link + action chips can be real buttons without nested-button HTML.
+  // Keyboard a11y is preserved via role + tabIndex + Enter/Space handler.
   return (
-    <button
-      type="button"
+    <>
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onOpen}
-      className={`w-full grid grid-cols-12 px-4 py-3 items-center border-b border-navy-800 hover:bg-navy-800/40 transition-colors text-left ${borderClass}`}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen && onOpen();
+        }
+      }}
+      className={`w-full grid grid-cols-12 px-4 py-3 items-center border-b border-navy-800 hover:bg-navy-800/40 transition-colors text-left cursor-pointer ${borderClass}`}
     >
-      <div className="col-span-3">
+      <div className="col-span-3 flex items-start gap-2">
+        {/* Expand chevron — toggles the defect peek below the row.
+            stopPropagation so it doesn't also trigger the row-click that
+            opens the van detail modal. */}
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleExpand(); }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.stopPropagation();
+              e.preventDefault();
+              toggleExpand();
+            }
+          }}
+          className="mt-0.5 text-text-muted hover:text-text-strong shrink-0 cursor-pointer"
+          title={expanded ? 'Hide defects' : 'Show defects'}
+        >
+          {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+        </span>
+        <div className="flex-1 min-w-0">
         <div className="text-sm font-medium text-text-strong">
           Van {wo.vehicleFleetId || wo.vehicleIdStr || wo.vehicleId}
         </div>
@@ -408,6 +534,7 @@ function WoRow({ wo, onOpen, onOpenRo, onApproveCost, onApproveDefects }) {
             </button>
           ) : null;
         })()}
+        </div>
       </div>
       <div className="col-span-2 text-sm text-text-strong">
         {wo.workshopName || '—'}
@@ -452,7 +579,67 @@ function WoRow({ wo, onOpen, onOpenRo, onApproveCost, onApproveDefects }) {
       <div className="col-span-1 flex items-center justify-end text-text-muted">
         <ChevronRight className="w-4 h-4" />
       </div>
-    </button>
+    </div>
+
+    {/* Inline defect peek — shown only when the chevron is toggled.
+        Lives in the same panel as the row via the Fragment wrapper.
+        Read-only summary; clicking the Approve cost / Approve defects
+        chips at the row level is still how the DSP acts on each defect. */}
+    {expanded && (
+      <div className="px-4 py-3 border-b border-navy-800 bg-navy-900/30">
+        {loadingDefects ? (
+          <div className="text-xs text-text-muted flex items-center gap-2">
+            <Loader2 className="w-3 h-3 animate-spin" /> Loading defects…
+          </div>
+        ) : !defects || defects.length === 0 ? (
+          <div className="text-xs text-text-muted">No defects on this work order.</div>
+        ) : (
+          <ul className="space-y-1">
+            {defects.map((d) => (
+              <li key={d.id} className="text-xs flex items-center gap-2 flex-wrap">
+                <span className="text-text-strong font-medium">
+                  {(d.part || '').replace(/_/g, ' ')}
+                  {d.defectType ? ` — ${d.defectType.replace(/_/g, ' ')}` : ''}
+                </span>
+                {d.position && (
+                  <span className="text-text-muted">({d.position.replace(/_/g, ' ')})</span>
+                )}
+                {d.billingType && (
+                  <span className={`px-1.5 py-0.5 rounded text-[9px] uppercase font-semibold ${
+                    d.billingType === 'amr'
+                      ? 'bg-accent-purple/15 text-accent-purple'
+                      : 'bg-accent-blue/15 text-accent-blue'
+                  }`}>
+                    {d.billingType}
+                  </span>
+                )}
+                {d.estimatedCost != null && (
+                  <span className="text-text-muted">
+                    est ${Number(d.estimatedCost).toLocaleString()}
+                  </span>
+                )}
+                {d.costDecision === 'approved' && (
+                  <span className="px-1.5 py-0.5 rounded bg-accent-green/15 text-accent-green text-[9px] uppercase font-semibold">
+                    ✓ approved
+                  </span>
+                )}
+                {d.costDecision === 'rejected' && (
+                  <span className="px-1.5 py-0.5 rounded bg-accent-red/15 text-accent-red text-[9px] uppercase font-semibold">
+                    rejected
+                  </span>
+                )}
+                {d.estimatedCost != null && !d.costDecision && (
+                  <span className="px-1.5 py-0.5 rounded bg-accent-gold/15 text-accent-gold text-[9px] uppercase font-semibold">
+                    awaiting your approval
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    )}
+    </>
   );
 }
 

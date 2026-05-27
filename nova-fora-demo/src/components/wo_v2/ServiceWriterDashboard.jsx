@@ -23,9 +23,9 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   ClipboardList, Loader2, AlertTriangle, RefreshCw, Hourglass, Briefcase,
-  PackageCheck, Truck, PlayCircle, CheckCircle2, XCircle, Check, X,
+  PackageCheck, Truck, PlayCircle, CheckCircle2, XCircle, Check, CheckCheck, X,
   Flame, ChevronRight, ChevronDown, MapPin, KeyRound, User as UserIcon, Calendar,
-  ArrowRight, MoreVertical,
+  ArrowRight, MoreVertical, Eye,
 } from 'lucide-react';
 import {
   workOrders as woApi,
@@ -99,6 +99,12 @@ export default function ServiceWriterDashboard({ user }) {
   const [customerFilter, setCustomerFilter] = useState('');     // '' = all
   const [priorityFilter, setPriorityFilter] = useState('all');  // 'all' | 'rush'
   const [sortBy, setSortBy] = useState('needs_action');         // see SORTS
+  // Hide terminal ROs (completed / declined / cancelled) by default so the
+  // table only shows active work — matches the prototype's convention and
+  // VanDetailView's collapsed Service History (Jorge#9). Toggling the chip
+  // filter to 'Completed' or 'Declined' OR ticking the toggle below makes
+  // them appear.
+  const [showTerminal, setShowTerminal] = useState(false);
 
   // ── Workshop bootstrap ─────────────────────────────
   useEffect(() => {
@@ -211,6 +217,15 @@ export default function ServiceWriterDashboard({ user }) {
   const tableRows = useMemo(() => {
     let rows = wos;
 
+    // Hide terminal ROs unless the user explicitly opted into them OR
+    // the chip filter itself asks for a terminal bucket (Completed /
+    // Declined). Cancelled has no dedicated chip yet, so the toggle is
+    // the only way to surface those.
+    const TERMINAL = ['completed', 'declined', 'cancelled'];
+    if (!showTerminal && chipFilter !== 'completed' && chipFilter !== 'declined') {
+      rows = rows.filter((w) => !TERMINAL.includes(w.status));
+    }
+
     // Chip status filter (one of the 8 top chips, or null = no filter)
     if (chipFilter) {
       const chip = CHIPS.find((c) => c.id === chipFilter);
@@ -284,7 +299,15 @@ export default function ServiceWriterDashboard({ user }) {
     }
 
     return rows;
-  }, [wos, chipFilter, customerFilter, priorityFilter, search, sortBy]);
+  }, [wos, chipFilter, customerFilter, priorityFilter, search, sortBy, showTerminal]);
+
+  // How many terminal rows would be hidden? (For the toggle's badge.)
+  const hiddenTerminalCount = useMemo(() => {
+    if (showTerminal) return 0;
+    return wos.filter((w) =>
+      ['completed', 'declined', 'cancelled'].includes(w.status),
+    ).length;
+  }, [wos, showTerminal]);
 
   // ── Action handlers ────────────────────────────────
   const onAccept = useCallback(async (wo) => {
@@ -492,6 +515,27 @@ export default function ServiceWriterDashboard({ user }) {
             </select>
           </label>
         </div>
+
+        {/* Terminal-rows toggle. Hidden by default (matches the prototype's
+            convention of collapsing completed/cancelled work) — toggle on
+            to see them. The chip 'Completed' / 'Declined' filters already
+            surface them on demand even when this is off. */}
+        <label className="mt-3 inline-flex items-center gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={showTerminal}
+            onChange={(e) => setShowTerminal(e.target.checked)}
+            className="w-3.5 h-3.5 rounded accent-accent-blue cursor-pointer"
+          />
+          <span className="text-xs text-text-muted">
+            Show completed / cancelled
+            {hiddenTerminalCount > 0 && !showTerminal && (
+              <span className="ml-1 px-1.5 py-0.5 rounded bg-navy-800 border border-navy-700 text-[10px] text-text-strong">
+                {hiddenTerminalCount} hidden
+              </span>
+            )}
+          </span>
+        </label>
       </div>
 
       {/* Active filter banner */}
@@ -557,6 +601,9 @@ export default function ServiceWriterDashboard({ user }) {
             wo={wo}
             onOpen={() => setOpenVehicleId(wo.vehicleId)}
             onOpenRo={(w) => setOpenRoWoId((w || wo).id)}
+            onAccept={onAccept}
+            onStart={onStart}
+            onCancel={onCancel}
             onDecline={(w) => setActionModal({ kind: 'decline', wo: w || wo })}
             onComplete={(w) => setActionModal({ kind: 'complete', wo: w || wo })}
             onSchedule={(w) => setActionModal({ kind: 'schedule', wo: w || wo })}
@@ -735,7 +782,12 @@ function IncomingRequestsPanel({ wos, onReview }) {
 // ─────────────────────────────────────────────────────
 // Main table row
 // ─────────────────────────────────────────────────────
-function SwWoRow({ wo, onOpen, onOpenRo, onDecline, onComplete, onSchedule, onAfter }) {
+function SwWoRow({
+  wo, onOpen, onOpenRo,
+  onAccept, onStart, onCancel,
+  onDecline, onComplete, onSchedule,
+  onAfter,
+}) {
   const r = primaryRo(wo);
   // Jorge#3: expandable defects per row. Lazy-fetch the WO detail
   // the first time the row is expanded, then cache it in state so
@@ -837,30 +889,36 @@ function SwWoRow({ wo, onOpen, onOpenRo, onDecline, onComplete, onSchedule, onAf
           'Unassigned'
         )}
       </div>
-      <div className="col-span-2 flex items-center justify-end gap-1">
-        {/* Jorge#10: when status is Ready to Schedule, SW gets a
-            discrete button to open the ScheduleModal. Setting the
-            status no longer auto-opens it. */}
-        {wo.status === 'accepted' && r && !r.scheduledStartAt
-          && !r.pickupType
-          && !(r.partsOrderedAt && !r.partsReceivedAt)
-          && !(r.submittedToFmcAt && !r.fmcApprovedAt) && (
-          <button
-            type="button"
-            onClick={() => onSchedule(wo)}
-            title="Schedule pickup — pick date / time / bucket"
-            className="px-2 py-1 rounded-md text-[10px] font-semibold bg-accent-green/15 text-accent-green hover:bg-accent-green/25 flex items-center gap-1"
-          >
-            Schedule
-          </button>
-        )}
+      <div
+        className="col-span-2 flex items-center justify-end gap-1"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Status-aware quick-action icons (matches the prototype's
+            ACTIONS column: one-tap shortcuts for the most common
+            transition per status). Falls back to the chevron-only row
+            when there's nothing meaningful to surface (terminal states).
+            Each icon stops propagation so it doesn't also trigger the
+            row-click that opens Van detail. */}
+        <RowActions
+          wo={wo}
+          r={r}
+          onAccept={onAccept}
+          onDecline={onDecline}
+          onSchedule={onSchedule}
+          onCancel={onCancel}
+          onStart={onStart}
+          onComplete={onComplete}
+        />
+        {/* Always-visible "Open Van" button — Truck icon is more
+            discoverable than the old bare chevron. */}
         <button
           type="button"
           onClick={onOpen}
           title="Open van detail"
-          className="p-1.5 rounded-md text-text-muted hover:text-text-strong hover:bg-navy-800"
+          className="p-1.5 rounded-md text-text-muted hover:text-accent-blue hover:bg-accent-blue/10 flex items-center gap-0.5"
         >
-          <ChevronRight className="w-3.5 h-3.5" />
+          <Truck className="w-3.5 h-3.5" />
+          <ChevronRight className="w-3 h-3" />
         </button>
       </div>
     </div>
@@ -922,13 +980,98 @@ function SwWoRow({ wo, onOpen, onOpenRo, onDecline, onComplete, onSchedule, onAf
   );
 }
 
-function IconAction({ icon: Icon, color, title, onClick }) {
+// ─────────────────────────────────────────────────────
+// RowActions — status-aware icon buttons for the ACTIONS column.
+// Mirrors the prototype's per-status shortcuts so the SW can do the
+// most-common transition in a single tap without having to open the
+// RO modal. Logic for "what's the meaningful next action" mirrors
+// `deriveStatusKey()` in StatusChanger.jsx — keep them in sync.
+// ─────────────────────────────────────────────────────
+function RowActions({
+  wo, r,
+  onAccept, onDecline, onSchedule, onCancel, onStart, onComplete,
+}) {
+  if (!wo) return null;
+
+  // pending_acceptance → Accept + Decline (one tap to triage incoming requests)
+  if (wo.status === 'pending_acceptance') {
+    return (
+      <>
+        <IconAction icon={Check} color="green" title="Accept work order" label="Accept" onClick={() => onAccept(wo)} />
+        <IconAction icon={X}     color="red"   title="Decline work order" label="Decline" onClick={() => onDecline(wo)} />
+      </>
+    );
+  }
+
+  // in_progress → Complete (the only forward action; Cancel still available
+  // for the rare case the SW needs to abort mid-repair).
+  if (wo.status === 'in_progress') {
+    return (
+      <>
+        <IconAction icon={CheckCheck} color="green" title="Mark work complete" label="Complete" onClick={() => onComplete(wo)} />
+        <IconAction icon={X}          color="red"   title="Cancel work order"   label="Cancel"   onClick={() => onCancel(wo)} />
+      </>
+    );
+  }
+
+  // accepted — derived sub-state decides what's next.
+  if (wo.status === 'accepted' && r) {
+    // Ready to schedule: no parts/FMC blockers AND no pickup yet.
+    const readyToSchedule = !r.scheduledStartAt && !r.pickupType
+      && !(r.partsOrderedAt && !r.partsReceivedAt)
+      && !(r.submittedToFmcAt && !r.fmcApprovedAt);
+    if (readyToSchedule) {
+      return (
+        <>
+          <IconAction icon={Calendar} color="green" title="Schedule pickup" label="Schedule" onClick={() => onSchedule(wo)} />
+          <IconAction icon={X}        color="red"   title="Cancel"           label="Cancel"   onClick={() => onCancel(wo)} />
+        </>
+      );
+    }
+    // Already scheduled but work hasn't started → Start.
+    if (r.scheduledStartAt && !r.workStartedAt) {
+      return (
+        <>
+          <IconAction icon={PlayCircle} color="green" title="Start work — tech began" label="Start" onClick={() => onStart(wo)} />
+          <IconAction icon={X}          color="red"   title="Cancel"                   label="Cancel" onClick={() => onCancel(wo)} />
+        </>
+      );
+    }
+    // Pending parts / pending FMC are waiting states — the unblock buttons
+    // (parts_received, fmc_approved) live inside the RoModal sync panel
+    // because they need confirmation. Keep the row clean.
+  }
+
+  // Terminal states (completed / declined / cancelled): no actions.
+  return null;
+}
+
+
+function IconAction({ icon: Icon, color, title, onClick, label }) {
   const colorClass = {
     green: 'bg-accent-green/15 text-accent-green hover:bg-accent-green/25',
     red:   'bg-accent-red/15 text-accent-red hover:bg-accent-red/25',
     blue:  'bg-accent-blue/15 text-accent-blue hover:bg-accent-blue/25',
     gray:  'text-text-muted hover:text-text-strong hover:bg-navy-800',
   }[color] || '';
+  // When `label` is provided, render the icon + a short text label so the
+  // action is self-explanatory in the dashboard column (the SW shouldn't
+  // need to hover for the tooltip to know what each button does). The
+  // label hides on very narrow viewports (< sm) so phones still fit the
+  // chevron + truck on the row; tap targets stay the same size either way.
+  if (label) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        title={title}
+        className={`px-2 py-1 rounded-md inline-flex items-center gap-1 text-[11px] font-semibold ${colorClass}`}
+      >
+        <Icon className="w-3.5 h-3.5" />
+        <span className="hidden sm:inline">{label}</span>
+      </button>
+    );
+  }
   return (
     <button
       type="button"
@@ -997,11 +1140,30 @@ function vanLabel(wo) {
   return wo?.vehicleFleetId || wo?.vehicleIdStr || wo?.vehicleId || '—';
 }
 
-// Jorge#8: "2019 Mercedes-Benz Sprinter 4x2 2500 3dr 170 in. WB High
-// Roof Cargo Van (3.0L V6)" → just the make. Keep year if compact.
+// Jorge#8 (round 2): "2019 Mercedes-Benz Sprinter 4x2 2500 3dr 170 in.
+// WB High Roof Cargo Van (3.0L V6)" → "2019 Mercedes Sprinter". We
+// want the year + a short make + just the FIRST word of model — that's
+// the actual model name (Sprinter / Transit / ProMaster); everything
+// after is marketing trim noise from the VIN decoder that wraps the
+// row to 3 lines and was the complaint.
+const VEHICLE_LABEL_MAX_CHARS = 28;
 function vehicleShortLabel(wo) {
-  // Make alone is short enough and still useful (Ford / Sprinter / Ram).
-  return [wo?.vehicleYear, wo?.vehicleMake].filter(Boolean).join(' ');
+  const year = wo?.vehicleYear ? String(wo.vehicleYear) : '';
+  // Make: if it's two-part ("Mercedes-Benz"), keep just the first part.
+  const makeRaw = (wo?.vehicleMake || '').trim();
+  const make = makeRaw.split(/[-\s/]+/)[0] || '';
+  // Model: drop everything after the first whitespace OR after the first
+  // digit-block ("Transit 150 …" → "Transit"; "Sprinter 4x2 2500…" →
+  // "Sprinter"). Also strip parenthesized engine specs just in case.
+  const modelRaw = (wo?.vehicleModel || '').replace(/\([^)]*\)/g, '').trim();
+  const modelMatch = modelRaw.match(/^[A-Za-z]+/);
+  const model = modelMatch ? modelMatch[0] : '';
+  const label = [year, make, model].filter(Boolean).join(' ');
+  // Hard cap as last-line defence against rogue make/model strings.
+  if (label.length > VEHICLE_LABEL_MAX_CHARS) {
+    return label.slice(0, VEHICLE_LABEL_MAX_CHARS - 1) + '…';
+  }
+  return label;
 }
 
 // Jorge#2: WO list/cards primary label is the vendor RO# (RO-44936)
