@@ -1,16 +1,20 @@
 /**
- * ScheduleModal — date + time picker that the SW uses to pin a WO's
- * scheduled_at slot when transitioning from "Pending Parts" → "Ready to
- * Schedule" (per the spec invariant: ready_to_schedule MUST carry a
- * scheduled_at, which then feeds the DSP and Tech "Scheduled Repairs"
- * home cards via the /work-orders?scheduled_within_hours=36 query).
+ * ScheduleModal — SW proposes a pickup slot AND triggers the DSP's
+ * "Confirm Pickup" prompt in one action. Two backend calls chained:
  *
- * Body sent: { scheduledAt, repairBucket }
- *   - scheduledAt: ISO datetime (local → toISOString())
- *   - repairBucket: 'overnight' | 'shop' (drives the DSP card grouping)
+ *   1. POST /work-orders/{id}/schedule
+ *        → pins wo.scheduled_at + wo.repair_bucket (SW's proposal)
+ *   2. POST /work-orders/{id}/pickup-request
+ *        → sets ro.pickup_type + ro.pickup_requested_at on every primary
+ *          RO on the vehicle, which triggers the DSP's customer-counter
+ *          "Confirm Pickup" card. DSP fills location/keys/etc and confirms
+ *          (POST /confirm-pickup), which sets ro.scheduled_start_at and
+ *          flips the WO to in_progress.
  *
- * Setting scheduled_at also clears any prior dsp_response so the DSP
- * re-confirms — handled server-side.
+ * Why both: per John's note, the SW shouldn't unilaterally finalize a
+ * pickup — the DSP has to confirm the slot before it's the real schedule.
+ * Chaining keeps the SW flow one click while preserving the
+ * propose → confirm handshake on the data side.
  */
 import { useState } from 'react';
 import { X, Calendar, Loader2, AlertCircle } from 'lucide-react';
@@ -44,9 +48,25 @@ export default function ScheduleModal({ wo, onSuccess, onClose }) {
       if (Number.isNaN(dt.getTime())) {
         throw new Error('Invalid date/time');
       }
+      // 1. Pin SW's proposed slot + bucket
       await woApi.schedule(wo.id, {
         scheduledAt: dt.toISOString(),
         repairBucket: bucket,
+      });
+      // 2. Send pickup request → triggers the DSP's "Confirm Pickup"
+      //    counter. pickup_type is derived from the chosen bucket:
+      //    overnight → vendor sends a truck overnight (rush);
+      //    shop      → DSP drops the van off at the shop in business hours.
+      //    A short pickup_duration_text carries the SW's proposed slot
+      //    so the DSP sees it in their confirm modal without needing a
+      //    separate proposed_start_at column.
+      const niceDt = dt.toLocaleString(undefined, {
+        weekday: 'short', month: 'short', day: 'numeric',
+        hour: 'numeric', minute: '2-digit',
+      });
+      await woApi.pickupRequest(wo.id, {
+        pickupType: bucket === 'overnight' ? 'overnight_rush' : 'in_shop',
+        pickupDurationText: `Proposed: ${niceDt} (${bucket === 'overnight' ? 'overnight rush' : 'in-shop'})`,
       });
       onSuccess && onSuccess();
     } catch (e) {
@@ -139,9 +159,10 @@ export default function ScheduleModal({ wo, onSuccess, onClose }) {
           </div>
 
           <div className="text-[11px] text-text-muted leading-relaxed">
-            The DSP and assigned technician will see this slot on their
-            "Scheduled Repairs" home card. The DSP can confirm or flag a
-            conflict; rescheduling resets that response.
+            <strong className="text-text-strong">This is a proposal, not a final schedule.</strong>{' '}
+            The DSP receives a "Confirm Pickup" prompt with your proposed
+            slot and pickup type. Once they confirm with the final time +
+            key/location details, the work order flips to <em>in progress</em>.
           </div>
 
           {err && (

@@ -45,11 +45,13 @@ export default function VanDetailModal({ wo, user, mode = 'customer', onClose, o
                 </span>
               )}
             </div>
+            {/* Customer-facing subtitle — only year/make/model + plate.
+                Internal VAN-XXXX + WO-NNNNN ids are noise here (the
+                customer recognizes the van by fleet number, already in
+                the header, and by RO# which lives on the RO card). */}
             <p className="text-xs text-text-muted mt-1">
               {[wo.vehicleYear, wo.vehicleMake, wo.vehicleModel].filter(Boolean).join(' ')}
               {wo.vehiclePlate ? ` · Plate ${wo.vehiclePlate}` : ''}
-              {wo.vehicleIdStr ? ` · ${wo.vehicleIdStr}` : ''}
-              {wo.id ? ` · ${wo.id}` : ''}
             </p>
             <p className="text-xs text-text-muted">
               {wo.workshopName ? `at ${wo.workshopName}` : ''}
@@ -98,19 +100,31 @@ function CustomerActions({ wo, onAction }) {
 // Confirm Pickup card — the 3-field form from the demo
 // ─────────────────────────────────────────────────────
 function ConfirmPickupCard({ wo, ro, onAction }) {
-  // Default to tomorrow morning 9:00 local time — that's the most common
-  // pickup slot per the demo ("Available after 9am").
-  const tomorrowAt9 = (() => {
+  // Default to the SW's proposed slot if they set one via the ScheduleModal
+  // (chained schedule + pickup-request). Otherwise fall back to tomorrow
+  // 9 AM local — the most common pickup slot per the demo.
+  const initialScheduledAt = (() => {
+    if (wo?.scheduledAt) {
+      // Convert the wire ISO ("...Z") back to a local-tz datetime-local
+      // string so the input pre-fills with the SW's proposal in the DSP's
+      // own timezone (datetime-local has no tz suffix).
+      const d = new Date(wo.scheduledAt);
+      if (!Number.isNaN(d.getTime())) {
+        const tzOffset = d.getTimezoneOffset() * 60_000;
+        return new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
+      }
+    }
     const d = new Date();
     d.setDate(d.getDate() + 1);
     d.setHours(9, 0, 0, 0);
-    return d.toISOString().slice(0, 16); // datetime-local format
+    const tzOffset = d.getTimezoneOffset() * 60_000;
+    return new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
   })();
 
   const [pickupLocation, setPickupLocation] = useState('');
   const [keyLocation, setKeyLocation] = useState('');
   const [pickupNotes, setPickupNotes] = useState('');
-  const [scheduledStartAt, setScheduledStartAt] = useState(tomorrowAt9);
+  const [scheduledStartAt, setScheduledStartAt] = useState(initialScheduledAt);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
