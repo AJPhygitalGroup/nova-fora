@@ -24,11 +24,11 @@ endpoints together so future tile additions land in one obvious place.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, func, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -826,6 +826,34 @@ class DailyDefectsPoint(BaseModel):
     repaired: int
 
 
+def _daily_window(days: int, tz_offset_minutes: int) -> tuple[date, datetime, str]:
+    """Translate (days, JS-style tz offset) into (today_local, start_utc,
+    sql_local_date_fragment).
+
+    JS's `new Date().getTimezoneOffset()` returns minutes WEST of UTC: EDT
+    returns 240 (UTC-4), CEST returns -120 (UTC+2). We invert that to a
+    Python timezone so 'today_local' reflects what the inspector sees on
+    their wall clock, not whatever UTC is at the moment they hit /home.
+
+    The SQL fragment shifts the stored UTC `created_at` / `completed_at`
+    column by the same offset before extracting date(), so the GROUP BY
+    buckets match. Embedding the int directly is safe because FastAPI
+    bounds tz_offset_minutes via Query(ge=-720, le=720).
+    """
+    user_tz = timezone(timedelta(minutes=-tz_offset_minutes))
+    today_local = datetime.now(user_tz).date()
+    start_local = datetime.combine(
+        today_local - timedelta(days=days - 1),
+        datetime.min.time(),
+        tzinfo=user_tz,
+    )
+    start_utc = start_local.astimezone(timezone.utc)
+    # Postgres can't parametrize an INTERVAL literal directly; use the
+    # validated int. Negative offsets are fine (CEST → +120 seconds shift).
+    shift_seconds = -tz_offset_minutes * 60
+    return today_local, start_utc, shift_seconds
+
+
 @router.get(
     "/vendor-home/{vendor_workshop_id}/daily-defects",
     response_model=list[DailyDefectsPoint],
@@ -835,6 +863,10 @@ async def daily_defects(
     vendor_workshop_id: int = Path(..., ge=1),
     days: int = Query(default=7, ge=1, le=90),
     dsp_id: int | None = Query(default=None),
+    tz_offset_minutes: int = Query(
+        default=0, ge=-720, le=720,
+        description="JS-style getTimezoneOffset() in minutes. EDT=240, EST=300.",
+    ),
     current: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[DailyDefectsPoint]:
@@ -842,6 +874,8 @@ async def daily_defects(
     Repaired = `work_orders` of status='completed' per day (proxy for
     "defects closed" — iter-2 will switch to DR.status='resolved' once
     that signal stabilises).
+
+    Bucketed by USER-LOCAL date — see _daily_window().
     """
     if current.role != UserRole.SITE_ADMIN:
         allowed = await _vendor_workshop_ids_for(session, current)
@@ -851,54 +885,55 @@ async def daily_defects(
     scoped = await _dsp_ids_for_workshop(session, vendor_workshop_id)
     if dsp_id is not None:
         scoped = [dsp_id] if dsp_id in scoped else []
+
+    today_local, start_utc, shift_secs = _daily_window(days, tz_offset_minutes)
+
     if not scoped:
         # Return empty buckets so the chart renders flat zeros
         # instead of an empty axis.
-        today = datetime.now(timezone.utc).date()
         return [
-            DailyDefectsPoint(date=(today - timedelta(days=days - 1 - i)).isoformat(), approved=0, repaired=0)
+            DailyDefectsPoint(date=(today_local - timedelta(days=days - 1 - i)).isoformat(), approved=0, repaired=0)
             for i in range(days)
         ]
 
-    today = datetime.now(timezone.utc).date()
-    start_dt = datetime.combine(today - timedelta(days=days - 1), datetime.min.time(), tzinfo=timezone.utc)
+    dr_local_date_expr = func.date(
+        DefectReview.created_at + text(f"interval '{shift_secs} seconds'")
+    )
 
     # Approved per day (defect_reviews JOIN defects JOIN vehicles for tenancy)
     approved_rows = (
         await session.execute(
-            select(
-                func.date(DefectReview.created_at).label("d"),
-                func.count(DefectReview.id),
-            )
+            select(dr_local_date_expr.label("d"), func.count(DefectReview.id))
             .join(Defect, Defect.id == DefectReview.defect_id)
             .join(Vehicle, Vehicle.id == Defect.vehicle_id)
             .where(Vehicle.dsp_id.in_(scoped))
-            .where(DefectReview.created_at >= start_dt)
+            .where(DefectReview.created_at >= start_utc)
             .where(DefectReview.decision == "approved")
-            .group_by(func.date(DefectReview.created_at))
+            .group_by(dr_local_date_expr)
         )
     ).all()
     approved_map = {str(d): n for d, n in approved_rows}
 
+    wo_local_date_expr = func.date(
+        WorkOrder.completed_at + text(f"interval '{shift_secs} seconds'")
+    )
+
     # Repaired per day (WOs completed in the workshop, scoped to served DSPs)
     repaired_rows = (
         await session.execute(
-            select(
-                func.date(WorkOrder.completed_at).label("d"),
-                func.count(WorkOrder.id),
-            )
+            select(wo_local_date_expr.label("d"), func.count(WorkOrder.id))
             .where(WorkOrder.vendor_workshop_id == vendor_workshop_id)
             .where(WorkOrder.dsp_id.in_(scoped))
             .where(WorkOrder.status == WorkOrderStatus.COMPLETED.value)
-            .where(WorkOrder.completed_at >= start_dt)
-            .group_by(func.date(WorkOrder.completed_at))
+            .where(WorkOrder.completed_at >= start_utc)
+            .group_by(wo_local_date_expr)
         )
     ).all()
     repaired_map = {str(d): n for d, n in repaired_rows}
 
     out: list[DailyDefectsPoint] = []
     for i in range(days):
-        d = today - timedelta(days=days - 1 - i)
+        d = today_local - timedelta(days=days - 1 - i)
         key = d.isoformat()
         out.append(DailyDefectsPoint(
             date=key,
@@ -1014,6 +1049,10 @@ async def open_defects_breakdown(
 async def dsp_daily_defects(
     dsp_id: int = Path(..., ge=1),
     days: int = Query(default=7, ge=1, le=90),
+    tz_offset_minutes: int = Query(
+        default=0, ge=-720, le=720,
+        description="JS-style getTimezoneOffset() in minutes. EDT=240, EST=300.",
+    ),
     current: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[DailyDefectsPoint]:
@@ -1021,51 +1060,55 @@ async def dsp_daily_defects(
     Approved = DefectReview rows of decision='approved' on vehicles
     owned by this DSP. Repaired = WOs of status='completed' assigned
     to this DSP.
+
+    Bucketed by USER-LOCAL date (derived from tz_offset_minutes the
+    client passes in). Previously bucketed by UTC date, which made the
+    rightmost bar fall a day behind for EDT/EST/PST users any time the
+    page was loaded after their local midnight UTC equivalent
+    (Michael's bug report 2026-05-26).
     """
     if current.role != UserRole.SITE_ADMIN:
         if current.organization_id != dsp_id:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "not your DSP")
 
-    today = datetime.now(timezone.utc).date()
-    start_dt = datetime.combine(
-        today - timedelta(days=days - 1),
-        datetime.min.time(),
-        tzinfo=timezone.utc,
+    today_local, start_utc, shift_secs = _daily_window(days, tz_offset_minutes)
+    # Postgres-side date(ts + interval 'N seconds') puts every row into
+    # the inspector's local day. Same expression on both queries so the
+    # GROUP BY buckets line up with the output keys we build below.
+    local_date_expr = func.date(
+        DefectReview.created_at + text(f"interval '{shift_secs} seconds'")
     )
 
     approved_rows = (
         await session.execute(
-            select(
-                func.date(DefectReview.created_at).label("d"),
-                func.count(DefectReview.id),
-            )
+            select(local_date_expr.label("d"), func.count(DefectReview.id))
             .join(Defect, Defect.id == DefectReview.defect_id)
             .join(Vehicle, Vehicle.id == Defect.vehicle_id)
             .where(Vehicle.dsp_id == dsp_id)
-            .where(DefectReview.created_at >= start_dt)
+            .where(DefectReview.created_at >= start_utc)
             .where(DefectReview.decision == "approved")
-            .group_by(func.date(DefectReview.created_at))
+            .group_by(local_date_expr)
         )
     ).all()
     approved_map = {str(d): n for d, n in approved_rows}
 
+    wo_local_date_expr = func.date(
+        WorkOrder.completed_at + text(f"interval '{shift_secs} seconds'")
+    )
     repaired_rows = (
         await session.execute(
-            select(
-                func.date(WorkOrder.completed_at).label("d"),
-                func.count(WorkOrder.id),
-            )
+            select(wo_local_date_expr.label("d"), func.count(WorkOrder.id))
             .where(WorkOrder.dsp_id == dsp_id)
             .where(WorkOrder.status == WorkOrderStatus.COMPLETED.value)
-            .where(WorkOrder.completed_at >= start_dt)
-            .group_by(func.date(WorkOrder.completed_at))
+            .where(WorkOrder.completed_at >= start_utc)
+            .group_by(wo_local_date_expr)
         )
     ).all()
     repaired_map = {str(d): n for d, n in repaired_rows}
 
     out: list[DailyDefectsPoint] = []
     for i in range(days):
-        d = today - timedelta(days=days - 1 - i)
+        d = today_local - timedelta(days=days - 1 - i)
         key = d.isoformat()
         out.append(DailyDefectsPoint(
             date=key,
@@ -1085,7 +1128,19 @@ async def dsp_open_defects_breakdown(
     current: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[OpenDefectsSlice]:
-    """Mirrors vendor-home open-defects but scoped to one DSP."""
+    """DSP customer Home donut — categorizes open defects as VSA vs Other.
+
+    VSA (Vehicle Safety Audit) = defects from the daily DVIC inspection
+    flow (source='inspection'). Everything else (driver_report,
+    customer_report, shop_finding, maintenance_request, other) collapses
+    into "Other".
+
+    RSI (Roadside Inspection) is intentionally NOT split out for iter-1
+    — there aren't enough RSI defects yet to make a meaningful slice
+    (Michael's note 2026-05-26). When that data accumulates, v2.1 will
+    promote it to its own bucket and add an admin UI to let customers
+    tune which defect types fall under VSA.
+    """
     if current.role != UserRole.SITE_ADMIN:
         if current.organization_id != dsp_id:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "not your DSP")
@@ -1115,26 +1170,24 @@ async def dsp_open_defects_breakdown(
         )
     ).all()
 
-    label_map = {
-        "inspection": "Inspection",
-        "maintenance_request": "Customer request",
-        "driver_report": "Driver report",
-        "customer_report": "Customer report",
-        "shop_finding": "Shop finding",
-        "other": "Other",
-    }
-
     def _key(s):
         return s.value if hasattr(s, "value") else str(s)
-    return [
-        OpenDefectsSlice(
-            key=_key(source),
-            label=label_map.get(_key(source), _key(source).replace("_", " ").title()),
-            count=int(n),
-        )
-        for source, n in rows
-        if n > 0
-    ]
+
+    # Collapse per-source counts into the two customer-facing buckets.
+    vsa_count = 0
+    other_count = 0
+    for source, n in rows:
+        if _key(source) == "inspection":
+            vsa_count += int(n)
+        else:
+            other_count += int(n)
+
+    out: list[OpenDefectsSlice] = []
+    if vsa_count > 0:
+        out.append(OpenDefectsSlice(key="vsa", label="VSA", count=vsa_count))
+    if other_count > 0:
+        out.append(OpenDefectsSlice(key="other", label="Other", count=other_count))
+    return out
 
 
 # ═════════════════════════════════════════════════════

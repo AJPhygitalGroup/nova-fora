@@ -20,6 +20,7 @@ import {
   defectReviews as defectReviewsApi,
   workOrders as workOrdersApi,
   dashboards as dashboardsApi,
+  vendorScorecard as scorecardApi,
 } from '../api/client';
 import { adaptWO } from '../api/woAdapter';
 import PendingFeedbackListModal from './feedback/PendingFeedbackListModal';
@@ -2408,7 +2409,10 @@ function StartInspectionModal({ user, onClose }) {
                     >
                       {vehicle ? (
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm font-semibold text-white truncate">{vehicle.id} <span className="text-navy-400 font-normal">— {vehicle.model}</span></div>
+                          {/* Show "Van <fleetId>" instead of the internal
+                              VAN-XXXX prefix — what the DSP actually
+                              recognizes in their own fleet. */}
+                          <div className="text-sm font-semibold text-white truncate">Van {vehicle.fleetId || vehicle.id} <span className="text-navy-400 font-normal">— {vehicle.model}</span></div>
                           <div className="text-[11px] text-navy-400 truncate">{t('startInspectionModal.vehicleOptionSubFmt', { plate: vehicle.plate, date: vehicle.lastInspection, defaultValue: `${vehicle.plate} · Last inspected ${vehicle.lastInspection}` })}</div>
                         </div>
                       ) : (
@@ -2593,20 +2597,58 @@ function StartInspectionModal({ user, onClose }) {
   );
 }
 
-// Feedback attribute catalog for repair history thumbs up/down
+// Feedback attribute catalog for repair history thumbs up/down. Wire
+// keys must match the FeedbackModal + backend (snake_case enum values
+// on the vendor_scorecard endpoint).
 const REPAIR_FEEDBACK_ATTRIBUTES = ['Turnaround Time', 'Communication', 'Professionalism', 'Work Quality', 'Price'];
+const REPAIR_FEEDBACK_ATTRIBUTE_KEYS = {
+  'Turnaround Time': 'turnaround_time',
+  'Communication': 'communication',
+  'Professionalism': 'professionalism',
+  'Work Quality': 'work_quality',
+  'Price': 'price',
+};
 
 // Compact thumbs-up / thumbs-down feedback control with attribute dropdown.
 // Used inline on each row of the Defects Repaired history list so the DSP
 // can rate the vendor's work without leaving the page.
-function RepairFeedback({ woId, feedback, onChange }) {
+//
+// Until 2026-05-27 the selection was purely local state — the picker
+// updated `feedback[woId]` in the parent component and the DSP thought
+// the rating was saved, but nothing ever POSTed to /vendor-scorecard.
+// The only working path was the standalone FeedbackModal opened from
+// "pending feedback". Now BOTH paths submit to the same endpoint.
+function RepairFeedback({ woId, feedback, onChange, onSubmitted }) {
   const { t } = useTranslation('dashboard');
   const [openDir, setOpenDir] = useState(null); // 'up' | 'down' | null
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
   const current = feedback?.[woId];
 
-  const selectAttribute = (dir, attr) => {
+  const selectAttribute = async (dir, attr) => {
+    if (busy) return;
+    // Optimistic UI update so the chip flips instantly.
     onChange({ ...feedback, [woId]: { vote: dir, attribute: attr } });
     setOpenDir(null);
+    setErr(null);
+    setBusy(true);
+    try {
+      const wireAttr = REPAIR_FEEDBACK_ATTRIBUTE_KEYS[attr] || attr;
+      const body = { workOrderId: woId, vote: dir };
+      if (dir === 'up') body.impressiveAttribute = wireAttr;
+      else body.negativeAttribute = wireAttr;
+      await scorecardApi.submit(body);
+      onSubmitted && onSubmitted();
+    } catch (e) {
+      setErr(e?.detail || e?.message || 'Failed to save rating');
+      // Roll back the optimistic state so the inspector sees the rating
+      // didn't actually persist.
+      const next = { ...feedback };
+      delete next[woId];
+      onChange(next);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const clear = (e) => {
@@ -2704,14 +2746,67 @@ function RepairFeedback({ woId, feedback, onChange }) {
 }
 
 // ============ Repair History Modal — Completed defects timeline ============
-function RepairHistoryModal({ repairedWOs, user, onClose }) {
+function RepairHistoryModal({ repairedWOs, user, onClose, onFeedbackSubmitted }) {
   const { t } = useTranslation('dashboard');
   const [expanded, setExpanded] = useState(null);
   const [search, setSearch] = useState('');
   const [feedback, setFeedback] = useState({}); // { [woId]: { vote: 'up'|'down', attribute } }
 
+  // Hydrate which WOs still NEED a rating vs which are already rated.
+  // Source: /vendor-scorecard/pending-feedback for this DSP. WOs whose
+  // id is in the pending set show the rating UI; the rest show a green
+  // "✓ Rated" indicator instead of pretending they're still actionable.
+  // Optimistic local removal on rate keeps the UI snappy without waiting
+  // for a re-fetch.
+  const [pendingWoIds, setPendingWoIds] = useState(null); // null = loading, Set when ready
+  useEffect(() => {
+    const dspIdInt = (() => {
+      const raw = user?.organizationId ?? user?.orgId;
+      if (raw == null) return null;
+      const m = String(raw).match(/(\d+)/);
+      return m ? Number(m[1]) : null;
+    })();
+    if (!dspIdInt) { setPendingWoIds(new Set()); return; }
+    let alive = true;
+    // No days filter — show every still-unrated completed WO. The tile
+    // counter uses the same call so the two stay in sync.
+    scorecardApi
+      .pending({ dspId: dspIdInt })
+      .then((res) => {
+        if (!alive) return;
+        const rows = Array.isArray(res) ? res : (res?.items || []);
+        const ids = new Set(rows.map((r) => r.workOrderIdStr || r.workOrderId));
+        setPendingWoIds(ids);
+      })
+      .catch(() => { if (alive) setPendingWoIds(new Set()); });
+    return () => { alive = false; };
+  }, [user]);
+
+  // Called after a successful rating so the row flips from "pending"
+  // → "rated" without waiting on a re-fetch, AND so the parent's tile
+  // badge counter refreshes.
+  const handleRated = (woId) => {
+    setPendingWoIds((prev) => {
+      if (!prev) return prev;
+      const next = new Set(prev);
+      next.delete(woId);
+      return next;
+    });
+    onFeedbackSubmitted && onFeedbackSubmitted();
+  };
+
+  // Drop already-rated WOs entirely — this modal is the "feedback
+  // queue", not a repair-history archive. Once a customer rates a WO
+  // it doesn't belong here anymore (would be confusing — they'd ask
+  // "why is this still here?"). While pending list is loading we show
+  // everything to avoid a perceived empty state. The Vendor Scorecard
+  // page is where rated work lives for review.
+  const visibleRepairedWOs = pendingWoIds == null
+    ? repairedWOs
+    : repairedWOs.filter((wo) => pendingWoIds.has(wo.id));
+
   // Sort by most recently completed first
-  const sorted = [...repairedWOs].sort((a, b) => new Date(b.completedAt || 0) - new Date(a.completedAt || 0));
+  const sorted = [...visibleRepairedWOs].sort((a, b) => new Date(b.completedAt || 0) - new Date(a.completedAt || 0));
 
   const filtered = search
     ? sorted.filter((wo) => {
@@ -2799,9 +2894,26 @@ function RepairHistoryModal({ repairedWOs, user, onClose }) {
         <div className="px-4 sm:px-6 py-4 overflow-y-auto flex-1 space-y-2">
           {filtered.length === 0 ? (
             <div className="text-center py-10">
-              <CheckCheck size={40} className="text-navy-600 mx-auto mb-2" />
-              <p className="text-sm text-white">{search ? t('repairHistoryModal.noMatch', 'No repair history matches your search') : t('repairHistoryModal.noHistory', 'No repair history yet')}</p>
-              <p className="text-xs text-navy-400">{search ? t('repairHistoryModal.tryDifferentKeyword', 'Try a different keyword') : t('repairHistoryModal.asVendorsComplete', 'As vendors complete work orders, they appear here')}</p>
+              <CheckCheck size={40} className="text-accent-green mx-auto mb-2" />
+              {/* Empty state is now context-aware: caught up vs no history
+                  vs filtered-out by search. The "all rated" case is the
+                  most common since rated repairs leave this queue. */}
+              {search ? (
+                <>
+                  <p className="text-sm text-white">{t('repairHistoryModal.noMatch', 'No repair history matches your search')}</p>
+                  <p className="text-xs text-navy-400">{t('repairHistoryModal.tryDifferentKeyword', 'Try a different keyword')}</p>
+                </>
+              ) : repairedWOs.length === 0 ? (
+                <>
+                  <p className="text-sm text-white">{t('repairHistoryModal.noHistory', 'No repair history yet')}</p>
+                  <p className="text-xs text-navy-400">{t('repairHistoryModal.asVendorsComplete', 'As vendors complete work orders, they appear here')}</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-white">{t('repairHistoryModal.allCaughtUp', 'All caught up!')}</p>
+                  <p className="text-xs text-navy-400">{t('repairHistoryModal.allCaughtUpSub', 'Every completed repair has been rated. New ones will appear here as vendors finish work.')}</p>
+                </>
+              )}
             </div>
           ) : (
             filtered.map((wo) => {
@@ -2830,7 +2942,18 @@ function RepairHistoryModal({ repairedWOs, user, onClose }) {
                         <div className="text-[11px] text-navy-400 mt-0.5">{wo.section} · {wo.part}</div>
                       </div>
                       <div className="flex items-center gap-3 shrink-0">
-                        <RepairFeedback woId={wo.id} feedback={feedback} onChange={setFeedback} />
+                        {/* This modal is the pending-feedback queue —
+                            rated WOs were filtered out above so every
+                            row that reaches this point still needs the
+                            customer's rating. After submit, handleRated
+                            drops the row from pendingWoIds and it
+                            disappears on the next render. */}
+                        <RepairFeedback
+                          woId={wo.id}
+                          feedback={feedback}
+                          onChange={setFeedback}
+                          onSubmitted={() => handleRated(wo.id)}
+                        />
                         <div className="text-right">
                           <div className="text-[11px] text-navy-400">{t('repairHistoryModal.completedLabel', 'Completed')}</div>
                           <div className="text-xs text-white">{new Date(wo.completedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
@@ -3568,6 +3691,38 @@ export default function RealDVIC({ user }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wizardJustClosed, autoTick, queueRefreshTick]);
   const repairedDefectsCount = repairedWOs.length;
+
+  // Pending-feedback count for the badge on the "Defects Repaired" tile.
+  // Source of truth is /vendor-scorecard/pending-feedback — same endpoint
+  // the standalone PendingFeedbackListModal reads. Re-fetches whenever
+  // queueRefreshTick bumps (inline RepairFeedback submits + standalone
+  // FeedbackModal submits both bump it) so the badge updates without
+  // a page reload (2026-05-27 nota: el counter no refrescaba al ratear
+  // inline desde el RepairHistoryModal).
+  const [pendingFeedbackCount, setPendingFeedbackCount] = useState(0);
+  useEffect(() => {
+    const dspIdInt = (() => {
+      const raw = user?.organizationId ?? user?.orgId;
+      if (raw == null) return null;
+      const m = String(raw).match(/(\d+)/);
+      return m ? Number(m[1]) : null;
+    })();
+    if (!dspIdInt) { setPendingFeedbackCount(0); return; }
+    let alive = true;
+    // No days filter — the gold "Pending Feedback" tile must appear as
+    // long as ANY completed repair lacks the customer's rating, no
+    // matter how long ago it was completed. Matches the modal which
+    // also fetches without a days cap.
+    scorecardApi
+      .pending({ dspId: dspIdInt })
+      .then((res) => {
+        if (!alive) return;
+        const rows = Array.isArray(res) ? res : (res?.items || []);
+        setPendingFeedbackCount(rows.length);
+      })
+      .catch(() => { if (alive) setPendingFeedbackCount(0); });
+    return () => { alive = false; };
+  }, [user, queueRefreshTick, autoTick]);
   // "This week" = last 7 days
   const oneWeekAgo = new Date();
   oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
@@ -3741,8 +3896,9 @@ export default function RealDVIC({ user }) {
     //     the home cards without the user refreshing the page
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalDefectsToday, wizardJustClosed, queueRefreshTick, autoTick]);
-  // Repairs still waiting for DSP feedback (thumbs up/down) on the vendor's work
-  const repairsPendingFeedback = repairedDefectsCount;
+  // Repairs still waiting for DSP feedback (thumbs up/down) — real count
+  // from /vendor-scorecard/pending-feedback, not just total completed.
+  const repairsPendingFeedback = pendingFeedbackCount;
   // Next inspection date auto-computed from the org's inspection frequency
   // set during initial setup (first_inspection + frequency_days). For the
   // demo we compute today + 7 days and render as MM-DD-YYYY.
@@ -3916,16 +4072,25 @@ export default function RealDVIC({ user }) {
             </div>
 
             <div onClick={() => setShowRepairHistory(true)} className="cursor-pointer h-full">
+              {/* Tile is ALWAYS labeled "Pending Feedback" so the customer
+                  sees one consistent metric — the count of completed WOs
+                  that still need their rating — which always matches what's
+                  in the modal it opens. When the queue is empty (0), the
+                  subtitle flips from "X repaired this week" to a friendly
+                  "All caught up" message so a "0" doesn't look broken.
+                  The MetricCard's `color` prop only paints the icon; we
+                  pass AlertTriangle so the gold action-needed accent
+                  actually shows on the tile (matches the other
+                  action-needed tiles like "Defects for approval"). */}
               <MetricCard
-                label={t('realDvic.metrics.defectsRepaired', 'Defects Repaired')}
-                value={repairedDefectsCount}
-                subtitle={t('realDvic.metrics.currentWeek', 'Current Week')}
-                color="accent-green"
+                icon={repairsPendingFeedback > 0 ? AlertTriangle : CheckCheck}
+                label={t('realDvic.metrics.pendingFeedback', 'Pending Feedback')}
+                value={repairsPendingFeedback}
+                subtitle={repairsPendingFeedback > 0
+                  ? t('realDvic.metrics.repairedThisWeekFmt', { count: repairedThisWeekCount, defaultValue: `${repairedThisWeekCount} repaired this week` })
+                  : t('realDvic.metrics.allRated', 'All caught up · click for history')}
+                color={repairsPendingFeedback > 0 ? 'accent-gold' : 'accent-green'}
                 delay={0.2}
-                trend={repairedThisWeekCount > 0 ? Math.round((repairedThisWeekCount / Math.max(totalDefectsToday, 1)) * 100) : undefined}
-                trendUp
-                warning={repairsPendingFeedback > 0 ? t('realDvic.metrics.pendingFeedbackFmt', { count: repairsPendingFeedback, defaultValue: `${repairsPendingFeedback} pending feedback` }) : undefined}
-                onWarningClick={() => setPendingFeedbackOpen(true)}
               />
             </div>
           </div>
@@ -3967,14 +4132,19 @@ export default function RealDVIC({ user }) {
               <div className="h-[200px] flex items-center">
                 {(() => {
                   // Real data when available; fall back to mock shape.
-                  // Source-key → palette color (same family vendor home uses).
+                  // Key → palette color. The DSP customer donut returns
+                  // {vsa, other} (collapsed per Michael's note 2026-05-26
+                  // — see dashboards.dsp_open_defects_breakdown). The
+                  // legacy per-source keys are kept so the vendor home /
+                  // older payload shapes still resolve a color.
                   const PALETTE = {
-                    inspection: '#3b82f6',
+                    vsa: '#3b82f6',                  // primary blue — most defects
+                    other: '#94a3b8',                // muted slate — catch-all
+                    inspection: '#3b82f6',           // legacy alias for VSA
                     shop_finding: '#f97316',
                     maintenance_request: '#a855f7',
                     customer_report: '#a855f7',
                     driver_report: '#eab308',
-                    other: '#94a3b8',
                   };
                   const live = chartDonut && chartDonut.length > 0
                     ? (() => {
@@ -4207,7 +4377,14 @@ export default function RealDVIC({ user }) {
             onClose={() => setShowStartInspection(false)}
           />
         )}
-        {showRepairHistory && <RepairHistoryModal repairedWOs={repairedWOs} user={user} onClose={() => setShowRepairHistory(false)} />}
+        {showRepairHistory && (
+          <RepairHistoryModal
+            repairedWOs={repairedWOs}
+            user={user}
+            onClose={() => setShowRepairHistory(false)}
+            onFeedbackSubmitted={() => setQueueRefreshTick((n) => n + 1)}
+          />
+        )}
         {showFlexFleet && <FlexFleetModal onClose={() => setShowFlexFleet(false)} />}
         {pendingFeedbackOpen && (
           <PendingFeedbackListModal
@@ -4218,7 +4395,7 @@ export default function RealDVIC({ user }) {
               return m ? Number(m[1]) : null;
             })()}
             onClose={() => setPendingFeedbackOpen(false)}
-            onChanged={() => { /* counts auto-refresh via autoTick */ }}
+            onChanged={() => setQueueRefreshTick((n) => n + 1)}
           />
         )}
       </AnimatePresence>

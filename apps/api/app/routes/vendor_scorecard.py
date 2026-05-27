@@ -97,6 +97,10 @@ class RecentFeedbackRow(BaseModel):
     work_order_id_str: str
     dsp_name: str | None = None
     vehicle_id_str: str | None = None
+    # Customer-facing fleet number ("11", "SV12") — what the DSP recognizes
+    # in their own fleet vs the internal "VAN-0121" id. Frontend prefers
+    # this for display per Michael's customer-feedback bug (2026-05-27).
+    vehicle_fleet_id: str | None = None
     vote: str
     reason: str | None = None
     escalate: bool
@@ -251,13 +255,20 @@ async def submit_feedback(
 )
 async def pending_feedback(
     dsp_id: int | None = Query(default=None),
-    days: int = Query(default=14, ge=1, le=90),
+    days: int | None = Query(
+        default=None, ge=1, le=3650,
+        description="Optional age cap (days). Omit (default) for ALL "
+                    "completed WOs without feedback — that's what drives "
+                    "the home-tile 'Pending Feedback' counter so it stays "
+                    "consistent with the modal regardless of how long ago "
+                    "the WO was completed.",
+    ),
     current: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[PendingFeedbackRow]:
-    """For DSP-side users: lists their own org's completed WOs in
-    the window that don't have a feedback row yet. Drives the
-    "rate completed repairs" modal opened from the home tile."""
+    """For DSP-side users: lists their own org's completed WOs that don't
+    have a feedback row yet. Drives the "rate completed repairs" modal
+    opened from the home tile."""
     if current.role == UserRole.SITE_ADMIN:
         target_dsp = dsp_id
     elif current.role.value.startswith("dsp_"):
@@ -267,26 +278,26 @@ async def pending_feedback(
     if target_dsp is None:
         return []
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-
     # Subquery: WO ids that already have a feedback row from this DSP.
     reviewed_sub = (
         select(RepairFeedback.work_order_id)
         .where(RepairFeedback.dsp_id == target_dsp)
     ).subquery()
 
-    rows = (
-        await session.execute(
-            select(WorkOrder, Vehicle, VendorWorkshop)
-            .join(Vehicle, Vehicle.id == WorkOrder.vehicle_id, isouter=True)
-            .join(VendorWorkshop, VendorWorkshop.id == WorkOrder.vendor_workshop_id, isouter=True)
-            .where(WorkOrder.dsp_id == target_dsp)
-            .where(WorkOrder.status == WorkOrderStatus.COMPLETED.value)
-            .where(WorkOrder.completed_at >= cutoff)
-            .where(~WorkOrder.id.in_(select(reviewed_sub.c.work_order_id)))
-            .order_by(WorkOrder.completed_at.desc())
-        )
-    ).all()
+    q = (
+        select(WorkOrder, Vehicle, VendorWorkshop)
+        .join(Vehicle, Vehicle.id == WorkOrder.vehicle_id, isouter=True)
+        .join(VendorWorkshop, VendorWorkshop.id == WorkOrder.vendor_workshop_id, isouter=True)
+        .where(WorkOrder.dsp_id == target_dsp)
+        .where(WorkOrder.status == WorkOrderStatus.COMPLETED.value)
+        .where(~WorkOrder.id.in_(select(reviewed_sub.c.work_order_id)))
+        .order_by(WorkOrder.completed_at.desc())
+    )
+    if days is not None:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        q = q.where(WorkOrder.completed_at >= cutoff)
+
+    rows = (await session.execute(q)).all()
     return [
         PendingFeedbackRow(
             work_order_id=wo.id,
@@ -403,6 +414,7 @@ async def vendor_scorecard(
             work_order_id_str=wo.id_str if wo else f"WO-{fb.work_order_id}",
             dsp_name=org.name if org else None,
             vehicle_id_str=veh.id_str if veh else None,
+            vehicle_fleet_id=veh.fleet_id if veh else None,
             vote=fb.vote,
             reason=fb.reason,
             escalate=fb.escalate,

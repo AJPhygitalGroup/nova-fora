@@ -648,37 +648,42 @@ function OpenDefectsDonut({ workshopId, dspId }) {
         </div>
       ) : (
         <div className="flex items-center gap-4">
-          <svg width={130} height={130} viewBox="0 0 130 130" className="shrink-0 -rotate-90">
-            <circle cx={65} cy={65} r={r} className="fill-none stroke-navy-800" strokeWidth={16} />
-            {slices.map((sl) => {
-              const frac = sl.count / total;
-              const dash = frac * circumference;
-              const cls = PALETTE[sl.key] || 'stroke-text-muted';
-              const el = (
-                <circle
-                  key={sl.key}
-                  cx={65}
-                  cy={65}
-                  r={r}
-                  className={`fill-none ${cls}`}
-                  strokeWidth={16}
-                  strokeDasharray={`${dash} ${circumference - dash}`}
-                  strokeDashoffset={-offset}
-                />
-              );
-              offset += dash;
-              return el;
-            })}
-            <text
-              x={65}
-              y={71}
-              textAnchor="middle"
-              className="text-[14px] font-bold fill-text-strong rotate-90"
-              style={{ transform: 'rotate(90deg)', transformOrigin: '65px 65px' }}
-            >
-              {total}
-            </text>
-          </svg>
+          {/* Donut wrapper — the SVG is rotated -90deg so the first arc
+              starts at 12 o'clock. The center total used to live inside
+              the SVG with a counter-rotation that fought a Tailwind
+              rotate-90 utility and ended up off-center. Now the SVG
+              just renders the arcs; the total is an absolutely-positioned
+              HTML span over the wrapper — bulletproof centering via
+              flex without any rotation gymnastics. */}
+          <div className="relative shrink-0" style={{ width: 130, height: 130 }}>
+            <svg width={130} height={130} viewBox="0 0 130 130" className="-rotate-90">
+              <circle cx={65} cy={65} r={r} className="fill-none stroke-navy-800" strokeWidth={16} />
+              {slices.map((sl) => {
+                const frac = sl.count / total;
+                const dash = frac * circumference;
+                const cls = PALETTE[sl.key] || 'stroke-text-muted';
+                const el = (
+                  <circle
+                    key={sl.key}
+                    cx={65}
+                    cy={65}
+                    r={r}
+                    className={`fill-none ${cls}`}
+                    strokeWidth={16}
+                    strokeDasharray={`${dash} ${circumference - dash}`}
+                    strokeDashoffset={-offset}
+                  />
+                );
+                offset += dash;
+                return el;
+              })}
+            </svg>
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <span className="text-sm font-bold text-text-strong tabular-nums leading-none">
+                {total}
+              </span>
+            </div>
+          </div>
           <ul className="text-xs space-y-1 flex-1 min-w-0">
             {slices.map((sl) => {
               const swatchCls = SWATCH[sl.key] || 'bg-text-muted';

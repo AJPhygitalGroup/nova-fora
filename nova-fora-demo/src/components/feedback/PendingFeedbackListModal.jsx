@@ -19,8 +19,10 @@ export default function PendingFeedbackListModal({ dspId, onClose, onChanged }) 
   const load = useCallback(() => {
     setLoading(true);
     setErr(null);
+    // No days filter — every unrated completed WO regardless of age,
+    // matches the home tile counter exactly.
     scorecardApi
-      .pending({ dspId, days: 14 })
+      .pending({ dspId })
       .then((r) => setRows(Array.isArray(r) ? r : (r?.items || [])))
       .catch((e) => setErr(e.detail || e.message || 'Failed to load'))
       .finally(() => setLoading(false));

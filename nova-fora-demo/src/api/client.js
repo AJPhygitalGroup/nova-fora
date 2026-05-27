@@ -118,7 +118,22 @@ async function _raw(path, options = {}) {
     }
   }
 
-  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers });
+  const fullUrl = `${BASE_URL}${path}`;
+  let res;
+  try {
+    res = await fetch(fullUrl, { ...options, headers });
+  } catch (err) {
+    // Browser-level network failure (CORS preflight blocked, DNS, server
+    // unreachable, etc). The default TypeError("Failed to fetch") gives
+    // zero context — rethrow with the URL + method so the inspector can
+    // see what we tried to hit when the alert pops up.
+    const method = options.method || 'GET';
+    const reason = err?.message || String(err);
+    const enriched = new Error(`Network error: ${method} ${fullUrl} — ${reason}`);
+    enriched.name = err?.name || 'NetworkError';
+    enriched.cause = err;
+    throw enriched;
+  }
 
   if (res.status === 204) return null;
 
@@ -1589,10 +1604,15 @@ export const dashboards = {
   },
 
   // Daily approved vs repaired — 7-day bar chart on VendorHome.
+  // Sends the user's JS-style timezone offset so the backend groups
+  // each row by the inspector's LOCAL day, not UTC. Without this, EDT
+  // users see the rightmost bar a day behind any time UTC and their
+  // wall-clock day don't agree (Michael's bug 2026-05-26).
   dailyDefects(vendorWorkshopId, { days = 7, dspId } = {}) {
     const q = new URLSearchParams();
     if (days) q.set('days', String(days));
     if (dspId != null && dspId !== '') q.set('dsp_id', String(dspId));
+    q.set('tz_offset_minutes', String(new Date().getTimezoneOffset()));
     return apiFetch(
       `/dashboards/vendor-home/${encodeURIComponent(vendorWorkshopId)}/daily-defects?${q.toString()}`
     );
@@ -1611,6 +1631,7 @@ export const dashboards = {
   dspDailyDefects(dspId, { days = 7 } = {}) {
     const q = new URLSearchParams();
     if (days) q.set('days', String(days));
+    q.set('tz_offset_minutes', String(new Date().getTimezoneOffset()));
     return apiFetch(
       `/dashboards/dsp/${encodeURIComponent(dspId)}/daily-defects?${q.toString()}`
     );
@@ -1766,13 +1787,17 @@ export const rewards = {
 // ─────────────────────────────────────────────────────
 export const vendorScorecard = {
   /**
-   * GET /vendor-scorecard/pending-feedback?dspId=&days=14
+   * GET /vendor-scorecard/pending-feedback?dspId=&days=
    * DSP-side: list of completed WOs they haven't reviewed yet.
+   * Default: NO days filter — every unrated completed WO regardless
+   * of age, so the home-tile counter and the modal queue match the
+   * customer's mental model of "anything I owe a rating for". Pass
+   * `days` only when you actually want a recent window.
    */
-  pending({ dspId, days = 14 } = {}) {
+  pending({ dspId, days } = {}) {
     const q = new URLSearchParams();
     if (dspId != null && dspId !== '') q.set('dsp_id', String(dspId));
-    if (days) q.set('days', String(days));
+    if (days != null) q.set('days', String(days));
     return apiFetch(`/vendor-scorecard/pending-feedback?${q.toString()}`);
   },
 

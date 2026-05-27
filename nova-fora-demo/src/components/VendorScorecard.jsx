@@ -347,7 +347,13 @@ export default function VendorScorecard() {
                 {liveRecentFeedback.map((fb) => (
                   <tr key={fb.feedbackId} className="border-b border-navy-800/50 hover:bg-navy-800/30 transition-colors">
                     <td className="px-5 py-3 font-mono text-xs text-accent-blue">{fb.workOrderIdStr}</td>
-                    <td className="px-5 py-3 text-navy-200">{fb.vehicleIdStr || '—'}</td>
+                    {/* Display the customer's fleet number ("Van 11", "Van SV12")
+                        instead of the internal "VAN-0121" prefix — the DSP
+                        doesn't recognize the internal id. Falls back to the
+                        internal id only if fleet id is missing. */}
+                    <td className="px-5 py-3 text-navy-200">
+                      {fb.vehicleFleetId ? `Van ${fb.vehicleFleetId}` : (fb.vehicleIdStr || '—')}
+                    </td>
                     <td className="px-5 py-3 text-navy-200">{fb.dspName || '—'}</td>
                     <td className="px-5 py-3 text-navy-300 text-xs">{fb.submittedByName || 'system'}</td>
                     <td className="px-5 py-3 text-center">

@@ -1373,12 +1373,19 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                   </label>
                 )}
 
-                {/* PM scheduled date — only in PM mode */}
+                {/* PM scheduled date — only in PM mode. Same min=today
+                    constraint as the preferred-completion picker so a
+                    PM can't be scheduled in the past. */}
                 {isPM && (
                   <div>
                     <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('createWO.scheduledDate', 'Scheduled date')}</label>
-                    <input type="date" value={preferredDate} onChange={(e) => setPreferredDate(e.target.value)}
-                      className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-green" />
+                    <input
+                      type="date"
+                      value={preferredDate}
+                      min={new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 10)}
+                      onChange={(e) => setPreferredDate(e.target.value)}
+                      className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-green"
+                    />
                   </div>
                 )}
               </motion.div>
@@ -1538,8 +1545,17 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                 {/* Optional extras */}
                 <div>
                   <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('createWO.preferredCompletionLabel', 'Preferred completion date (optional)')}</label>
-                  <input type="date" value={preferredDate} onChange={(e) => setPreferredDate(e.target.value)}
-                    className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue" />
+                  {/* min=today (local YYYY-MM-DD) so the native picker
+                      grays out past dates AND the input refuses manual
+                      entry of yesterday. Computed at render time — fine,
+                      this modal is short-lived. */}
+                  <input
+                    type="date"
+                    value={preferredDate}
+                    min={new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 10)}
+                    onChange={(e) => setPreferredDate(e.target.value)}
+                    className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue"
+                  />
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('createWO.extraNotesLabel', 'Extra notes for vendor (optional)')}</label>
