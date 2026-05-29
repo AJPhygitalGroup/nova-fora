@@ -12,12 +12,25 @@ Coverage today:
                                                        enforced in
                                                        routes/invitations.py
   - allowed_invite_roles                             — UI-side enumeration
+  - vendor_allowed_repair_types                      — set of RepairType
+                                                       values a vendor user
+                                                       can see (drives the
+                                                       inspection-report
+                                                       defect filter etc.)
+  - defect_group_allowed_for_repair_types            — pure mapping: does
+                                                       a defect's group
+                                                       resolve to one of
+                                                       the allowed
+                                                       repair_types?
 
 The full feature-by-feature permission map (e.g. who can approve a defect,
 who can assign a WO) will be added here as those features land — keep the
 checks in a single module so they're easy to audit.
 """
 from __future__ import annotations
+
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 from app.models.user import User, UserRole
 
@@ -149,3 +162,72 @@ def allowed_invite_roles(inviter_role) -> list[UserRole]:
 
 def can_invite_anyone(inviter_role) -> bool:
     return bool(allowed_invite_roles(inviter_role))
+
+
+# ─────────────────────────────────────────────────────
+# Vendor scope by repair_type
+# ─────────────────────────────────────────────────────
+# A vendor only services certain repair buckets (Dulles Midas does
+# mechanical/pm/cnmr; a body shop does body; etc.). Inspection reports +
+# heatmap counts must filter defects to the vendor's catalogue — a
+# mechanical-only vendor shouldn't see body defects on a van they QC'd.
+# DSP + site_admin users get a `None` sentinel (no filter applied).
+
+async def vendor_allowed_repair_types(
+    session: AsyncSession, user: User
+) -> set[str] | None:
+    """Repair types the requesting vendor user can see.
+
+    Returns:
+        None  — for non-vendor users (DSP / site_admin → no filter).
+        set[str] — repair_type values (e.g. {"mechanical","pm","cnmr"})
+                   collected across all of the vendor org's workshops.
+                   Empty set means "vendor org has no workshop services
+                   configured" — caller should treat that as "see nothing".
+    """
+    if not is_vendor_role(user.role):
+        return None
+    if user.organization_id is None:
+        return set()
+    # Local import — VendorWorkshop pulls a chunk of WO V2 models; keeping
+    # it lazy avoids inflating import time for callers that never touch it.
+    from app.models.work_orders import VendorWorkshop
+
+    rows = (
+        await session.execute(
+            select(VendorWorkshop.repair_types).where(
+                VendorWorkshop.organization_id == user.organization_id
+            )
+        )
+    ).all()
+    allowed: set[str] = set()
+    for (rt_list,) in rows:
+        if rt_list:
+            allowed.update(rt_list)
+    return allowed
+
+
+def defect_group_allowed_for_repair_types(
+    group: str | None, allowed_repair_types: set[str]
+) -> bool:
+    """True iff the defect's DefectGroup maps to one of the allowed
+    repair_types.
+
+    `group` is the string in `DefectV2Response.group` ("AMR", "Body",
+    "Tires", "PM", "CNMR", "Detailing", "Netradyne") — already derived
+    by the defects route from `DefectRule.group`. We re-use the same
+    GROUP→RepairType map the wo_bundler uses for routing so a vendor
+    sees exactly the defects they could be routed.
+
+    Unknown / missing group defaults to MECHANICAL (matches
+    `wo_bundler._resolve_repair_type`'s safe-default behaviour).
+    """
+    # Local import — wo_bundler imports a lot; lazy keeps it cheap.
+    from app.services.wo_bundler import _GROUP_TO_REPAIR_TYPE
+    from app.models.work_orders import RepairType
+
+    repair_type = _GROUP_TO_REPAIR_TYPE.get(group or "", RepairType.MECHANICAL)
+    rt_value = (
+        repair_type.value if hasattr(repair_type, "value") else str(repair_type)
+    )
+    return rt_value in allowed_repair_types

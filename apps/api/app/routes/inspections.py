@@ -323,7 +323,26 @@ async def get_inspection(
     ):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "not your inspection")
 
-    return await _build_inspection_response(session, insp)
+    response = await _build_inspection_response(session, insp)
+
+    # Vendor scope by repair_type. A mechanical-only vendor (Dulles Midas =
+    # mechanical/pm/cnmr) shouldn't see body defects on a van they QC'd —
+    # those go to a body shop, not them. DSP + site_admin get None and skip
+    # filtering. Empty allowed-set (vendor with no workshop services) means
+    # the vendor sees nothing, which is the safe default.
+    from app.services.permissions import (
+        vendor_allowed_repair_types,
+        defect_group_allowed_for_repair_types,
+    )
+
+    allowed_rts = await vendor_allowed_repair_types(session, current)
+    if allowed_rts is not None:
+        response.defects = [
+            d for d in response.defects
+            if defect_group_allowed_for_repair_types(d.group, allowed_rts)
+        ]
+
+    return response
 
 
 # ─────────────────────────────────────────────────────
