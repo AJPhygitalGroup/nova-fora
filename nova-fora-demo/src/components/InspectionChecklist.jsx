@@ -427,32 +427,51 @@ export default function InspectionChecklist({
 
   const passRemainingOnPage = async () => {
     if (!pageParts.length) return;
-    const candidates = pageParts
-      .filter((p) => {
-        const s = scopedStatusOf(p);
-        return !s || s === 'unmarked';
-      })
-      .map((p) => p.id);
+    // Keep the full part objects (not just ids) so we know each part's
+    // presetPosition. Multi-section parts (body_damage) must be passed via
+    // the position-scoped single endpoint, NOT the flat bulk endpoint —
+    // the bulk guard skips any part that has a defect on ANY position,
+    // which would wrongly skip body_damage's clean sides whenever another
+    // side has a logged damage (the draft-stuck regression, 2026-05-28).
+    const candidates = pageParts.filter((p) => {
+      const s = scopedStatusOf(p);
+      return !s || s === 'unmarked';
+    });
     if (candidates.length === 0) return;
     setInlineError(null);
-    // Optimistic
+
+    const positioned = candidates.filter((p) => p.presetPosition);
+    const flat = candidates.filter((p) => !p.presetPosition).map((p) => p.id);
+
+    // Optimistic for everything on the page.
     setPartMarks((m) => {
       const next = { ...m };
-      for (const part of candidates) next[part] = 'pass';
+      for (const p of candidates) next[p.id] = 'pass';
       return next;
     });
     try {
-      const res = await inspectionsApi.passRemainingParts(inspectionId, candidates);
-      // Reconcile against server's authoritative response — it may have
-      // skipped parts that gained defects in a parallel browser tab.
-      const inserted = new Set(res?.insertedParts || []);
+      // 1. Position-scoped parts: one markPart each (idempotent on the
+      //    server; ON CONFLICT updates). The backend allows the pass
+      //    because it checks defects at THIS position only.
+      await Promise.all(
+        positioned.map((p) =>
+          inspectionsApi.markPart(inspectionId, {
+            part: p.id, status: 'pass', position: p.presetPosition,
+          }).catch(() => null),  // best-effort; reconciled below
+        )
+      );
+      // 2. Flat parts: the bulk endpoint.
+      let inserted = new Set();
+      if (flat.length > 0) {
+        const res = await inspectionsApi.passRemainingParts(inspectionId, flat);
+        inserted = new Set(res?.insertedParts || []);
+      }
+      // Reconcile flat parts against the bulk response (positioned ones
+      // already committed individually — keep their optimistic mark).
       setPartMarks((m) => {
         const next = { ...m };
-        for (const part of candidates) {
-          if (!inserted.has(part)) {
-            // Server skipped — likely got a defect; drop optimistic mark.
-            delete next[part];
-          }
+        for (const part of flat) {
+          if (!inserted.has(part)) delete next[part];  // server skipped
         }
         return next;
       });
@@ -460,7 +479,7 @@ export default function InspectionChecklist({
       // Full rollback
       setPartMarks((m) => {
         const next = { ...m };
-        for (const part of candidates) delete next[part];
+        for (const p of candidates) delete next[p.id];
         return next;
       });
       setInlineError(err?.detail || err?.message || 'Bulk pass failed');
