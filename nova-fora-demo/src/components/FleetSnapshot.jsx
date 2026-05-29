@@ -82,7 +82,9 @@ function HeatmapTile({ van, onClick }) {
         </div>
       )}
       <div className={`text-[10px] sm:text-[11px] font-mono font-semibold ${conf.text} leading-none`}>
-        {van.id.replace('VAN-', '')}
+        {/* Show the DSP-facing fleet_id (the number the driver sees on
+            the van's badge) — fall back to internal id_str if missing. */}
+        {van.fleetId || (van.id || '').replace('VAN-', '')}
       </div>
       {van.defectCount > 0 && (
         <div className={`mt-1 text-[9px] sm:text-[10px] ${conf.text} font-bold leading-none`}>
@@ -325,7 +327,7 @@ export function VehicleReportCard({ van, onClose, onUpdateVan, userRole, onCreat
                   </button>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                      <h3 className="text-xl sm:text-2xl font-bold text-white">{van.id}</h3>
+                      <h3 className="text-xl sm:text-2xl font-bold text-white">Van {van.fleetId || (van.id || '').replace('VAN-', '')}</h3>
                       <Badge variant={(van.defectCount || 0) === 0 ? 'green' : 'gold'} size="md">
                         {(van.defectCount || 0) === 0
                           ? t('vehicleReport.cleanBadge', 'Clean')
@@ -1371,12 +1373,19 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                   </label>
                 )}
 
-                {/* PM scheduled date — only in PM mode */}
+                {/* PM scheduled date — only in PM mode. Same min=today
+                    constraint as the preferred-completion picker so a
+                    PM can't be scheduled in the past. */}
                 {isPM && (
                   <div>
                     <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('createWO.scheduledDate', 'Scheduled date')}</label>
-                    <input type="date" value={preferredDate} onChange={(e) => setPreferredDate(e.target.value)}
-                      className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-green" />
+                    <input
+                      type="date"
+                      value={preferredDate}
+                      min={new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 10)}
+                      onChange={(e) => setPreferredDate(e.target.value)}
+                      className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-green"
+                    />
                   </div>
                 )}
               </motion.div>
@@ -1536,8 +1545,17 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                 {/* Optional extras */}
                 <div>
                   <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('createWO.preferredCompletionLabel', 'Preferred completion date (optional)')}</label>
-                  <input type="date" value={preferredDate} onChange={(e) => setPreferredDate(e.target.value)}
-                    className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue" />
+                  {/* min=today (local YYYY-MM-DD) so the native picker
+                      grays out past dates AND the input refuses manual
+                      entry of yesterday. Computed at render time — fine,
+                      this modal is short-lived. */}
+                  <input
+                    type="date"
+                    value={preferredDate}
+                    min={new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 10)}
+                    onChange={(e) => setPreferredDate(e.target.value)}
+                    className="w-full rounded-lg px-3 py-3 text-base bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-blue"
+                  />
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-navy-300 mb-1.5 block">{t('createWO.extraNotesLabel', 'Extra notes for vendor (optional)')}</label>
@@ -1649,6 +1667,11 @@ export default function FleetSnapshot({ user, embedded = false }) {
   const [includeBody, setIncludeBody] = useState(true);
   const [dspFilter, setDspFilter] = useState('all');
   const [dspFilterOpen, setDspFilterOpen] = useState(false);
+  // QC DVIC defaults to recently-inspected only — the heatmap is a
+  // "today's activity" surface, not the static fleet roster. Window
+  // options match the mockup banner ("39 keys recorded today").
+  // 'today' | 'week' | 'all' (no filter)
+  const [inspectionWindow, setInspectionWindow] = useState('week');
   const [vanUpdates, setVanUpdates] = useState({});
 
   const openCreateWO = (van = null, defect = null) => {
@@ -1656,10 +1679,61 @@ export default function FleetSnapshot({ user, embedded = false }) {
     setShowCreateWO(true);
   };
 
-  // Apply per-van updates (ground state etc.)
+  // ── Live fleet load (replaces the legacy fleetSnapshotVans mock) ──
+  // /vehicles already exposes defect_count, last_inspected, inspector,
+  // grounded, grounded_reason — every field the heatmap needs. Backend
+  // caps per_page at 100; paginate so DSPs with 100+ vans render fully.
+  // The local mock stays in mockData.js as a fallback for tests + as
+  // an offline demo seed if the API ever fails to load.
+  const [serverVans, setServerVans] = useState(null);  // null = loading
+  const [vansError, setVansError] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const loadAll = async () => {
+      const all = [];
+      let page = 1;
+      for (let i = 0; i < 10; i += 1) {
+        const res = await vehiclesApi.list({ perPage: 100, isActive: true, page });
+        const items = res.items || [];
+        all.push(...items);
+        if (items.length < 100) break;
+        page += 1;
+      }
+      return all;
+    };
+    loadAll()
+      .then((items) => alive && setServerVans(items))
+      .catch((e) => {
+        if (!alive) return;
+        console.warn('FleetSnapshot fetch failed — falling back to mock', e);
+        setVansError(e?.detail || e?.message || 'Failed to load fleet');
+        setServerVans(fleetSnapshotVans);  // keep the demo usable
+      });
+    return () => { alive = false; };
+  }, []);
+
+  // Normalise the wire shape to what the heatmap renderer expects.
+  // API: { id: 'VAN-0001', dspId: 'DSP-0001', dsp, fleetId, plate, year,
+  //        make, model, mileage, grounded, groundedReason,
+  //        defectCount, lastInspected, inspector, vehicleClass, ... }
+  // Renderer needs: { id, dspId, dsp, model (composed), plate, defectCount,
+  //                   lastInspected (formatted), inspector, grounded, mileage }
   const allVans = useMemo(() => {
-    return fleetSnapshotVans.map((v) => ({ ...v, ...(vanUpdates[v.id] || {}) }));
-  }, [vanUpdates]);
+    const base = serverVans ?? [];
+    return base.map((v) => {
+      const composedModel = [v.year, v.make, v.model].filter(Boolean).join(' ');
+      const normalized = {
+        ...v,
+        model: composedModel || v.model || '',
+        // Preserve the ISO so the inspection-window filter can do real
+        // date math; `lastInspected` is the display string.
+        _rawLastInspected: v.lastInspected || null,
+        lastInspected: formatLastInspected(v.lastInspected),
+      };
+      const override = vanUpdates[v.id] || {};
+      return { ...normalized, ...override };
+    });
+  }, [serverVans, vanUpdates]);
 
   // DSP users only see their own flota; vendors see all (works for the
   // 4 DSP sub-roles: owner / manager / inspector / viewer)
@@ -1667,12 +1741,30 @@ export default function FleetSnapshot({ user, embedded = false }) {
   const userDspId = user?.orgId;
 
   const vans = useMemo(() => {
+    // Step 1: tenant scoping (DSP sees own org; vendor uses dspFilter).
+    let pool = allVans;
     if (isDsp && userDspId && userDspId.startsWith('DSP-')) {
-      return allVans.filter((v) => v.dspId === userDspId);
+      pool = pool.filter((v) => v.dspId === userDspId);
+    } else if (dspFilter !== 'all') {
+      pool = pool.filter((v) => v.dspId === dspFilter);
     }
-    if (dspFilter !== 'all') return allVans.filter((v) => v.dspId === dspFilter);
-    return allVans;
-  }, [allVans, isDsp, userDspId, dspFilter]);
+    // Step 2: inspection-window filter — heatmap is for ACTIVE QC DVIC,
+    // not the dormant roster, so default to vans inspected in the last
+    // 7 days. Switch to 'today' for the tightest view or 'all' to see
+    // every van regardless of last inspection.
+    if (inspectionWindow === 'all') return pool;
+    const cutoff = new Date();
+    cutoff.setHours(0, 0, 0, 0);
+    if (inspectionWindow === 'week') {
+      cutoff.setDate(cutoff.getDate() - 6);  // includes today + last 6 = 7 days
+    }
+    return pool.filter((v) => {
+      if (!v._rawLastInspected) return false;
+      const t = new Date(v._rawLastInspected);
+      if (Number.isNaN(t.getTime())) return false;
+      return t >= cutoff;
+    });
+  }, [allVans, isDsp, userDspId, dspFilter, inspectionWindow]);
 
   // Group by DSP for vendor view
   const vansByDsp = useMemo(() => {
@@ -1693,13 +1785,19 @@ export default function FleetSnapshot({ user, embedded = false }) {
     return { total, withIssues, grounded, keysRecorded };
   }, [vans]);
 
+  // Derive the DSP filter dropdown options from the loaded fleet so
+  // the list always reflects what the user actually has access to
+  // (DSPs the vendor services, not every DSP that ever appeared in
+  // the static mock).
   const uniqueDsps = useMemo(() => {
     const dsps = new Map();
-    fleetSnapshotVans.forEach((v) => {
+    allVans.forEach((v) => {
       if (!dsps.has(v.dspId)) dsps.set(v.dspId, { id: v.dspId, name: v.dsp });
     });
-    return Array.from(dsps.values());
-  }, []);
+    return Array.from(dsps.values()).sort((a, b) =>
+      (a.name || '').localeCompare(b.name || ''),
+    );
+  }, [allVans]);
 
   const handleUpdateVan = (vanId, updates) => {
     setVanUpdates({ ...vanUpdates, [vanId]: { ...(vanUpdates[vanId] || {}), ...updates } });
@@ -1742,6 +1840,19 @@ export default function FleetSnapshot({ user, embedded = false }) {
 
           <div className="flex flex-wrap items-center gap-2">
             {/* Filter toggles */}
+            {/* Inspection-window filter — limits the heatmap to vans
+                with a DVIC in the last N days. Default 'week' matches
+                the demo intent (vans actually being driven). */}
+            <select
+              value={inspectionWindow}
+              onChange={(e) => setInspectionWindow(e.target.value)}
+              className="px-2.5 py-1.5 rounded-md border border-navy-700 bg-navy-800/40 cursor-pointer text-xs text-navy-300 hover:text-white"
+              title="Only show vans inspected in the chosen window"
+            >
+              <option value="today">Inspected today</option>
+              <option value="week">Inspected this week</option>
+              <option value="all">All vans (incl. never inspected)</option>
+            </select>
             <label className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-navy-700 bg-navy-800/40 cursor-pointer text-xs text-navy-300">
               <input type="checkbox" checked={includeCustom} onChange={() => setIncludeCustom(!includeCustom)} className="rounded" />
               {t('fleetSnapshot.filter.customDefects', 'Custom Defects')}
@@ -1866,4 +1977,39 @@ export default function FleetSnapshot({ user, embedded = false }) {
       </AnimatePresence>
     </div>
   );
+}
+
+// ─────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────
+// Display formatter for vehicle.lastInspected (ISO from API → "Today,
+// 6:15 AM" / "Yesterday 7:02 PM" / "May 24, 2026" matching the mock
+// strings the heatmap card already renders).
+function formatLastInspected(iso) {
+  if (!iso) return null;
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    const now = new Date();
+    const sameDay =
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate();
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const isYesterday =
+      d.getFullYear() === yesterday.getFullYear() &&
+      d.getMonth() === yesterday.getMonth() &&
+      d.getDate() === yesterday.getDate();
+    const time = d.toLocaleTimeString(undefined, {
+      hour: 'numeric', minute: '2-digit', hour12: true,
+    });
+    if (sameDay) return `Today, ${time}`;
+    if (isYesterday) return `Yesterday ${time}`;
+    return d.toLocaleDateString(undefined, {
+      month: 'short', day: 'numeric', year: 'numeric',
+    });
+  } catch {
+    return iso;
+  }
 }

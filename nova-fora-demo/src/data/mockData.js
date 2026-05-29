@@ -76,9 +76,10 @@ export const demoAccounts = [
 // tab set, then strip what doesn't apply (admin tab for non-admins, etc.).
 export const rolePermissions = {
   // ── DSP family ──
-  // `wo_status` is the DSP-side read view of work orders (sits inside the
-  // Dashboard dropdown). Underlying component is shared with vendors'
-  // `work_orders` tab; role gating in the WO card hides vendor actions.
+  // DSP roles see Work Orders nested under the Dashboard dropdown
+  // (id `wo_status`), per the original DSP IA. Vendor roles get
+  // Work Orders as a top-level tab (`work_orders`). Both ids resolve
+  // to the same WoV2Dashboard component — see Layout.jsx VIEW_CATALOG.
   dsp_owner:     ['dvic', 'defects', 'vehicles', 'body', 'wo_status', 'scorecard', 'admin'],
   dsp_manager:   ['dvic', 'defects', 'vehicles', 'body', 'wo_status', 'scorecard', 'admin'],
   dsp_inspector: ['dvic', 'defects', 'vehicles'],

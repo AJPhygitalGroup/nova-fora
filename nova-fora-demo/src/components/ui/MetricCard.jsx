@@ -10,7 +10,7 @@ const colorMap = {
   'accent-gold':   { bg: 'bg-accent-gold/10',   text: 'text-accent-gold' },
 };
 
-export default function MetricCard({ icon: Icon, label, value, subtitle, trend, trendUp, color = 'accent-blue', delay = 0, valueBadge, valueBadgeColor = 'accent-red', labelClassName, warning }) {
+export default function MetricCard({ icon: Icon, label, value, subtitle, trend, trendUp, color = 'accent-blue', delay = 0, valueBadge, valueBadgeColor = 'accent-red', labelClassName, warning, onWarningClick }) {
   const c = colorMap[color] || colorMap['accent-blue'];
   const hasTopRow = !!Icon || trend !== undefined;
 
@@ -59,9 +59,20 @@ export default function MetricCard({ icon: Icon, label, value, subtitle, trend, 
       <div className="mt-auto pt-2 flex flex-col items-center gap-1.5">
         {subtitle && <div className="text-xs text-navy-500 text-center">{subtitle}</div>}
         {warning && (
-          <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-gold/15 border border-accent-gold/40 text-accent-gold text-[10px] font-semibold">
-            <AlertTriangle size={10} /> {warning}
-          </div>
+          onWarningClick ? (
+            <button
+              type="button"
+              onClick={onWarningClick}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-gold/15 border border-accent-gold/40 text-accent-gold text-[10px] font-semibold hover:bg-accent-gold/25 cursor-pointer"
+              title="Click to rate completed repairs"
+            >
+              <AlertTriangle size={10} /> {warning}
+            </button>
+          ) : (
+            <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-gold/15 border border-accent-gold/40 text-accent-gold text-[10px] font-semibold">
+              <AlertTriangle size={10} /> {warning}
+            </div>
+          )
         )}
       </div>
     </motion.div>

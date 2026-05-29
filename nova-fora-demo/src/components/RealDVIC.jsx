@@ -19,8 +19,11 @@ import {
   defects as defectsApi,
   defectReviews as defectReviewsApi,
   workOrders as workOrdersApi,
+  dashboards as dashboardsApi,
+  vendorScorecard as scorecardApi,
 } from '../api/client';
 import { adaptWO } from '../api/woAdapter';
+import PendingFeedbackListModal from './feedback/PendingFeedbackListModal';
 
 const tierConfig = {
   1: { label: 'Tier 1', range: '1–25 defects', cash: '$1', bucks: '$1', color: '#3b82f6', bg: 'bg-accent-blue/10', border: 'border-accent-blue/30', pending: 1 },
@@ -1830,8 +1833,20 @@ const PREVIOUS_PENDING = [
   { fleetId: 'VAN-6002', reason: 'Awaiting baseline DVIC approval', days: 1 },
 ];
 
-function InspectionReadinessBanner({ onClick }) {
+function InspectionReadinessBanner({ onClick, nextQcDvic }) {
   const { t } = useTranslation('dashboard');
+  // Render a friendly "in N hours" + the vendor workshop name + the local
+  // wall-clock time when a real schedule drives the banner. nextQcDvic is
+  // guaranteed non-null by the caller — RealDVIC only mounts this when
+  // /next-qc-dvic returned a row inside the 12-hour window.
+  const dt = new Date(nextQcDvic.scheduledAt);
+  const niceTime = dt.toLocaleString(undefined, {
+    weekday: 'short', hour: 'numeric', minute: '2-digit',
+  });
+  const hours = nextQcDvic.hoursUntil;
+  const hoursLabel = hours < 1
+    ? `${Math.max(1, Math.round(hours * 60))} min`
+    : `${hours < 2 ? hours.toFixed(1) : Math.round(hours)} hr${hours < 1.5 ? '' : 's'}`;
   return (
     <motion.button
       initial={{ opacity: 0, y: -10 }}
@@ -1843,13 +1858,18 @@ function InspectionReadinessBanner({ onClick }) {
         <Calendar size={18} className="text-accent-green" />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-0.5">
-          <span className="text-sm font-semibold text-white">{t('readinessBanner.heading', 'QC DVIC Scheduled Tonight')}</span>
+        <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+          <span className="text-sm font-semibold text-white">
+            {t('readinessBanner.heading', 'QC DVIC scheduled in')} {hoursLabel}
+          </span>
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-red/15 border border-accent-red/40 text-accent-red text-[10px] font-semibold">
             {t('readinessBanner.actionRequired', 'Action Required')}
           </span>
         </div>
-        <div className="text-xs text-navy-300">{t('readinessBanner.subtitleFmt', { count: INSPECTION_VEHICLES.length + 34, defaultValue: `Confirm QC inspection readiness — ${INSPECTION_VEHICLES.length + 34} vehicles scheduled for tonight` })}</div>
+        <div className="text-xs text-navy-300">
+          {nextQcDvic.vendorWorkshopName || t('readinessBanner.vendorFallback', 'Your vendor')} · {niceTime}
+          {nextQcDvic.notes ? ` · ${nextQcDvic.notes}` : ''}
+        </div>
       </div>
       <div className="hidden sm:flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs font-semibold text-white group-hover:bg-white/10 transition-all">
         {t('readinessBanner.review', 'Review')} <ChevronRight size={12} />
@@ -2406,7 +2426,10 @@ function StartInspectionModal({ user, onClose }) {
                     >
                       {vehicle ? (
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm font-semibold text-white truncate">{vehicle.id} <span className="text-navy-400 font-normal">— {vehicle.model}</span></div>
+                          {/* Show "Van <fleetId>" instead of the internal
+                              VAN-XXXX prefix — what the DSP actually
+                              recognizes in their own fleet. */}
+                          <div className="text-sm font-semibold text-white truncate">Van {vehicle.fleetId || vehicle.id} <span className="text-navy-400 font-normal">— {vehicle.model}</span></div>
                           <div className="text-[11px] text-navy-400 truncate">{t('startInspectionModal.vehicleOptionSubFmt', { plate: vehicle.plate, date: vehicle.lastInspection, defaultValue: `${vehicle.plate} · Last inspected ${vehicle.lastInspection}` })}</div>
                         </div>
                       ) : (
@@ -2591,20 +2614,58 @@ function StartInspectionModal({ user, onClose }) {
   );
 }
 
-// Feedback attribute catalog for repair history thumbs up/down
+// Feedback attribute catalog for repair history thumbs up/down. Wire
+// keys must match the FeedbackModal + backend (snake_case enum values
+// on the vendor_scorecard endpoint).
 const REPAIR_FEEDBACK_ATTRIBUTES = ['Turnaround Time', 'Communication', 'Professionalism', 'Work Quality', 'Price'];
+const REPAIR_FEEDBACK_ATTRIBUTE_KEYS = {
+  'Turnaround Time': 'turnaround_time',
+  'Communication': 'communication',
+  'Professionalism': 'professionalism',
+  'Work Quality': 'work_quality',
+  'Price': 'price',
+};
 
 // Compact thumbs-up / thumbs-down feedback control with attribute dropdown.
 // Used inline on each row of the Defects Repaired history list so the DSP
 // can rate the vendor's work without leaving the page.
-function RepairFeedback({ woId, feedback, onChange }) {
+//
+// Until 2026-05-27 the selection was purely local state — the picker
+// updated `feedback[woId]` in the parent component and the DSP thought
+// the rating was saved, but nothing ever POSTed to /vendor-scorecard.
+// The only working path was the standalone FeedbackModal opened from
+// "pending feedback". Now BOTH paths submit to the same endpoint.
+function RepairFeedback({ woId, feedback, onChange, onSubmitted }) {
   const { t } = useTranslation('dashboard');
   const [openDir, setOpenDir] = useState(null); // 'up' | 'down' | null
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
   const current = feedback?.[woId];
 
-  const selectAttribute = (dir, attr) => {
+  const selectAttribute = async (dir, attr) => {
+    if (busy) return;
+    // Optimistic UI update so the chip flips instantly.
     onChange({ ...feedback, [woId]: { vote: dir, attribute: attr } });
     setOpenDir(null);
+    setErr(null);
+    setBusy(true);
+    try {
+      const wireAttr = REPAIR_FEEDBACK_ATTRIBUTE_KEYS[attr] || attr;
+      const body = { workOrderId: woId, vote: dir };
+      if (dir === 'up') body.impressiveAttribute = wireAttr;
+      else body.negativeAttribute = wireAttr;
+      await scorecardApi.submit(body);
+      onSubmitted && onSubmitted();
+    } catch (e) {
+      setErr(e?.detail || e?.message || 'Failed to save rating');
+      // Roll back the optimistic state so the inspector sees the rating
+      // didn't actually persist.
+      const next = { ...feedback };
+      delete next[woId];
+      onChange(next);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const clear = (e) => {
@@ -2702,14 +2763,67 @@ function RepairFeedback({ woId, feedback, onChange }) {
 }
 
 // ============ Repair History Modal — Completed defects timeline ============
-function RepairHistoryModal({ repairedWOs, user, onClose }) {
+function RepairHistoryModal({ repairedWOs, user, onClose, onFeedbackSubmitted }) {
   const { t } = useTranslation('dashboard');
   const [expanded, setExpanded] = useState(null);
   const [search, setSearch] = useState('');
   const [feedback, setFeedback] = useState({}); // { [woId]: { vote: 'up'|'down', attribute } }
 
+  // Hydrate which WOs still NEED a rating vs which are already rated.
+  // Source: /vendor-scorecard/pending-feedback for this DSP. WOs whose
+  // id is in the pending set show the rating UI; the rest show a green
+  // "✓ Rated" indicator instead of pretending they're still actionable.
+  // Optimistic local removal on rate keeps the UI snappy without waiting
+  // for a re-fetch.
+  const [pendingWoIds, setPendingWoIds] = useState(null); // null = loading, Set when ready
+  useEffect(() => {
+    const dspIdInt = (() => {
+      const raw = user?.organizationId ?? user?.orgId;
+      if (raw == null) return null;
+      const m = String(raw).match(/(\d+)/);
+      return m ? Number(m[1]) : null;
+    })();
+    if (!dspIdInt) { setPendingWoIds(new Set()); return; }
+    let alive = true;
+    // No days filter — show every still-unrated completed WO. The tile
+    // counter uses the same call so the two stay in sync.
+    scorecardApi
+      .pending({ dspId: dspIdInt })
+      .then((res) => {
+        if (!alive) return;
+        const rows = Array.isArray(res) ? res : (res?.items || []);
+        const ids = new Set(rows.map((r) => r.workOrderIdStr || r.workOrderId));
+        setPendingWoIds(ids);
+      })
+      .catch(() => { if (alive) setPendingWoIds(new Set()); });
+    return () => { alive = false; };
+  }, [user]);
+
+  // Called after a successful rating so the row flips from "pending"
+  // → "rated" without waiting on a re-fetch, AND so the parent's tile
+  // badge counter refreshes.
+  const handleRated = (woId) => {
+    setPendingWoIds((prev) => {
+      if (!prev) return prev;
+      const next = new Set(prev);
+      next.delete(woId);
+      return next;
+    });
+    onFeedbackSubmitted && onFeedbackSubmitted();
+  };
+
+  // Drop already-rated WOs entirely — this modal is the "feedback
+  // queue", not a repair-history archive. Once a customer rates a WO
+  // it doesn't belong here anymore (would be confusing — they'd ask
+  // "why is this still here?"). While pending list is loading we show
+  // everything to avoid a perceived empty state. The Vendor Scorecard
+  // page is where rated work lives for review.
+  const visibleRepairedWOs = pendingWoIds == null
+    ? repairedWOs
+    : repairedWOs.filter((wo) => pendingWoIds.has(wo.id));
+
   // Sort by most recently completed first
-  const sorted = [...repairedWOs].sort((a, b) => new Date(b.completedAt || 0) - new Date(a.completedAt || 0));
+  const sorted = [...visibleRepairedWOs].sort((a, b) => new Date(b.completedAt || 0) - new Date(a.completedAt || 0));
 
   const filtered = search
     ? sorted.filter((wo) => {
@@ -2797,9 +2911,26 @@ function RepairHistoryModal({ repairedWOs, user, onClose }) {
         <div className="px-4 sm:px-6 py-4 overflow-y-auto flex-1 space-y-2">
           {filtered.length === 0 ? (
             <div className="text-center py-10">
-              <CheckCheck size={40} className="text-navy-600 mx-auto mb-2" />
-              <p className="text-sm text-white">{search ? t('repairHistoryModal.noMatch', 'No repair history matches your search') : t('repairHistoryModal.noHistory', 'No repair history yet')}</p>
-              <p className="text-xs text-navy-400">{search ? t('repairHistoryModal.tryDifferentKeyword', 'Try a different keyword') : t('repairHistoryModal.asVendorsComplete', 'As vendors complete work orders, they appear here')}</p>
+              <CheckCheck size={40} className="text-accent-green mx-auto mb-2" />
+              {/* Empty state is now context-aware: caught up vs no history
+                  vs filtered-out by search. The "all rated" case is the
+                  most common since rated repairs leave this queue. */}
+              {search ? (
+                <>
+                  <p className="text-sm text-white">{t('repairHistoryModal.noMatch', 'No repair history matches your search')}</p>
+                  <p className="text-xs text-navy-400">{t('repairHistoryModal.tryDifferentKeyword', 'Try a different keyword')}</p>
+                </>
+              ) : repairedWOs.length === 0 ? (
+                <>
+                  <p className="text-sm text-white">{t('repairHistoryModal.noHistory', 'No repair history yet')}</p>
+                  <p className="text-xs text-navy-400">{t('repairHistoryModal.asVendorsComplete', 'As vendors complete work orders, they appear here')}</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-white">{t('repairHistoryModal.allCaughtUp', 'All caught up!')}</p>
+                  <p className="text-xs text-navy-400">{t('repairHistoryModal.allCaughtUpSub', 'Every completed repair has been rated. New ones will appear here as vendors finish work.')}</p>
+                </>
+              )}
             </div>
           ) : (
             filtered.map((wo) => {
@@ -2828,7 +2959,18 @@ function RepairHistoryModal({ repairedWOs, user, onClose }) {
                         <div className="text-[11px] text-navy-400 mt-0.5">{wo.section} · {wo.part}</div>
                       </div>
                       <div className="flex items-center gap-3 shrink-0">
-                        <RepairFeedback woId={wo.id} feedback={feedback} onChange={setFeedback} />
+                        {/* This modal is the pending-feedback queue —
+                            rated WOs were filtered out above so every
+                            row that reaches this point still needs the
+                            customer's rating. After submit, handleRated
+                            drops the row from pendingWoIds and it
+                            disappears on the next render. */}
+                        <RepairFeedback
+                          woId={wo.id}
+                          feedback={feedback}
+                          onChange={setFeedback}
+                          onSubmitted={() => handleRated(wo.id)}
+                        />
                         <div className="text-right">
                           <div className="text-[11px] text-navy-400">{t('repairHistoryModal.completedLabel', 'Completed')}</div>
                           <div className="text-xs text-white">{new Date(wo.completedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
@@ -3454,6 +3596,34 @@ export default function RealDVIC({ user }) {
   const [vanUpdates, setVanUpdates] = useState({});
   const [createWOContext, setCreateWOContext] = useState(null); // { van, defect }
 
+  // Vendor Scorecard pending-feedback modal (DSP rates completed WOs).
+  const [pendingFeedbackOpen, setPendingFeedbackOpen] = useState(false);
+
+  // Live charts (Daily Approved vs Repaired + Open Defects donut).
+  // Replace `weeklyInspections` / `defectCategoryBreakdown` mocks
+  // with backend-derived data scoped to this DSP.
+  const [chartDaily, setChartDaily] = useState(null);     // [{date, approved, repaired}]
+  const [chartDonut, setChartDonut] = useState(null);     // [{key,label,count}]
+  useEffect(() => {
+    const dspIdInt = (() => {
+      const raw = user?.organizationId ?? user?.orgId;
+      if (raw == null) return null;
+      const m = String(raw).match(/(\d+)/);
+      return m ? Number(m[1]) : null;
+    })();
+    if (!dspIdInt) return;
+    let alive = true;
+    Promise.all([
+      dashboardsApi.dspDailyDefects(dspIdInt, { days: 7 }).catch(() => null),
+      dashboardsApi.dspOpenDefectsBreakdown(dspIdInt).catch(() => null),
+    ]).then(([daily, donut]) => {
+      if (!alive) return;
+      if (Array.isArray(daily)) setChartDaily(daily);
+      if (Array.isArray(donut)) setChartDonut(donut);
+    });
+    return () => { alive = false; };
+  }, [user, autoTick]);
+
   // Live "Vans inspected today" — pulled from /inspections + /vehicles.
   // Server scopes by JWT: dsp_owner sees own DSP, vendor/tech sees all DSPs.
   //
@@ -3538,6 +3708,38 @@ export default function RealDVIC({ user }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wizardJustClosed, autoTick, queueRefreshTick]);
   const repairedDefectsCount = repairedWOs.length;
+
+  // Pending-feedback count for the badge on the "Defects Repaired" tile.
+  // Source of truth is /vendor-scorecard/pending-feedback — same endpoint
+  // the standalone PendingFeedbackListModal reads. Re-fetches whenever
+  // queueRefreshTick bumps (inline RepairFeedback submits + standalone
+  // FeedbackModal submits both bump it) so the badge updates without
+  // a page reload (2026-05-27 nota: el counter no refrescaba al ratear
+  // inline desde el RepairHistoryModal).
+  const [pendingFeedbackCount, setPendingFeedbackCount] = useState(0);
+  useEffect(() => {
+    const dspIdInt = (() => {
+      const raw = user?.organizationId ?? user?.orgId;
+      if (raw == null) return null;
+      const m = String(raw).match(/(\d+)/);
+      return m ? Number(m[1]) : null;
+    })();
+    if (!dspIdInt) { setPendingFeedbackCount(0); return; }
+    let alive = true;
+    // No days filter — the gold "Pending Feedback" tile must appear as
+    // long as ANY completed repair lacks the customer's rating, no
+    // matter how long ago it was completed. Matches the modal which
+    // also fetches without a days cap.
+    scorecardApi
+      .pending({ dspId: dspIdInt })
+      .then((res) => {
+        if (!alive) return;
+        const rows = Array.isArray(res) ? res : (res?.items || []);
+        setPendingFeedbackCount(rows.length);
+      })
+      .catch(() => { if (alive) setPendingFeedbackCount(0); });
+    return () => { alive = false; };
+  }, [user, queueRefreshTick, autoTick]);
   // "This week" = last 7 days
   const oneWeekAgo = new Date();
   oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
@@ -3711,8 +3913,9 @@ export default function RealDVIC({ user }) {
     //     the home cards without the user refreshing the page
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalDefectsToday, wizardJustClosed, queueRefreshTick, autoTick]);
-  // Repairs still waiting for DSP feedback (thumbs up/down) on the vendor's work
-  const repairsPendingFeedback = repairedDefectsCount;
+  // Repairs still waiting for DSP feedback (thumbs up/down) — real count
+  // from /vendor-scorecard/pending-feedback, not just total completed.
+  const repairsPendingFeedback = pendingFeedbackCount;
   // Next inspection date auto-computed from the org's inspection frequency
   // set during initial setup (first_inspection + frequency_days). For the
   // demo we compute today + 7 days and render as MM-DD-YYYY.
@@ -3747,29 +3950,51 @@ export default function RealDVIC({ user }) {
   const canStartInspection =
     canInspect(user) && !['dsp_owner', 'dsp_manager'].includes(user?.role);
 
-  // QC inspection banner: in production it appears automatically on
-  // inspection day. For the demo we expose a barely-visible toggle in the
-  // top-right corner of the Home view so we can show/hide it on demand.
-  const [showQcBanner, setShowQcBanner] = useState(false);
+  // QC DVIC banner — now driven by a real schedule, not a manual toggle.
+  // Polls /dashboards/dsp/{id}/next-qc-dvic on mount + every 5 min, and
+  // shows the readiness banner ONLY when a vendor has scheduled an
+  // inspection within the next 12 hours. The vendor admin sets these via
+  // the new "QC DVIC Schedule" card on VendorHome.
+  //
+  // The legacy `showQcBanner` toggle (a barely-visible demo button) is
+  // gone — keeping it would invite confusion between "manual override"
+  // and "real upcoming inspection". `nextQcDvic` being non-null IS the
+  // signal to render.
+  const [nextQcDvic, setNextQcDvic] = useState(null);
+  useEffect(() => {
+    if (!isDspRole(user) && user?.role !== 'site_admin') return;
+    const dspIdInt = (() => {
+      const raw = user?.organizationId ?? user?.orgId;
+      if (raw == null) return null;
+      const m = String(raw).match(/(\d+)/);
+      return m ? Number(m[1]) : null;
+    })();
+    if (!dspIdInt) return;
+    let alive = true;
+    const fetchNext = () => {
+      dashboardsApi.dspNextQcDvic(dspIdInt)
+        .then((row) => { if (alive) setNextQcDvic(row || null); })
+        .catch(() => { if (alive) setNextQcDvic(null); });
+    };
+    fetchNext();
+    // Poll every 5 min so the banner appears in the background as the
+    // 12-hour window opens (e.g. inspection at 8pm; banner visible
+    // starting 8am that day without a page refresh).
+    const id = setInterval(fetchNext, 5 * 60 * 1000);
+    return () => { alive = false; clearInterval(id); };
+  }, [user]);
 
   return (
     <div>
-      {/* Subtle banner-visibility toggle — DSP users only */}
-      {(isDspRole(user) || user?.role === 'site_admin') && (
-        <div className="flex justify-end -mt-2 mb-1">
-          <button
-            onClick={() => setShowQcBanner((s) => !s)}
-            title={showQcBanner ? t('realDvic.qcBannerHideTitle', 'Hide QC inspection banner') : t('realDvic.qcBannerShowTitle', 'Simulate inspection day (show banner)')}
-            className="text-[10px] text-navy-600 hover:text-navy-300 px-2 py-1 rounded transition-colors cursor-pointer"
-          >
-            {showQcBanner ? t('realDvic.qcBannerToggleHide', '· hide banner ·') : t('realDvic.qcBannerToggleShow', '· · ·')}
-          </button>
-        </div>
-      )}
-
-      {/* Daily QC Inspection Readiness banner — only when toggle is on (simulating inspection day) */}
-      {(user?.role === 'dsp_owner' || user?.role === 'site_admin') && showQcBanner && (
-        <InspectionReadinessBanner onClick={() => setShowInspection(true)} />
+      {/* Auto-shown readiness banner — appears when a vendor has scheduled
+          a QC DVIC within the next 12 hours. No manual toggle anymore;
+          `nextQcDvic` is null until the window opens. The vendor sets the
+          schedule from VendorHome → "QC DVIC Schedule" card. */}
+      {(user?.role === 'dsp_owner' || user?.role === 'site_admin') && nextQcDvic && (
+        <InspectionReadinessBanner
+          nextQcDvic={nextQcDvic}
+          onClick={() => setShowInspection(true)}
+        />
       )}
 
       {/* Start New Inspection banner — for Vendor / Technician */}
@@ -3886,15 +4111,25 @@ export default function RealDVIC({ user }) {
             </div>
 
             <div onClick={() => setShowRepairHistory(true)} className="cursor-pointer h-full">
+              {/* Tile is ALWAYS labeled "Pending Feedback" so the customer
+                  sees one consistent metric — the count of completed WOs
+                  that still need their rating — which always matches what's
+                  in the modal it opens. When the queue is empty (0), the
+                  subtitle flips from "X repaired this week" to a friendly
+                  "All caught up" message so a "0" doesn't look broken.
+                  The MetricCard's `color` prop only paints the icon; we
+                  pass AlertTriangle so the gold action-needed accent
+                  actually shows on the tile (matches the other
+                  action-needed tiles like "Defects for approval"). */}
               <MetricCard
-                label={t('realDvic.metrics.defectsRepaired', 'Defects Repaired')}
-                value={repairedDefectsCount}
-                subtitle={t('realDvic.metrics.currentWeek', 'Current Week')}
-                color="accent-green"
+                icon={repairsPendingFeedback > 0 ? AlertTriangle : CheckCheck}
+                label={t('realDvic.metrics.pendingFeedback', 'Pending Feedback')}
+                value={repairsPendingFeedback}
+                subtitle={repairsPendingFeedback > 0
+                  ? t('realDvic.metrics.repairedThisWeekFmt', { count: repairedThisWeekCount, defaultValue: `${repairedThisWeekCount} repaired this week` })
+                  : t('realDvic.metrics.allRated', 'All caught up · click for history')}
+                color={repairsPendingFeedback > 0 ? 'accent-gold' : 'accent-green'}
                 delay={0.2}
-                trend={repairedThisWeekCount > 0 ? Math.round((repairedThisWeekCount / Math.max(totalDefectsToday, 1)) * 100) : undefined}
-                trendUp
-                warning={repairsPendingFeedback > 0 ? t('realDvic.metrics.pendingFeedbackFmt', { count: repairsPendingFeedback, defaultValue: `${repairsPendingFeedback} pending feedback` }) : undefined}
               />
             </div>
           </div>
@@ -3907,7 +4142,17 @@ export default function RealDVIC({ user }) {
               <h3 className="text-sm font-semibold text-white mb-4">{t('realDvic.charts.approvedVsRepaired', 'Daily Approved vs Repaired Defects')}</h3>
               <div className="h-[200px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={weeklyInspections}>
+                  {/* Real backend data when available, fall back to the
+                      mock shape so the chart still renders pre-fetch. */}
+                  <BarChart data={
+                    chartDaily
+                      ? chartDaily.map((p) => ({
+                          day: new Date(p.date).toLocaleDateString(undefined, { weekday: 'short' }),
+                          approved: p.approved,
+                          repaired: p.repaired,
+                        }))
+                      : weeklyInspections
+                  }>
                     <XAxis dataKey="day" tick={{ fill: '#829ab1', fontSize: 12 }} axisLine={false} tickLine={false} />
                     <YAxis tick={{ fill: '#829ab1', fontSize: 11 }} axisLine={false} tickLine={false} />
                     <Tooltip contentStyle={{ background: '#102a43', border: '1px solid #334e68', borderRadius: 8, fontSize: 12 }} />
@@ -3924,23 +4169,54 @@ export default function RealDVIC({ user }) {
             >
               <h3 className="text-sm font-semibold text-white mb-4">{t('realDvic.charts.openDefects', 'Open Defects')}</h3>
               <div className="h-[200px] flex items-center">
-                <ResponsiveContainer width="50%" height="100%">
-                  <PieChart>
-                    <Pie data={defectCategoryBreakdown} cx="50%" cy="50%" innerRadius={45} outerRadius={70} dataKey="value" stroke="none">
-                      {defectCategoryBreakdown.map((entry, i) => <Cell key={i} fill={entry.color} />)}
-                    </Pie>
-                    <Tooltip contentStyle={{ background: '#102a43', border: '1px solid #334e68', borderRadius: 8, fontSize: 12 }} formatter={(v) => [`${v}%`]} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="flex flex-col gap-1.5 text-xs">
-                  {defectCategoryBreakdown.map((cat) => (
-                    <div key={cat.name} className="flex items-center gap-2">
-                      <span className="w-2.5 h-2.5 rounded-full" style={{ background: cat.color }} />
-                      <span className="text-navy-300">{cat.name}</span>
-                      <span className="text-white font-semibold">{cat.value}%</span>
-                    </div>
-                  ))}
-                </div>
+                {(() => {
+                  // Real data when available; fall back to mock shape.
+                  // Key → palette color. The DSP customer donut returns
+                  // {vsa, other} (collapsed per Michael's note 2026-05-26
+                  // — see dashboards.dsp_open_defects_breakdown). The
+                  // legacy per-source keys are kept so the vendor home /
+                  // older payload shapes still resolve a color.
+                  const PALETTE = {
+                    vsa: '#3b82f6',                  // primary blue — most defects
+                    other: '#94a3b8',                // muted slate — catch-all
+                    inspection: '#3b82f6',           // legacy alias for VSA
+                    shop_finding: '#f97316',
+                    maintenance_request: '#a855f7',
+                    customer_report: '#a855f7',
+                    driver_report: '#eab308',
+                  };
+                  const live = chartDonut && chartDonut.length > 0
+                    ? (() => {
+                        const total = chartDonut.reduce((s, sl) => s + (sl.count || 0), 0) || 1;
+                        return chartDonut.map((sl) => ({
+                          name: sl.label,
+                          value: Math.round((sl.count / total) * 100),
+                          color: PALETTE[sl.key] || '#94a3b8',
+                        }));
+                      })()
+                    : defectCategoryBreakdown;
+                  return (
+                    <>
+                      <ResponsiveContainer width="50%" height="100%">
+                        <PieChart>
+                          <Pie data={live} cx="50%" cy="50%" innerRadius={45} outerRadius={70} dataKey="value" stroke="none">
+                            {live.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                          </Pie>
+                          <Tooltip contentStyle={{ background: '#102a43', border: '1px solid #334e68', borderRadius: 8, fontSize: 12 }} formatter={(v) => [`${v}%`]} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div className="flex flex-col gap-1.5 text-xs">
+                        {live.map((cat) => (
+                          <div key={cat.name} className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full" style={{ background: cat.color }} />
+                            <span className="text-navy-300">{cat.name}</span>
+                            <span className="text-white font-semibold">{cat.value}%</span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             </motion.div>
           </div>
@@ -4140,8 +4416,27 @@ export default function RealDVIC({ user }) {
             onClose={() => setShowStartInspection(false)}
           />
         )}
-        {showRepairHistory && <RepairHistoryModal repairedWOs={repairedWOs} user={user} onClose={() => setShowRepairHistory(false)} />}
+        {showRepairHistory && (
+          <RepairHistoryModal
+            repairedWOs={repairedWOs}
+            user={user}
+            onClose={() => setShowRepairHistory(false)}
+            onFeedbackSubmitted={() => setQueueRefreshTick((n) => n + 1)}
+          />
+        )}
         {showFlexFleet && <FlexFleetModal onClose={() => setShowFlexFleet(false)} />}
+        {pendingFeedbackOpen && (
+          <PendingFeedbackListModal
+            dspId={(() => {
+              const raw = user?.organizationId ?? user?.orgId;
+              if (raw == null) return null;
+              const m = String(raw).match(/(\d+)/);
+              return m ? Number(m[1]) : null;
+            })()}
+            onClose={() => setPendingFeedbackOpen(false)}
+            onChanged={() => setQueueRefreshTick((n) => n + 1)}
+          />
+        )}
       </AnimatePresence>
     </div>
   );

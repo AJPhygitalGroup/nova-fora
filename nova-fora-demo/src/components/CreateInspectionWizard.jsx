@@ -411,15 +411,33 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
     ]);
   }, []);
 
-  const handleRemoveDefect = useCallback(async (defect) => {
-    if (!confirm(`Remove "${defect.partLabel || defect.part || 'defect'}"?`)) return;
-    try {
-      await defectsApi.delete(defect.id);
-      setDefects((prev) => prev.filter((d) => d.id !== defect.id));
-    } catch (err) {
-      alert(`Remove failed: ${err?.detail || err?.message || 'unknown'}`);
+  // Called from BOTH the inline trash icon in the defect-log row AND from
+  // the defect-detail-sheet's Remove button. Both forward
+  // (defectId, part, opts?) — NOT a full defect object. Earlier this
+  // expected `(defect)` and read `defect.id` → `undefined` → "Remove
+  // failed: invalid defect id" (project_inspection_bugs.md, 2026-05-27).
+  //
+  // `opts.alreadyDeleted=true` is set by the sheet's Remove button, which
+  // already ran its own confirm + delete; the wizard then skips both to
+  // avoid a duplicate confirm dialog + a redundant DELETE that 404s.
+  const handleRemoveDefect = useCallback(async (defectId, part, opts) => {
+    if (defectId == null) {
+      alert('Remove failed: missing defect id');
+      return;
     }
-  }, []);
+    if (!opts?.alreadyDeleted) {
+      const existing = (defects || []).find((d) => d.id === defectId);
+      const label = existing?.partLabel || part || 'defect';
+      if (!confirm(`Remove "${label}"?`)) return;
+      try {
+        await defectsApi.delete(defectId);
+      } catch (err) {
+        alert(`Remove failed: ${err?.detail || err?.message || 'unknown'}`);
+        return;
+      }
+    }
+    setDefects((prev) => prev.filter((d) => d.id !== defectId));
+  }, [defects]);
 
   // Stable handler for the step-5 odometer PhotoUploader. Same rationale as
   // handleDefectCommitted: keep the function identity stable so PhotoUploader
@@ -1330,6 +1348,15 @@ function Step4Odometer({
               category="odometer"
               maxPhotos={1}
               onChanged={onOdometerPhotoChanged}
+              // The most common flow: inspector taps the orange "Start
+              // inspection to attach the odometer photo" button → draft
+              // is created → this PhotoUploader mounts. The natural next
+              // action is to snap the photo, so open the camera directly
+              // instead of making them tap "Add photo" first.
+              // Gated on odometerPhotoCount===0 so that returning to step 5
+              // from a later step doesn't re-open the camera if the photo
+              // is already on file.
+              autoOpenOnEmpty={odometerPhotoCount === 0}
             />
             <div className={`mt-2 rounded-md border px-2.5 py-2 text-[11px] flex items-start gap-2 ${
               photoLanded

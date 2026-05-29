@@ -24,8 +24,11 @@ import {
 import {
   directory as directoryApi,
   vehicles as vehiclesApi,
+  vendorWorkshops as vendorWorkshopsApi,
+  vendorBucks as vendorBucksApi,
   APIError,
 } from '../api/client';
+import { isVendorRole } from '../lib/permissions';
 
 
 // ─────────────────────────────────────────────────────
@@ -55,6 +58,13 @@ export default function MyDsps({ user }) {
   const [vehicles, setVehicles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // DSP-ids where the current vendor user is marked as primary
+  // (mockup p.10 "You are the primary vendor" gold ribbon).
+  const [primaryDspIds, setPrimaryDspIds] = useState(new Set());
+  // Bucks balance per DSP (sum across the vendor's workshops). Shown
+  // as a small chip on each DSP card so the vendor knows how much
+  // their rewards program has accrued for that customer.
+  const [bucksByDsp, setBucksByDsp] = useState({});
   const [search, setSearch] = useState('');
   // Selected DSP for drill-down. Null = list view.
   const [selectedDsp, setSelectedDsp] = useState(null);
@@ -86,8 +96,68 @@ export default function MyDsps({ user }) {
       .then((res) => alive && setVehicles(res.items || []))
       .catch((err) => console.warn('vehicles fetch failed (DSP cards will show 0 vans):', err));
 
+    // Primary-vendor badges (mockup p.10) + bucks balance per DSP
+    // (iter-2). Both are vendor-only and use the same workshop list,
+    // so we fetch them in the same async block.
+    if (isVendorRole(user)) {
+      (async () => {
+        try {
+          const wsRes = await vendorWorkshopsApi.list({ includeInactive: false });
+          const myOrgInt = parseOrgInt(user?.organizationId);
+          const myWorkshops = (wsRes.items || []).filter(
+            (w) => Number(w.organizationId) === myOrgInt,
+          );
+
+          // Run both lookups in parallel — each is per-workshop and
+          // the two queries are independent.
+          const [primaryRows, bucksRows] = await Promise.all([
+            Promise.all(
+              myWorkshops.map((w) =>
+                vehiclesApi
+                  .listPreferredVendors({
+                    vendorWorkshopId: parseOrgInt(w.id),
+                    isPrimary: true,
+                  })
+                  .catch(() => []),
+              ),
+            ),
+            Promise.all(
+              myWorkshops.map((w) =>
+                vendorBucksApi
+                  .balance(parseOrgInt(w.id))
+                  .catch(() => []),
+              ),
+            ),
+          ]);
+          if (!alive) return;
+
+          const dspSet = new Set();
+          primaryRows.flat().forEach((row) => {
+            if (row?.dspId != null) dspSet.add(Number(row.dspId));
+          });
+          setPrimaryDspIds(dspSet);
+
+          // Sum balances across workshops per DSP — one vendor org
+          // can own multiple shops, and each shop's bucks roll up to
+          // the same DSP relationship from the vendor's POV.
+          const bucksMap = {};
+          bucksRows.flat().forEach((row) => {
+            if (row?.dspId == null) return;
+            const amount = Number(row.balance || 0);
+            if (!bucksMap[row.dspId]) bucksMap[row.dspId] = 0;
+            bucksMap[row.dspId] += amount;
+          });
+          setBucksByDsp(bucksMap);
+        } catch (e) {
+          // Non-fatal — cards just render without the badge/chip.
+          console.warn('vendor lookups failed', e);
+        }
+      })();
+    }
+
     return () => { alive = false; };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   // Index vehicles by DSP id_str for fast lookup in cards
   const vehiclesByDsp = useMemo(() => {
@@ -189,17 +259,40 @@ export default function MyDsps({ user }) {
             const dspVans = vehiclesByDsp[dsp.id] || [];
             const groundedCount = dspVans.filter((v) => v.grounded).length;
             const activeCount = dspVans.filter((v) => v.isActive).length;
+            const dspIntId = parseOrgInt(dsp.id);
+            const isPrimary = primaryDspIds.has(dspIntId);
+            const bucks = bucksByDsp[dspIntId] || 0;
             return (
               <motion.button
                 key={dsp.id}
                 whileHover={{ y: -2 }}
                 onClick={() => setSelectedDsp(dsp)}
-                className="text-left rounded-xl border-2 border-navy-700 bg-navy-900/60 hover:border-accent-blue hover:bg-navy-900 transition-all p-4 cursor-pointer group"
+                className={`text-left rounded-xl border-2 transition-all p-4 cursor-pointer group ${
+                  isPrimary
+                    ? 'border-accent-gold/60 bg-accent-gold/5 hover:border-accent-gold hover:bg-accent-gold/10'
+                    : 'border-navy-700 bg-navy-900/60 hover:border-accent-blue hover:bg-navy-900'
+                }`}
               >
+                <div className="mb-2 flex items-center gap-1.5 flex-wrap">
+                  {isPrimary && (
+                    <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-gold/20 border border-accent-gold/50 text-accent-gold text-[10px] font-bold uppercase tracking-wider">
+                      <Star size={10} fill="currentColor" />
+                      {t('myDsps.primaryVendorBadge', 'You are the primary vendor')}
+                    </div>
+                  )}
+                  {bucks > 0 && (
+                    <div
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-green/15 border border-accent-green/40 text-accent-green text-[10px] font-bold"
+                      title={`Vendor bucks accrued for this customer — redeem against your rewards program tiers`}
+                    >
+                      ${bucks.toFixed(2)} in bucks
+                    </div>
+                  )}
+                </div>
                 <div className="flex items-start justify-between gap-3 mb-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 mb-1">
-                      <Building2 size={14} className="text-accent-blue shrink-0" />
+                      <Building2 size={14} className={isPrimary ? 'text-accent-gold shrink-0' : 'text-accent-blue shrink-0'} />
                       <span className="text-[10px] font-mono text-navy-400">{dsp.id}</span>
                     </div>
                     <h3 className="text-base font-semibold text-white truncate">{dsp.name}</h3>
@@ -334,4 +427,11 @@ function StatTile({ label, value, icon, accent }) {
       <div className="text-xl font-bold text-white">{value}</div>
     </div>
   );
+}
+
+// "DSP-9" / "DSP-0009" / 9 / "9" → 9
+function parseOrgInt(raw) {
+  if (raw == null) return null;
+  const m = String(raw).match(/(\d+)/);
+  return m ? Number(m[1]) : null;
 }

@@ -207,7 +207,16 @@ export default function InspectionChecklist({
           if (!item.part || seen.has(item.part)) continue;
           seen.add(item.part);
           const partObj = cat.parts.find((p) => p.id === item.part);
-          if (partObj) objs.push(partObj);
+          if (partObj) {
+            // Stamp the DVIC item's preset position onto the partObj so the
+            // PartRow rendered in *this* section knows which position to
+            // scope its defectsForPart + status against. Critical for
+            // multi-section parts like body_damage where the SAME part_id
+            // appears on Front / Back / Driver / Passenger cards: without
+            // this, a defect logged on one side bleeds the 'defect' state
+            // into all four cards.
+            objs.push({ ...partObj, presetPosition: item.position || null });
+          }
         }
       }
       out[section.id] = objs;
@@ -246,6 +255,23 @@ export default function InspectionChecklist({
     return out;
   }, [defects, partMarks]);
 
+  // Section-scoped status. For section-pinned parts (presetPosition set),
+  // a 'defect' anywhere else on the same part_id must NOT bleed in — the
+  // card's own state depends on whether there's a defect with the matching
+  // position. Used by sectionCounts + remainingOnPage so navigation tally
+  // matches what the inspector actually sees on each card.
+  const scopedStatusOf = (part) => {
+    if (!part) return 'unmarked';
+    if (part.presetPosition) {
+      const hasDefectHere = (defects || []).some(
+        (d) => d.part === part.id && d.position === part.presetPosition,
+      );
+      if (hasDefectHere) return 'defect';
+      return partMarks[part.id] || 'unmarked';
+    }
+    return partStatus[part.id] || 'unmarked';
+  };
+
   // If the active section is no longer in the visible tabs (e.g. it
   // had zero parts on this vehicle class), jump to the first visible
   // tab so the pane has something to render.
@@ -264,12 +290,14 @@ export default function InspectionChecklist({
       const total = parts.length;
       let marked = 0;
       for (const p of parts) {
-        if (partStatus[p.id] && partStatus[p.id] !== 'unmarked') marked += 1;
+        const s = scopedStatusOf(p);
+        if (s && s !== 'unmarked') marked += 1;
       }
       out[sys.id] = { total, marked };
     }
     return out;
-  }, [tabs, partsBySection, partStatus]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabs, partsBySection, partStatus, defects, partMarks]);
 
   // Total across all tabs (route + extras) for the sticky complete bar.
   const totalCount = useMemo(() => {
@@ -288,15 +316,104 @@ export default function InspectionChecklist({
   const activePage = Math.min(pageBySection[activeSection] || 0, pageTotal - 1);
   const pageStart = activePage * PARTS_PER_PAGE;
   const pageParts = activeParts.slice(pageStart, pageStart + PARTS_PER_PAGE);
-  const remainingOnPage = pageParts.filter((p) => !partStatus[p.id] || partStatus[p.id] === 'unmarked').length;
+  const remainingOnPage = pageParts.filter((p) => {
+    const s = scopedStatusOf(p);
+    return !s || s === 'unmarked';
+  }).length;
+
+  // Section-complete + next-section computed once so the "continue" CTA
+  // can render at the right moment. The CTA only shows when EVERY part
+  // in the section is marked (not just the current page) — so an
+  // inspector on page 2 of 3 doesn't see it until they finish page 3.
+  const activeSectionCounts = sectionCounts[activeSection];
+  const activeSectionDone =
+    activeSectionCounts &&
+    activeSectionCounts.total > 0 &&
+    activeSectionCounts.marked >= activeSectionCounts.total;
+  const currentTabIdx = tabs.findIndex((tab) => tab.id === activeSection);
+  const nextSectionTab = activeSectionDone ? tabs[currentTabIdx + 1] : null;
+  const activeSectionLabel = tabs[currentTabIdx]?.label || '';
+
+  // ─── Swipe navigation (touch screens) ──────────────────────────
+  // The inspector runs the wizard on their phone — swiping left/right
+  // between pages is more natural than tapping Next/Prev. When a swipe
+  // crosses the last/first page, we jump to the next/prev section so
+  // the whole wizard feels like one long swipeable deck.
+  //
+  // Filter rules so taps on Pass/N/A chips don't fire navigation:
+  //   - horizontal distance ≥ 60px
+  //   - vertical drift ≤ 50px (preserve vertical scroll)
+  //   - gesture duration ≤ 700ms (deliberate flick, not a slow drag)
+  //   - defect sheet must NOT be open (sheet handles its own gestures)
+  const touchStartRef = useRef(null);
+  const goToPrev = () => {
+    if (activePage > 0) {
+      setPageBySection((m) => ({ ...m, [activeSection]: activePage - 1 }));
+      return;
+    }
+    // First page → jump to previous section's last page.
+    const idx = tabs.findIndex((t) => t.id === activeSection);
+    if (idx <= 0) return;
+    const prevSec = tabs[idx - 1].id;
+    const prevParts = partsBySection[prevSec] || [];
+    const prevPageTotal = Math.max(1, Math.ceil(prevParts.length / PARTS_PER_PAGE));
+    setActiveSection(prevSec);
+    setPageBySection((m) => ({ ...m, [prevSec]: prevPageTotal - 1 }));
+  };
+  const goToNext = () => {
+    if (activePage < pageTotal - 1) {
+      setPageBySection((m) => ({ ...m, [activeSection]: activePage + 1 }));
+      return;
+    }
+    // Last page → jump to next section's first page.
+    const idx = tabs.findIndex((t) => t.id === activeSection);
+    if (idx < 0 || idx >= tabs.length - 1) return;
+    const nextSec = tabs[idx + 1].id;
+    setActiveSection(nextSec);
+    setPageBySection((m) => ({ ...m, [nextSec]: 0 }));
+  };
+  // Jump directly to a section's first page and scroll the user back
+  // to the top of the new section. Used by the "Continue to {section}"
+  // CTA that appears when the active section flips to complete.
+  const jumpToSection = (sectionId) => {
+    setActiveSection(sectionId);
+    setPageBySection((m) => ({ ...m, [sectionId]: 0 }));
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+  const handleSwipeStart = (e) => {
+    if (sheetState) return;
+    const t = e.touches?.[0];
+    if (!t) return;
+    touchStartRef.current = { x: t.clientX, y: t.clientY, time: Date.now() };
+  };
+  const handleSwipeEnd = (e) => {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!start || sheetState) return;
+    const t = e.changedTouches?.[0];
+    if (!t) return;
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    const dt = Date.now() - start.time;
+    if (Math.abs(dx) < 60 || Math.abs(dy) > 50 || dt > 700) return;
+    if (dx < 0) goToNext(); else goToPrev();
+  };
 
   // ─── Mark / pass-remaining handlers ────────────────────────────
-  const markPart = async (part, status) => {
+  const markPart = async (part, status, position = null) => {
     setInlineError(null);
     const prev = partMarks[part];
     setPartMarks((m) => ({ ...m, [part]: status }));
     try {
-      await inspectionsApi.markPart(inspectionId, { part, status });
+      // `position` is sent for section-pinned parts (body_damage's
+      // Front/Back/Driver/Passenger cards). The backend uses it to
+      // scope the has-defect guard so passing one side doesn't fail
+      // just because another side of the same part has a logged damage.
+      const body = { part, status };
+      if (position) body.position = position;
+      await inspectionsApi.markPart(inspectionId, body);
     } catch (err) {
       // Roll back the optimistic write
       setPartMarks((m) => {
@@ -310,29 +427,51 @@ export default function InspectionChecklist({
 
   const passRemainingOnPage = async () => {
     if (!pageParts.length) return;
-    const candidates = pageParts
-      .filter((p) => !partStatus[p.id] || partStatus[p.id] === 'unmarked')
-      .map((p) => p.id);
+    // Keep the full part objects (not just ids) so we know each part's
+    // presetPosition. Multi-section parts (body_damage) must be passed via
+    // the position-scoped single endpoint, NOT the flat bulk endpoint —
+    // the bulk guard skips any part that has a defect on ANY position,
+    // which would wrongly skip body_damage's clean sides whenever another
+    // side has a logged damage (the draft-stuck regression, 2026-05-28).
+    const candidates = pageParts.filter((p) => {
+      const s = scopedStatusOf(p);
+      return !s || s === 'unmarked';
+    });
     if (candidates.length === 0) return;
     setInlineError(null);
-    // Optimistic
+
+    const positioned = candidates.filter((p) => p.presetPosition);
+    const flat = candidates.filter((p) => !p.presetPosition).map((p) => p.id);
+
+    // Optimistic for everything on the page.
     setPartMarks((m) => {
       const next = { ...m };
-      for (const part of candidates) next[part] = 'pass';
+      for (const p of candidates) next[p.id] = 'pass';
       return next;
     });
     try {
-      const res = await inspectionsApi.passRemainingParts(inspectionId, candidates);
-      // Reconcile against server's authoritative response — it may have
-      // skipped parts that gained defects in a parallel browser tab.
-      const inserted = new Set(res?.insertedParts || []);
+      // 1. Position-scoped parts: one markPart each (idempotent on the
+      //    server; ON CONFLICT updates). The backend allows the pass
+      //    because it checks defects at THIS position only.
+      await Promise.all(
+        positioned.map((p) =>
+          inspectionsApi.markPart(inspectionId, {
+            part: p.id, status: 'pass', position: p.presetPosition,
+          }).catch(() => null),  // best-effort; reconciled below
+        )
+      );
+      // 2. Flat parts: the bulk endpoint.
+      let inserted = new Set();
+      if (flat.length > 0) {
+        const res = await inspectionsApi.passRemainingParts(inspectionId, flat);
+        inserted = new Set(res?.insertedParts || []);
+      }
+      // Reconcile flat parts against the bulk response (positioned ones
+      // already committed individually — keep their optimistic mark).
       setPartMarks((m) => {
         const next = { ...m };
-        for (const part of candidates) {
-          if (!inserted.has(part)) {
-            // Server skipped — likely got a defect; drop optimistic mark.
-            delete next[part];
-          }
+        for (const part of flat) {
+          if (!inserted.has(part)) delete next[part];  // server skipped
         }
         return next;
       });
@@ -340,7 +479,7 @@ export default function InspectionChecklist({
       // Full rollback
       setPartMarks((m) => {
         const next = { ...m };
-        for (const part of candidates) delete next[part];
+        for (const p of candidates) delete next[p.id];
         return next;
       });
       setInlineError(err?.detail || err?.message || 'Bulk pass failed');
@@ -348,7 +487,44 @@ export default function InspectionChecklist({
   };
 
   // ─── Sheet open/close + defect commit/remove ──────────────────
+  // For body_damage we look up the DVIC item for the active section to
+  // grab its preset position (FRONT / REAR / DRIVER_SIDE / PASSENGER_SIDE)
+  // — the chip itself doesn't carry section context. We also pass
+  // forceNew=true so each tap creates a fresh damage instance (instead of
+  // the default "edit the existing one") and compute the next damage_seq
+  // from defects already logged on this (part, position) so the unique
+  // index (uq_defects_…) doesn't collide.
+  const BODY_DAMAGE_PART = 'body_damage';
+  const isMultiInstancePart = (partId) => partId === BODY_DAMAGE_PART;
+  const findPresetPositionFor = (partId) => {
+    if (!tpl) return null;
+    const sec = (tpl.sections || []).find((s) => s.id === activeSection);
+    if (!sec) return null;
+    for (const cat0 of sec.categories || []) {
+      for (const item of cat0.items || []) {
+        if (item.part === partId && item.position) return item.position;
+      }
+    }
+    return null;
+  };
+  const nextDamageSeq = (partId, position) => {
+    const same = (defects || []).filter(
+      (d) => d.part === partId && (d.position || null) === (position || null),
+    );
+    let max = 0;
+    for (const d of same) {
+      const seq = Number(d?.details?.damage_seq);
+      if (Number.isFinite(seq) && seq > max) max = seq;
+    }
+    return max + 1;
+  };
   const openDefectSheet = (part, defectType) => {
+    if (isMultiInstancePart(part)) {
+      const presetPosition = findPresetPositionFor(part);
+      const damageSeq = nextDamageSeq(part, presetPosition);
+      setSheetState({ part, defectType, forceNew: true, presetPosition, damageSeq });
+      return;
+    }
     setSheetState({ part, defectType });
   };
   const closeDefectSheet = () => setSheetState(null);
@@ -367,8 +543,8 @@ export default function InspectionChecklist({
     closeDefectSheet();
   };
 
-  const handleDefectRemoved = (defectId, part) => {
-    onRemoveDefect?.(defectId, part);
+  const handleDefectRemoved = (defectId, part, opts) => {
+    onRemoveDefect?.(defectId, part, opts);
     closeDefectSheet();
   };
 
@@ -446,8 +622,12 @@ export default function InspectionChecklist({
         </div>
       </div>
 
-      {/* Active section pane */}
-      <div className="px-1 pb-32">
+      {/* Active section pane — touch swipe navigates pages/sections */}
+      <div
+        className="px-1 pb-32"
+        onTouchStart={handleSwipeStart}
+        onTouchEnd={handleSwipeEnd}
+      >
         {inlineError && (
           <div className="mb-3 rounded-md bg-accent-red/10 border border-accent-red/40 px-3 py-2 text-xs text-accent-red flex items-start gap-2">
             <AlertCircle size={14} className="shrink-0 mt-0.5" />
@@ -465,16 +645,38 @@ export default function InspectionChecklist({
         ) : (
           <>
             <div className="space-y-2">
-              {pageParts.map((p) => (
-                <PartRow
-                  key={p.id}
-                  part={p}
-                  status={partStatus[p.id] || 'unmarked'}
-                  defectsForPart={(defects || []).filter((d) => d.part === p.id)}
-                  onMark={markPart}
-                  onOpenDefect={openDefectSheet}
-                />
-              ))}
+              {pageParts.map((p) => {
+                // When a part is pinned to a section position (e.g.
+                // body_damage on Front Side carries presetPosition='front'),
+                // scope both defectsForPart AND status by that position so
+                // each section's card has independent state. Without
+                // presetPosition (i.e., most parts), fall back to filtering
+                // by part_id alone — keeps every other card behaving
+                // exactly as before.
+                //
+                // The status MUST come from scopedStatusOf — falling back
+                // to partStatus[p.id] for the no-defect case would re-leak
+                // the global "any defect on this part" signal back into
+                // the card and lock it into defect state (which then hides
+                // the Pass/N/A buttons → the inspector can't dismiss that
+                // section). The Front Side regression that motivated this
+                // fix went exactly that way.
+                const myDefects = (defects || []).filter((d) =>
+                  d.part === p.id
+                  && (!p.presetPosition || d.position === p.presetPosition)
+                );
+                const myStatus = scopedStatusOf(p);
+                return (
+                  <PartRow
+                    key={p.id}
+                    part={p}
+                    status={myStatus}
+                    defectsForPart={myDefects}
+                    onMark={markPart}
+                    onOpenDefect={openDefectSheet}
+                  />
+                );
+              })}
             </div>
 
             {remainingOnPage > 0 && (
@@ -487,6 +689,60 @@ export default function InspectionChecklist({
               </button>
             )}
 
+            {/* Section-complete CTA — only when EVERY part in this
+                section (across all pages) is marked. Animates in so the
+                inspector notices that the section just flipped to done.
+                If there's a next section, the button takes them there;
+                if this is the last section, we point them to the sticky
+                Submit button at the bottom. */}
+            <AnimatePresence>
+              {activeSectionDone && nextSectionTab && (
+                <motion.button
+                  key={`next-section-${nextSectionTab.id}`}
+                  type="button"
+                  initial={{ opacity: 0, y: 8, scale: 0.97 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -8, scale: 0.97 }}
+                  transition={{ duration: 0.25 }}
+                  onClick={() => jumpToSection(nextSectionTab.id)}
+                  className="mt-4 w-full inline-flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl bg-gradient-to-r from-accent-green to-accent-blue text-white text-sm font-bold shadow-lg shadow-accent-green/25 hover:opacity-90 active:opacity-80 cursor-pointer"
+                >
+                  <Check size={16} />
+                  <span className="truncate">
+                    {t('checklist.sectionDoneContinueFmt', {
+                      section: nextSectionTab.label,
+                      defaultValue: `${activeSectionLabel} complete — continue to ${nextSectionTab.label}`,
+                    })}
+                  </span>
+                  <ChevronRight size={16} />
+                </motion.button>
+              )}
+              {activeSectionDone && !nextSectionTab && !allMarked && (
+                <motion.div
+                  key="all-but-not-marked"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  className="mt-4 px-4 py-3 rounded-xl bg-accent-green/15 border border-accent-green/40 text-accent-green text-sm font-semibold flex items-center justify-center gap-2 text-center"
+                >
+                  <Check size={16} />
+                  {t('checklist.lastSectionDone', 'Last section complete — review other tabs above before submitting.')}
+                </motion.div>
+              )}
+              {activeSectionDone && !nextSectionTab && allMarked && (
+                <motion.div
+                  key="all-marked-msg"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  className="mt-4 px-4 py-3 rounded-xl bg-accent-green/20 border-2 border-accent-green text-accent-green text-sm font-bold flex items-center justify-center gap-2 text-center"
+                >
+                  <Check size={16} />
+                  {t('checklist.allSectionsDone', 'All sections complete — tap Submit below to finalize the inspection.')}
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             {pageTotal > 1 && (
               <div className="mt-4 flex items-center justify-between gap-3">
                 <button
@@ -496,8 +752,14 @@ export default function InspectionChecklist({
                 >
                   <ChevronLeft size={16} /> {t('checklist.prev', 'Prev')}
                 </button>
-                <span className="text-xs font-semibold text-navy-300 bg-navy-800/60 px-3 py-1.5 rounded-full">
+                <span
+                  className="text-xs font-semibold text-navy-300 bg-navy-800/60 px-3 py-1.5 rounded-full flex flex-col items-center"
+                  title={t('checklist.swipeHint', 'Swipe left/right on touch screens')}
+                >
                   {t('checklist.pageFmt', { page: activePage + 1, total: pageTotal, defaultValue: `Page ${activePage + 1} of ${pageTotal}` })}
+                  <span className="block sm:hidden text-[9px] text-navy-400 mt-0.5 leading-none">
+                    ← {t('checklist.swipeHintShort', 'swipe')} →
+                  </span>
                 </span>
                 <button
                   disabled={activePage >= pageTotal - 1}
@@ -631,9 +893,15 @@ export default function InspectionChecklist({
             vehicleClass={vehicleClass}
             partId={sheetState.part}
             defectTypeId={sheetState.defectType}
-            existingDefect={(defects || []).find(
-              (d) => d.part === sheetState.part && d.defectType === sheetState.defectType,
-            )}
+            existingDefect={
+              // forceNew suppresses the "edit existing" branch so each tap
+              // creates a fresh instance (body_damage uses this).
+              sheetState.forceNew ? null : (defects || []).find(
+                (d) => d.part === sheetState.part && d.defectType === sheetState.defectType,
+              )
+            }
+            presetPosition={sheetState.presetPosition || null}
+            damageSeq={sheetState.damageSeq || null}
             onCommitted={handleDefectCommitted}
             onRemoved={handleDefectRemoved}
             onClose={closeDefectSheet}
@@ -713,7 +981,7 @@ function PartRow({ part, status, defectsForPart, onMark, onOpenDefect }) {
           {!isDefect && (
             <>
               <button
-                onClick={() => onMark(part.id, isPass ? null : 'pass')}
+                onClick={() => onMark(part.id, isPass ? null : 'pass', part.presetPosition || null)}
                 disabled={isPass && false /* TODO: support unpass via DELETE */}
                 className={`w-9 h-9 rounded-full inline-flex items-center justify-center text-sm font-bold border transition-all cursor-pointer ${
                   isPass
@@ -725,7 +993,7 @@ function PartRow({ part, status, defectsForPart, onMark, onOpenDefect }) {
                 ✓
               </button>
               <button
-                onClick={() => onMark(part.id, isNa ? null : 'na')}
+                onClick={() => onMark(part.id, isNa ? null : 'na', part.presetPosition || null)}
                 className={`px-2 h-9 rounded-full inline-flex items-center justify-center text-[10px] font-bold border transition-all cursor-pointer ${
                   isNa
                     ? 'bg-navy-600 text-white border-navy-600'
@@ -764,6 +1032,32 @@ function PartRow({ part, status, defectsForPart, onMark, onOpenDefect }) {
           })}
         </div>
       )}
+
+      {/* Multi-instance "Add another" affordance — body_damage only.
+          Once at least one damage has been logged on this card, surface
+          explicit "+ Add Scratch" / "+ Add Dent" buttons so the inspector
+          knows they can keep stacking damages on the same panel without
+          creating extra cards. (The chip strip above ALSO triggers a new
+          instance on tap, but the buttons here are the discoverable
+          affordance — chips look like edit-toggles to many users.) */}
+      {part.id === 'body_damage' && defectsForPart.length > 0
+        && part.defectTypes && part.defectTypes.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-accent-red/30 flex flex-wrap items-center gap-1.5">
+          <span className="text-[10px] uppercase tracking-wide text-navy-400 font-semibold mr-1">
+            Add another:
+          </span>
+          {part.defectTypes.map((dt) => (
+            <button
+              key={`add-${dt.id}`}
+              onClick={() => onOpenDefect(part.id, dt.id)}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-semibold border border-dashed border-accent-blue/60 bg-accent-blue/10 text-accent-blue hover:bg-accent-blue/20 cursor-pointer"
+            >
+              <span className="text-sm leading-none">+</span>
+              <span>{dt.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -783,6 +1077,14 @@ function DefectDetailSheet({
   partId,
   defectTypeId,
   existingDefect,
+  // For section-pinned parts (body_damage), the parent passes the
+  // DVIC item's preset position so we save the right position (FRONT /
+  // REAR / DRIVER_SIDE / PASSENGER_SIDE) without showing a picker.
+  presetPosition = null,
+  // For multi-instance parts, the parent computes the next damage_seq
+  // so each new instance gets a unique slot in the COALESCE-on-details
+  // unique index without colliding with previously-saved rows.
+  damageSeq = null,
   onCommitted,
   onRemoved,
   onClose,
@@ -810,9 +1112,31 @@ function DefectDetailSheet({
     : defectType?.requiresPhoto !== false;  // default true
   const detailsSchema = defectType?.detailsSchema || {};
 
-  const [position, setPosition] = useState(existingDefect?.position || '');
+  const [position, setPosition] = useState(
+    existingDefect?.position || presetPosition || ''
+  );
+  // Hide the position picker when the parent already pinned a position
+  // (true for body_damage which derives position from the active section).
+  const positionLockedByPreset = !!presetPosition && !existingDefect;
   const [notes, setNotes] = useState(existingDefect?.notes || '');
-  const [details, setDetails] = useState(existingDefect?.details || {});
+  // Initialize details with REQUIRED boolean fields defaulted to false.
+  // Without this, schemas like windshield/cracked (`in_drivers_line_of_sight`)
+  // submit with `details: {}` when the inspector doesn't tick the checkbox
+  // and the API rejects with "details validation failed: '<field>' is a
+  // required property". Booleans are unique here — text/number fields
+  // would fail validation if we defaulted them to a value, but a missing
+  // required boolean almost always means "no" in inspector UX.
+  const [details, setDetails] = useState(() => {
+    if (existingDefect?.details) return { ...existingDefect.details };
+    const initial = {};
+    const schema = defectType?.detailsSchema || {};
+    const required = Array.isArray(schema.required) ? schema.required : [];
+    const props = schema.properties || {};
+    for (const name of required) {
+      if (props[name]?.type === 'boolean') initial[name] = false;
+    }
+    return initial;
+  });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
@@ -847,6 +1171,12 @@ function DefectDetailSheet({
         onClose();
         return;
       }
+      // Inject damage_seq into details for multi-instance parts so the
+      // (vehicle, insp, part, position, type, details.damage_seq) unique
+      // index has a distinct slot per damage on the same panel.
+      const finalDetails = damageSeq != null
+        ? { ...details, damage_seq: damageSeq }
+        : details;
       const created = await defectsApi.create({
         vehicleId,
         inspectionId,
@@ -855,7 +1185,7 @@ function DefectDetailSheet({
         defectType: defectType.id,
         position: position || null,
         notes: notes.trim() || null,
-        details,
+        details: finalDetails,
       });
       setCreatedId(created.id);
       // If photo isn't required, we're done — commit and close.
@@ -891,7 +1221,11 @@ function DefectDetailSheet({
     if (!window.confirm(t('checklist.sheet.confirmRemove', 'Remove this defect from the inspection?'))) return;
     try {
       await defectsApi.delete(existingDefect.id);
-      onRemoved(existingDefect.id, part.id);
+      // Tell the parent we already deleted (and confirmed) so it skips
+      // its own confirm + API call — otherwise the inspector gets a
+      // second confirm dialog and the wizard fires a redundant
+      // DELETE that 404s.
+      onRemoved(existingDefect.id, part.id, { alreadyDeleted: true });
     } catch (err) {
       setError(err?.detail || err?.message || 'Remove failed');
     }
@@ -950,8 +1284,10 @@ function DefectDetailSheet({
             </div>
           )}
 
-          {/* Position — radio pills */}
-          {validPositions.length > 0 && (
+          {/* Position — radio pills. Hidden when the parent pinned a
+              preset position (body_damage uses this — the section IS the
+              position so a picker would only add a redundant tap). */}
+          {validPositions.length > 0 && !positionLockedByPreset && (
             <div>
               <label className="text-xs font-semibold text-navy-300 mb-1.5 block">
                 {t('checklist.sheet.position', 'Position')}
@@ -1041,6 +1377,13 @@ function DefectDetailSheet({
                 parentId={createdId}
                 category="damage"
                 onChanged={handlePhotoChanged}
+                // Auto-pop the camera the moment the uploader mounts so
+                // the inspector goes Tap chip → fill fields → Save →
+                // Camera, instead of having an extra "Add photo" tap in
+                // between. Only when the photo is required AND nothing
+                // is uploaded yet (edit-mode re-opens shouldn't surprise
+                // an inspector who already attached photos previously).
+                autoOpenOnEmpty={requiresPhoto && !existingDefect?.photos?.length}
               />
               {requiresPhoto && photoCount === 0 && (
                 <p className="mt-2 text-[11px] text-accent-gold">

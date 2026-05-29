@@ -50,6 +50,11 @@ const readDimensions = (blob) =>
  *  - onChanged: optional callback fired after a successful upload/delete
  *  - readOnly: if true, hide Add button + delete button
  *  - maxPhotos: optional cap (e.g. 1 for odometer)
+ *  - autoOpenOnEmpty: if true AND there are no photos at mount, programmatically
+ *      click the file input so the camera opens automatically. Used for the
+ *      mandatory-photo defect flow so the inspector doesn't have to tap
+ *      "Add photo" right after tapping "Save defect" — saves one tap on
+ *      mobile and keeps the gesture flow natural.
  */
 export default function PhotoUploader({
   parentKind = 'defect',
@@ -59,6 +64,7 @@ export default function PhotoUploader({
   onChanged,
   readOnly = false,
   maxPhotos = null,
+  autoOpenOnEmpty = false,
 }) {
   const { t } = useTranslation('wizard');
   // Each item: { id?, url?, preview?, status, error?, _retryFile?, tempId? }
@@ -104,6 +110,31 @@ export default function PhotoUploader({
     setItems(initialPhotos.map((p) => ({ ...p, status: 'done' })));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialPhotosKey]);
+
+  // Auto-open the camera on mount when the parent flagged this uploader
+  // as the entry point for a mandatory photo and there's nothing uploaded
+  // yet. We fire the click on the next frame so React finishes the mount
+  // before the OS picker shows up — and we guard with a ref so retries
+  // (e.g. user cancelled the camera, then state changed) don't re-fire.
+  //
+  // iOS Safari sometimes blocks `input.click()` outside a user gesture.
+  // The parent triggers our mount as a direct result of a tap on
+  // "Save defect", so we're still within the gesture stack — but if the
+  // browser blocks it, the manual "Add photo" tile is still there as
+  // fallback, so worst case the inspector gets the previous 2-tap flow.
+  const autoOpenFiredRef = useRef(false);
+  useEffect(() => {
+    if (!autoOpenOnEmpty || autoOpenFiredRef.current) return;
+    if (readOnly) return;
+    // initialPhotos counts existing photos at mount; items is just
+    // initialized from it so any zero-length means nothing to show.
+    if (initialPhotos.length > 0) return;
+    autoOpenFiredRef.current = true;
+    // Defer until after layout so the picker doesn't fight the slide-up animation.
+    const id = requestAnimationFrame(() => inputRef.current?.click());
+    return () => cancelAnimationFrame(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOpenOnEmpty]);
 
   const uploadOne = async (file, retryItemId) => {
     const tempId = retryItemId || `tmp-${crypto.randomUUID()}`;

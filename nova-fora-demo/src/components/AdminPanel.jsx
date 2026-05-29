@@ -8,12 +8,14 @@ import {
   Clock, Calendar, RefreshCw, RotateCw, Send, QrCode, Eye, EyeOff, Copy, Package, Sparkles,
   Armchair, Paintbrush, Car, Zap, Circle, Search, Lightbulb, Droplet, Wind,
   LifeBuoy, Gauge, MonitorSmartphone, ThermometerSun, HelpCircle, Zap as ZapIcon,
-  Ban, CheckCheck, ExternalLink, UserCircle, Loader2
+  Ban, CheckCheck, ExternalLink, UserCircle, Loader2, Gift
 } from 'lucide-react';
 import { orgUsers, AVAILABLE_ROLES, rolesAssignableBy, preventiveMaintenanceJobs, pmIntervalsByVehicleType, VENDOR_SERVICES, DEFECT_CATEGORIES, fleetSnapshotVans, VENDOR_ASSIGNABLE_DSPS } from '../data/mockData';
 import { inspectionRules as inspectionRulesApi, catalog as defectCatalogApi, invitations as invitationsApi, APIError } from '../api/client';
-import { isOrgAdmin as isOrgAdminRole } from '../lib/permissions';
+import { isOrgAdmin as isOrgAdminRole, isVendorRole } from '../lib/permissions';
 import Badge from './ui/Badge';
+import RewardsTab from './admin/RewardsTab';
+import InspectorPerformanceTab from './admin/InspectorPerformanceTab';
 
 // V2.2 vehicle classes — drive both the DVIC checklist and this admin
 // catalog view. Labels intentionally describe the *physical* vehicle type;
@@ -2346,12 +2348,15 @@ export default function AdminPanel({ user }) {
   // permissions for catalog editing.
   const isOrgAdmin = isOrgAdminRole(user);
 
+  const isVendor = isVendorRole(user);
   const tabs = [
     { id: 'users',       label: t('tabs.users', 'Users'),               icon: Users,        available: isOrgAdmin },
     { id: 'invitations', label: t('tabs.invitations', 'Invitations'),   icon: Mail,         available: isOrgAdmin },
     { id: 'security',    label: t('tabs.security', 'Security'),         icon: Shield,       available: true },
     { id: 'org',         label: t('tabs.organization', 'Organization'), icon: Building2,    available: isOrgAdmin },
     { id: 'pm',          label: t('tabs.pm', 'Preventive Maintenance'), icon: RefreshCw,    available: isOrgAdmin },
+    { id: 'rewards',     label: t('tabs.rewards', 'Rewards'),           icon: Gift,         available: isVendor || isSiteAdmin },
+    { id: 'inspectors',  label: t('tabs.inspectors', 'Inspector Performance'), icon: Shield, available: isDspOwner || isSiteAdmin },
     { id: 'defects',     label: t('tabs.defects', 'Defect Rules'),      icon: CheckCheck,   available: isDspOwner || isSiteAdmin },
   ].filter((tab) => tab.available);
 
@@ -2401,6 +2406,8 @@ export default function AdminPanel({ user }) {
           {activeTab === 'security' && <SecurityTab user={user} />}
           {activeTab === 'org' && <OrganizationTab user={user} />}
           {activeTab === 'pm' && <PMTab user={user} />}
+          {activeTab === 'rewards' && <RewardsTab user={user} />}
+          {activeTab === 'inspectors' && <InspectorPerformanceTab />}
           {activeTab === 'defects' && <DefectRulesTab user={user} />}
         </motion.div>
       </AnimatePresence>
