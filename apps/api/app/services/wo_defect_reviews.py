@@ -126,18 +126,36 @@ async def manual_review(
     decision: DefectReviewDecision,
     reviewer_id: int,
     reason: str | None = None,
+    reject_reason_code: str | None = None,
 ) -> DefectReview:
     """Record a manual decision. Approved defects become eligible for
     bundling (caller hands off to wo_bundler.consider_defect_for_bundling).
 
+    `reject_reason_code` is the structured rejection code introduced by
+    mockup p.9: 'shop_no_capability' | 'illegitimate_defect' | 'other'.
+    Only meaningful when `decision='rejected'`. The
+    'illegitimate_defect' value drives the inspector KPI.
+
     Caller is responsible for committing the session.
     """
+    if reject_reason_code is not None and decision != DefectReviewDecision.REJECTED:
+        # Defensive — callers should never pass a reject reason on an
+        # approve. Silently dropping it would lose the SW's intent.
+        raise ValueError("reject_reason_code only valid when decision='rejected'")
+    if reject_reason_code is not None and reject_reason_code not in (
+        "shop_no_capability", "illegitimate_defect", "other",
+    ):
+        raise ValueError(
+            f"reject_reason_code must be one of "
+            f"shop_no_capability/illegitimate_defect/other (got {reject_reason_code!r})"
+        )
     review = DefectReview(
         defect_id=defect_id,
         decision=decision,
         decision_method=DefectReviewDecisionMethod.MANUAL,
         reviewer_id=reviewer_id,
         reason=reason,
+        reject_reason_code=reject_reason_code,
     )
     session.add(review)
     await session.flush()
@@ -151,6 +169,11 @@ async def manual_review(
             else "defect_manually_rejected"
         ),
         actor_id=reviewer_id,
-        details={"defect_id": defect_id, "method": "manual", "reason": reason},
+        details={
+            "defect_id": defect_id,
+            "method": "manual",
+            "reason": reason,
+            **({"reject_reason_code": reject_reason_code} if reject_reason_code else {}),
+        },
     )
     return review

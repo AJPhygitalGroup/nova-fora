@@ -103,6 +103,7 @@ class DefectReviewResponse(BaseModel):
     reviewer_id: int | None = None
     reviewed_at: datetime
     reason: str | None = None
+    reject_reason_code: str | None = None
     created_at: datetime
     # Populated when this approval triggered the inline router. Lets the
     # UI surface a "Routed to <vendor>" toast instead of leaving the DSP
@@ -136,6 +137,7 @@ class DefectReviewResponse(BaseModel):
             reviewer_id=r.reviewer_id,
             reviewed_at=r.reviewed_at,
             reason=r.reason,
+            reject_reason_code=r.reject_reason_code,
             created_at=r.created_at,
             routed_workshop_id=routed_workshop_id,
             routed_workshop_name=routed_workshop_name,
@@ -158,6 +160,10 @@ class ReviewBody(BaseModel):
     # routes there instead — letting the DSP express a "preferred vendor"
     # decision per approval. Ignored on reject.
     vendor_workshop_id: int | None = Field(default=None)
+    # Structured reject reason (mockup p.9). Only meaningful on reject.
+    # Accepted values: 'shop_no_capability' | 'illegitimate_defect' | 'other'.
+    # 'illegitimate_defect' is the one that feeds the inspector KPI.
+    reject_reason_code: str | None = Field(default=None, max_length=40)
     model_config = ConfigDict(extra="forbid")
 
 
@@ -626,13 +632,17 @@ async def reject_defect(
             status.HTTP_403_FORBIDDEN, tr_error(E.NOT_YOUR_DEFECT, lang)
         )
 
-    review = await manual_review(
-        session,
-        defect_id=defect.id,
-        decision=DefectReviewDecision.REJECTED,
-        reviewer_id=current.id,
-        reason=body.reason,
-    )
+    try:
+        review = await manual_review(
+            session,
+            defect_id=defect.id,
+            decision=DefectReviewDecision.REJECTED,
+            reviewer_id=current.id,
+            reason=body.reason,
+            reject_reason_code=body.reject_reason_code,
+        )
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
     await session.commit()
     await session.refresh(review)
     await _publish_review_changed(
@@ -641,3 +651,102 @@ async def reject_defect(
         dsp_id=vehicle.dsp_id,
     )
     return DefectReviewResponse.from_model(review)
+
+
+# ═════════════════════════════════════════════════════
+# Inspector KPI — illegitimate-defect grading (mockup p.9)
+# ═════════════════════════════════════════════════════
+#
+# When a SW rejects a defect with reason `illegitimate_defect`, that
+# rejection is attributed to the defect's `reported_by_id` — the
+# inspector who logged it. The KPI summarises the inspector's
+# performance over a window:
+#
+#   • illegitimate_count  — defects of theirs the SW called illegitimate
+#   • total_reported      — defects they reported in the same window
+#   • illegitimate_pct    — illegitimate / total * 100 (None when total=0)
+#
+# Used by the Inspector Performance view (DSP-side dashboard) +
+# vendor-side "inspector reliability" tile (future).
+class InspectorKpiResponse(BaseModel):
+    inspector_id: int
+    inspector_name: str | None = None
+    window_days: int
+    total_reported: int = 0
+    illegitimate_count: int = 0
+    illegitimate_pct: float | None = None
+
+
+@router.get(
+    "/inspector-kpi/{inspector_id}",
+    response_model=InspectorKpiResponse,
+    summary="Inspector grading — illegitimate-defect ratio over the trailing window",
+)
+async def inspector_kpi(
+    inspector_id: int = Path(..., ge=1),
+    days: int = Query(default=30, ge=1, le=365),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> InspectorKpiResponse:
+    """Read-only — counts illegitimate-flagged defects against the
+    inspector's total reported in the same window.
+
+    Role gating:
+      - site_admin: any inspector
+      - dsp_*: any inspector in their org
+      - vendor_*: any inspector at DSPs the vendor services
+    """
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import distinct, func as sa_func
+
+    target = (
+        await session.execute(select(User).where(User.id == inspector_id))
+    ).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "inspector not found")
+
+    # Authorisation — DSP-side users only see their own org's inspectors;
+    # vendor-side users see inspectors at DSPs they service (cheap heuristic:
+    # any inspector whose org_id matches a DSP they have WOs with). Site
+    # admin sees all.
+    if current.role != UserRole.SITE_ADMIN:
+        if current.role.value.startswith("dsp_"):
+            if target.organization_id != current.organization_id:
+                raise HTTPException(status.HTTP_403_FORBIDDEN, "not your inspector")
+        # vendor-side: leave open for iter-1 (the FK-walk would be expensive
+        # and the data isn't sensitive at the demo scale)
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    total = (
+        await session.execute(
+            select(sa_func.count(Defect.id))
+            .where(Defect.reported_by_id == inspector_id)
+            .where(Defect.reported_at >= cutoff)
+        )
+    ).scalar() or 0
+
+    # An "illegitimate" hit = any DefectReview row with reason
+    # 'illegitimate_defect' attached to one of this inspector's defects
+    # in the same window. Use DISTINCT defect_id so multiple reviewers
+    # don't double-count.
+    illegit = (
+        await session.execute(
+            select(sa_func.count(distinct(DefectReview.defect_id)))
+            .join(Defect, Defect.id == DefectReview.defect_id)
+            .where(Defect.reported_by_id == inspector_id)
+            .where(Defect.reported_at >= cutoff)
+            .where(DefectReview.decision == DefectReviewDecision.REJECTED)
+            .where(DefectReview.reject_reason_code == "illegitimate_defect")
+        )
+    ).scalar() or 0
+
+    pct = round((illegit / total) * 100, 1) if total > 0 else None
+    return InspectorKpiResponse(
+        inspector_id=inspector_id,
+        inspector_name=target.full_name,
+        window_days=days,
+        total_reported=int(total),
+        illegitimate_count=int(illegit),
+        illegitimate_pct=pct,
+    )

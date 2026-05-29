@@ -31,7 +31,7 @@ services:
     image: redis:7-alpine
     container_name: nova-redis
     ports:
-      - "6379:6379"
+      - "6380:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -78,7 +78,7 @@ services:
       APP_URL: http://localhost:5173
       API_URL: http://localhost:8000
     ports:
-      - "8000:8000"
+      - "8001:8000"
     depends_on:
       postgres:
         condition: service_healthy

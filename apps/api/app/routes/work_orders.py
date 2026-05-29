@@ -36,6 +36,8 @@ import logging
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import and_, func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -49,8 +51,10 @@ from app.models.defect import Defect
 from app.models.inspection import Inspection
 from app.models.organization import Organization
 from app.models.vehicle import Vehicle
+from app.models.defect import DefectSource
 from app.models.work_orders import (
     DefectResolution,
+    DefectReviewDecision,
     DspWoResponse,
     LineItemBillingType,
     LineItemCategory,
@@ -59,6 +63,7 @@ from app.models.work_orders import (
     RepairRequestDefect,
     StatusTrackingMode,
     VendorWorkshop,
+    WoActivityLog,
     WoActivityLogEntityType,
     WorkOrder,
     WorkOrderLineItem,
@@ -155,9 +160,26 @@ class WorkOrderResponse(BaseModel):
     vehicle_fleet_id: str | None = None
     vehicle_plate: str | None = None
     vehicle_id_str: str | None = None
+    vehicle_year: int | None = None
+    vehicle_make: str | None = None
+    vehicle_model: str | None = None
     workshop_name: str | None = None
     assigned_technician_name: str | None = None
     inspection_mileage_floor: int | None = None  # min odometer at completion
+    # Compact primary-RO snapshot for the list view — lets the SW chips
+    # ("Pending Parts", "Pending FMC", "Awaiting Customer") filter without
+    # an N-fetch detail round trip. The detail endpoint still returns the
+    # full `ros` array; this is the minimum the list table needs.
+    primary_ro: dict | None = None
+    # Defect rollups for the customer-side "pending action" badges:
+    #   - pending_cost_count   = defects with estimated_cost set AND
+    #                            cost_decision still NULL → DSP must
+    #                            approve/reject the cost (often a shortfall).
+    #   - pending_review_count = defects with no DefectReview row → DSP
+    #                            hasn't scope-approved yet.
+    # Both are 0 when nothing's waiting on the DSP.
+    pending_cost_count: int = 0
+    pending_review_count: int = 0
 
     # Scheduling + DSP response (PR: scheduled repairs)
     scheduled_at: datetime | None = None
@@ -180,9 +202,15 @@ class WorkOrderResponse(BaseModel):
         vehicle_fleet_id: str | None = None,
         vehicle_plate: str | None = None,
         vehicle_id_str: str | None = None,
+        vehicle_year: int | None = None,
+        vehicle_make: str | None = None,
+        vehicle_model: str | None = None,
         workshop_name: str | None = None,
         assigned_technician_name: str | None = None,
         inspection_mileage_floor: int | None = None,
+        primary_ro: dict | None = None,
+        pending_cost_count: int = 0,
+        pending_review_count: int = 0,
     ) -> "WorkOrderResponse":
         return cls(
             id=wo.id_str,
@@ -216,9 +244,15 @@ class WorkOrderResponse(BaseModel):
             vehicle_fleet_id=vehicle_fleet_id,
             vehicle_plate=vehicle_plate,
             vehicle_id_str=vehicle_id_str,
+            vehicle_year=vehicle_year,
+            vehicle_make=vehicle_make,
+            vehicle_model=vehicle_model,
             workshop_name=workshop_name,
             assigned_technician_name=assigned_technician_name,
             inspection_mileage_floor=inspection_mileage_floor,
+            primary_ro=primary_ro,
+            pending_cost_count=pending_cost_count,
+            pending_review_count=pending_review_count,
             scheduled_at=wo.scheduled_at,
             repair_bucket=(
                 wo.repair_bucket.value if hasattr(wo.repair_bucket, "value")
@@ -344,6 +378,10 @@ class NoteResp(BaseModel):
         description="'internal' (vendor team only) or 'customer' (bilateral SW ↔ DSP thread).",
     )
     body: str
+    escalation_reason: str | None = Field(
+        default=None,
+        description="'cmr' or 'exceeded_price_cap' when SW escalated this note. Else NULL.",
+    )
     created_at: datetime
 
     @classmethod
@@ -355,6 +393,7 @@ class NoteResp(BaseModel):
             author_role=n.author_role.value if hasattr(n.author_role, "value") else n.author_role,
             channel=n.channel.value if hasattr(n.channel, "value") else (n.channel or "internal"),
             body=n.body,
+            escalation_reason=n.escalation_reason,
             created_at=n.created_at,
         )
 
@@ -379,6 +418,13 @@ class WoDefectResp(BaseModel):
     # [{ id, category, url, content_type, size_bytes, width, height,
     #    uploaded_by, uploaded_at }] — flat dicts so we don't have to
     # cross-import PhotoResponse into this schema.
+    # Cost state (drives the DSP's $ Approve cost modal — billing_type
+    # for AMR/CMR split; estimated_cost + fmc_capped_at for the shortfall
+    # math; cost_decision for the current state).
+    billing_type: str | None = None
+    estimated_cost: Decimal | None = None
+    fmc_capped_at: Decimal | None = None
+    cost_decision: str | None = None
 
 
 class WorkOrderDetailResponse(WorkOrderResponse):
@@ -391,11 +437,9 @@ class WorkOrderDetailResponse(WorkOrderResponse):
     # evidence the inspector captured.
     defects: list[WoDefectResp] = Field(default_factory=list)
     # Vehicle context lifted from the joined Vehicle row so the WO card
-    # can render Year / Make / Model / VIN / FMC / last_known_mileage
-    # without a second /vehicles/{id} call.
-    vehicle_year: int | None = None
-    vehicle_make: str | None = None
-    vehicle_model: str | None = None
+    # can render VIN / FMC / last_known_mileage without a second
+    # /vehicles/{id} call. (vehicle_year/make/model live on the parent
+    # WorkOrderResponse now — the list view needs them too.)
     vehicle_vin: str | None = None
     vehicle_fmc: str | None = None
     vehicle_mileage: int | None = None
@@ -513,6 +557,10 @@ class RoCreateBody(BaseModel):
 
 
 class RoPatchBody(BaseModel):
+    # ro_number lets the SW overwrite the TBD-{wo.id} placeholder that
+    # /accept auto-creates. The Review modal sends the real vendor RO#
+    # once the SW pulls it from RO Writer / Mitchell / Auto Integrate.
+    ro_number: str | None = Field(default=None, min_length=1, max_length=60)
     is_primary: bool | None = None
     modification_reason: str | None = None
     model_config = ConfigDict(extra="forbid")
@@ -524,6 +572,12 @@ class NoteBody(BaseModel):
     channel: WorkOrderNoteChannel = Field(
         default=WorkOrderNoteChannel.INTERNAL,
         description="'internal' (vendor team only) or 'customer' (visible to DSP).",
+    )
+    escalation_reason: str | None = Field(
+        default=None,
+        description="Set to 'cmr' or 'exceeded_price_cap' to flag this customer "
+                    "note for SW escalation (mockup p.7). Only meaningful on "
+                    "channel='customer'; backend rejects it on internal notes.",
     )
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
@@ -618,6 +672,9 @@ async def _resolve_display_fields(
         out["vehicle_fleet_id"] = veh.fleet_id
         out["vehicle_plate"] = veh.plate
         out["vehicle_id_str"] = veh.id_str
+        out["vehicle_year"] = veh.year
+        out["vehicle_make"] = veh.make
+        out["vehicle_model"] = veh.model
     org = (
         await session.execute(
             select(Organization).where(Organization.id == wo.dsp_id)
@@ -643,6 +700,83 @@ async def _resolve_display_fields(
     out["inspection_mileage_floor"] = await _max_inspection_mileage_for_wo(
         session, wo
     )
+
+    # Compact primary-RO snapshot for the list view (spec §3.6 fields the
+    # SW chip filters depend on: pickup_type, scheduled_start_at,
+    # parts_*, submitted_to_fmc_at, fmc_approved_at). One small query per
+    # WO — cheap at list-page sizes and keeps the table render single-fetch.
+    primary_ro_row = (
+        await session.execute(
+            select(WorkOrderRo)
+            .where(WorkOrderRo.work_order_id == wo.id)
+            .where(WorkOrderRo.is_primary.is_(True))
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    # Per-WO defect rollups for the customer-side action badges.
+    # Both queries scope to defects linked to this WO's RR — that's what
+    # the SW + DSP think of as "the defects on this WO". Subqueries are
+    # cheap enough at list-page scale (~50 WOs).
+    from app.models.work_orders import DefectReview
+    pending_cost = (
+        await session.execute(
+            select(func.count(Defect.id))
+            .join(RepairRequestDefect, RepairRequestDefect.defect_id == Defect.id)
+            .where(RepairRequestDefect.repair_request_id == wo.repair_request_id)
+            .where(Defect.estimated_cost.is_not(None))
+            .where(Defect.cost_decision.is_(None))
+        )
+    ).scalar() or 0
+    pending_review = (
+        await session.execute(
+            select(func.count(Defect.id))
+            .join(RepairRequestDefect, RepairRequestDefect.defect_id == Defect.id)
+            .outerjoin(DefectReview, DefectReview.defect_id == Defect.id)
+            .where(RepairRequestDefect.repair_request_id == wo.repair_request_id)
+            .where(DefectReview.id.is_(None))
+        )
+    ).scalar() or 0
+    out["pending_cost_count"] = int(pending_cost)
+    out["pending_review_count"] = int(pending_review)
+
+    if primary_ro_row is not None:
+        out["primary_ro"] = {
+            "id": primary_ro_row.id,
+            "ro_number": primary_ro_row.ro_number,
+            "is_primary": primary_ro_row.is_primary,
+            "added_at": primary_ro_row.added_at.isoformat() if primary_ro_row.added_at else None,
+            "parts_ordered_at": (
+                primary_ro_row.parts_ordered_at.isoformat()
+                if primary_ro_row.parts_ordered_at else None
+            ),
+            "parts_received_at": (
+                primary_ro_row.parts_received_at.isoformat()
+                if primary_ro_row.parts_received_at else None
+            ),
+            "submitted_to_fmc_at": (
+                primary_ro_row.submitted_to_fmc_at.isoformat()
+                if primary_ro_row.submitted_to_fmc_at else None
+            ),
+            "fmc_approved_at": (
+                primary_ro_row.fmc_approved_at.isoformat()
+                if primary_ro_row.fmc_approved_at else None
+            ),
+            "scheduled_start_at": (
+                primary_ro_row.scheduled_start_at.isoformat()
+                if primary_ro_row.scheduled_start_at else None
+            ),
+            "pickup_requested_at": (
+                primary_ro_row.pickup_requested_at.isoformat()
+                if primary_ro_row.pickup_requested_at else None
+            ),
+            "pickup_type": primary_ro_row.pickup_type,
+            "pickup_duration_text": primary_ro_row.pickup_duration_text,
+            "pickup_location": primary_ro_row.pickup_location,
+            "pickup_notes": primary_ro_row.pickup_notes,
+            "key_location": primary_ro_row.key_location,
+            "vendor_status": primary_ro_row.vendor_status,
+            "estimated_duration_minutes": primary_ro_row.estimated_duration_minutes,
+        }
     return out
 
 
@@ -752,6 +886,14 @@ async def list_work_orders(
                     "the next N hours from now. Drives the DSP-side "
                     "'Scheduled Repairs' home card (typically 36).",
     ),
+    has_confirmed_pickup: bool | None = Query(
+        default=None,
+        description="If true, only WOs whose primary RO has scheduled_start_at "
+                    "set (DSP confirmed the drop-off — that's how confirmation is "
+                    "captured in iter-1). If false, only WOs with pickup_type set "
+                    "but scheduled_start_at still null (i.e., the AWAITING CUSTOMER "
+                    "bucket). Drives the SW dashboard 'Customer Confirmed Pickup' section.",
+    ),
     limit: int = Query(default=100, ge=1, le=500),
     current: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
@@ -806,6 +948,25 @@ async def list_work_orders(
             .where(WorkOrder.scheduled_at <= horizon)
             .where(WorkOrder.status.notin_(["cancelled", "declined", "completed"]))
         )
+    if has_confirmed_pickup is not None:
+        # Filter via EXISTS on the primary RO row so we don't multiply
+        # the result set if a WO ever ends up with multiple primary ROs
+        # (the partial UNIQUE index forbids it but EXISTS is defensive).
+        ro_subq = select(WorkOrderRo.id).where(
+            WorkOrderRo.work_order_id == WorkOrder.id,
+            WorkOrderRo.is_primary.is_(True),
+        )
+        if has_confirmed_pickup:
+            ro_subq = (
+                ro_subq.where(WorkOrderRo.pickup_requested_at.is_not(None))
+                .where(WorkOrderRo.scheduled_start_at.is_not(None))
+            )
+        else:
+            ro_subq = (
+                ro_subq.where(WorkOrderRo.pickup_type.is_not(None))
+                .where(WorkOrderRo.scheduled_start_at.is_(None))
+            )
+        stmt = stmt.where(ro_subq.exists())
 
     # Scheduled-list callers want chronological order (earliest first); the
     # default WO list view stays newest-first.
@@ -994,9 +1155,30 @@ async def get_work_order(
         for p in photo_rows:
             photos_by_defect.setdefault(p.defect_id, []).append(p)
 
+    # Resolve billing_type per defect via the same helper the cost endpoint
+    # uses (AMR for AMR/Netradyne, CMR for everything else). One-shot via
+    # the catalog group; cached implicitly per request session.
+    from app.services.wo_defect_costs import derive_billing_type
+    from app.services.wo_defect_reviews import _resolve_defect_group
+
+    # Pre-fetch the vehicle once for vehicle_class (used by the billing
+    # derivation). We reload the existing veh variable from below; do it
+    # eagerly here too so the loop has access.
+    _veh_for_billing = (
+        await session.execute(select(Vehicle).where(Vehicle.id == wo.vehicle_id))
+    ).scalar_one_or_none()
+
     defects_payload: list[WoDefectResp] = []
     for d, reporter in defect_rows:
         ph_list = photos_by_defect.get(d.id, [])
+        billing = None
+        if _veh_for_billing is not None:
+            try:
+                group = await _resolve_defect_group(session, d, _veh_for_billing.vehicle_class)
+                billing = derive_billing_type(group)
+            except Exception:  # noqa: BLE001
+                billing = None
+
         defects_payload.append(WoDefectResp(
             id=d.id_str,
             part=(d.part.value if hasattr(d.part, "value") else str(d.part)),
@@ -1006,6 +1188,10 @@ async def get_work_order(
             reported_at=d.reported_at,
             reported_by=reporter.full_name if reporter else None,
             notes=d.notes,
+            billing_type=billing,
+            estimated_cost=d.estimated_cost,
+            fmc_capped_at=d.fmc_capped_at,
+            cost_decision=d.cost_decision,
             photos=[
                 {
                     "id": p.id_str,
@@ -1028,6 +1214,7 @@ async def get_work_order(
     ).scalar_one_or_none()
 
     base = await _build_wo_response(session, wo)
+    # vehicle_year/make/model already populated on `base` via _resolve_display_fields.
     return WorkOrderDetailResponse(
         **base.model_dump(),
         line_items=[LineItemResponse.from_model(li) for li in line_items],
@@ -1035,9 +1222,6 @@ async def get_work_order(
         ros=[WorkOrderRoResp.from_model(r) for r in ros],
         notes=[NoteResp.from_model(n) for n in notes],
         defects=defects_payload,
-        vehicle_year=veh.year if veh else None,
-        vehicle_make=veh.make if veh else None,
-        vehicle_model=veh.model if veh else None,
         vehicle_vin=veh.vin if veh else None,
         vehicle_fmc=veh.fmc if veh else None,
         vehicle_mileage=veh.mileage if veh else None,
@@ -1108,6 +1292,42 @@ async def accept_wo(
     await generate_line_items_on_accept(
         session, work_order_id=wo.id, actor_id=current.id
     )
+
+    # Auto-create a placeholder primary RO so the iter-1 SW flow
+    # (Pending → Pending FMC → Pending Parts → Ready to Schedule) can
+    # fire sync events without an explicit "Add RO" step. The SW edits
+    # the placeholder to the real vendor RO# from the modal later. The
+    # placeholder uses 'TBD-{wo.id}' so it's obvious it needs replacing.
+    existing_primary = (
+        await session.execute(
+            select(WorkOrderRo)
+            .where(WorkOrderRo.work_order_id == wo.id)
+            .where(WorkOrderRo.is_primary.is_(True))
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if existing_primary is None:
+        placeholder = WorkOrderRo(
+            work_order_id=wo.id,
+            ro_number=f"TBD-{wo.id}",
+            is_primary=True,
+            added_by_id=current.id,
+        )
+        session.add(placeholder)
+        await session.flush()
+        await log_event(
+            session,
+            entity_type=WoActivityLogEntityType.RO,
+            entity_id=placeholder.id,
+            action="ro_added",
+            actor_id=current.id,
+            details={
+                "ro_number": placeholder.ro_number,
+                "is_primary": True,
+                "placeholder": True,
+            },
+        )
+
     await refresh_rr_status(
         session, repair_request_id=wo.repair_request_id, actor_id=current.id
     )
@@ -1402,6 +1622,19 @@ async def complete_wo(
     await refresh_rr_status(
         session, repair_request_id=wo.repair_request_id, actor_id=current.id
     )
+    # Vendor bucks accrual — credit the DSP for each paid defect closed
+    # in this WO. Idempotent (skips defects that already have an
+    # accrual row), no-ops if the vendor has no active rewards program.
+    try:
+        from app.services.vendor_bucks import accrue_for_completed_wo
+        await accrue_for_completed_wo(
+            session, work_order_id=wo.id, actor_id=current.id,
+        )
+    except Exception as e:  # noqa: BLE001
+        # Never block the WO complete on a rewards-ledger failure;
+        # log and move on. The vendor's bucks balance just stays at the
+        # last accrued value until the next completion retries.
+        log.warning("vendor_bucks accrual failed for WO %s: %s", wo.id, e)
     await session.commit()
     await session.refresh(wo)
     await _publish_wo_changed(wo, "completed")
@@ -1993,6 +2226,19 @@ async def patch_ro(
         ro.is_primary = False
     if body.modification_reason is not None:
         ro.modification_reason = body.modification_reason
+    if body.ro_number is not None:
+        new_num = body.ro_number.strip()
+        if new_num and new_num != ro.ro_number:
+            prior = ro.ro_number
+            ro.ro_number = new_num
+            await log_event(
+                session,
+                entity_type=WoActivityLogEntityType.RO,
+                entity_id=ro.id,
+                action="ro_number_changed",
+                actor_id=current.id,
+                details={"prior": prior, "new": new_num},
+            )
     session.add(ro)
     await session.commit()
     await session.refresh(ro)
@@ -2045,12 +2291,30 @@ async def add_note(
                 "DSP users cannot post to the internal vendor thread",
             )
 
+    # Escalation only applies to customer-facing notes — the mockup's
+    # "Escalate" button lives on the customer thread (mockup p.7).
+    # Reject any attempt to escalate an internal note so the field's
+    # semantics stay clean for downstream queries.
+    escalation = body.escalation_reason
+    if escalation is not None:
+        if channel != WorkOrderNoteChannel.CUSTOMER:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "escalation_reason only allowed on channel='customer' notes",
+            )
+        if escalation not in ("cmr", "exceeded_price_cap"):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "escalation_reason must be 'cmr' or 'exceeded_price_cap'",
+            )
+
     note = WorkOrderNote(
         work_order_id=wo.id,
         author_id=current.id,
         author_role=role,
         channel=channel,
         body=body.body,
+        escalation_reason=escalation,
     )
     session.add(note)
     await session.flush()
@@ -2058,12 +2322,13 @@ async def add_note(
         session,
         entity_type=WoActivityLogEntityType.NOTE,
         entity_id=note.id,
-        action="note_added",
+        action="note_escalated" if escalation else "note_added",
         actor_id=current.id,
         details={
             "work_order_id": wo.id,
             "author_role": role.value,
             "channel": channel.value,
+            **({"escalation_reason": escalation} if escalation else {}),
         },
     )
     await session.commit()
@@ -2491,6 +2756,197 @@ class RoSyncEventResponse(BaseModel):
 
 
 @router.post(
+    "/manual",
+    response_model=dict,
+    status_code=status.HTTP_201_CREATED,
+    summary="Manual SW-created WO from scratch (wizard from Vendor Home + Create WO)",
+)
+async def manual_create_wo(
+    body: dict = Body(...),
+    request: Request = None,
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Wizard-driven manual WO creation (mockup pages 4-6).
+
+    Chain:
+      1. Validate inputs (SW role + workshop access + vehicle + catalog)
+      2. Create Defect — source mapped from reason_code:
+           newly_discovered  → shop_finding
+           secondary         → shop_finding
+           auto_integrate    → maintenance_request
+           customer_requested→ customer_report
+           other             → other
+      3. Manual auto-approve the scope review with current SW as reviewer.
+         (Per the mockup banner: "Shop created defects must be approved by
+         customers for work authorization" — the customer's separate cost
+         decision still gates billing; this step just clears the scope-
+         review gate so the bundler can route it.)
+      4. Bundler picks up the approved defect → RR.
+      5. Force-route the RR to the chosen workshop (defaults to caller's
+         first workshop if not given). Creates a WO in pending_acceptance.
+      6. If ro_number given, patch the auto-created TBD-{id} placeholder.
+
+    The SW finds the new WO in their Work Orders list immediately — no
+    extra step. Customer sees the defect in their existing review queue
+    AFTER acceptance (the WO acceptance is the SW's job per normal flow).
+    """
+    from app.routes.vehicles import _parse_vehicle_id
+    from app.services.defect_validation import validate_defect_write, DefectValidationError
+    from app.services.wo_defect_reviews import manual_review
+    from app.services.wo_bundler import consider_defect_for_bundling
+    from app.services.wo_router import route_repair_request
+
+    lang = get_request_language(request) if request else "en"
+
+    # ── Role gate ─────────────────────────────────────
+    if current.role not in (UserRole.SITE_ADMIN, UserRole.VENDOR_ADMIN, UserRole.SERVICE_WRITER):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "manual create requires vendor SW role")
+
+    # ── Vehicle ──────────────────────────────────────
+    vehicle_raw = body.get("vehicle_id") or body.get("vehicleId")
+    if not vehicle_raw:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "vehicle_id required")
+    vid = _parse_vehicle_id(str(vehicle_raw))
+    vehicle = (await session.execute(select(Vehicle).where(Vehicle.id == vid))).scalar_one_or_none()
+    if vehicle is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "vehicle not found")
+
+    # ── Defect inputs ────────────────────────────────
+    part = body.get("part")
+    defect_type = body.get("defect_type") or body.get("defectType")
+    position = body.get("position")
+    description = body.get("description") or body.get("notes")
+    reason_code = (body.get("reason_code") or body.get("reasonCode") or "newly_discovered").strip()
+
+    if not part or not defect_type:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "part + defect_type required")
+
+    # Map reason_code → DefectSource (validates the reason too).
+    REASON_TO_SOURCE = {
+        "newly_discovered": DefectSource.SHOP_FINDING,
+        "secondary": DefectSource.SHOP_FINDING,
+        "auto_integrate": DefectSource.MAINTENANCE_REQUEST,
+        "customer_requested": DefectSource.CUSTOMER_REPORT,
+        "other": DefectSource.OTHER,
+    }
+    src = REASON_TO_SOURCE.get(reason_code)
+    if src is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"reason_code must be one of: {list(REASON_TO_SOURCE)}",
+        )
+
+    # ── Catalog validation ───────────────────────────
+    try:
+        await validate_defect_write(
+            session,
+            part=part,
+            defect_type=defect_type,
+            position=position,
+            details={},
+            source=src,
+            inspection_id=None,
+            vehicle_class=vehicle.vehicle_class,
+        )
+    except DefectValidationError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
+
+    # ── Create the Defect ────────────────────────────
+    defect = Defect(
+        vehicle_id=vid,
+        inspection_id=None,
+        source=src,
+        part=part,
+        defect_type=defect_type,
+        position=position,
+        details={},
+        notes=(f"[reason: {reason_code}] " + (description or "")).strip(),
+        reported_by_id=current.id,
+    )
+    session.add(defect)
+    try:
+        await session.flush()
+    except IntegrityError as e:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "duplicate defect on this vehicle (same part/position/type already exists)",
+        ) from e
+
+    # ── Auto-approve scope so bundler can route ──────
+    await manual_review(
+        session,
+        defect_id=defect.id,
+        decision=DefectReviewDecision.APPROVED,
+        reviewer_id=current.id,
+        reason=f"shop-created via Vendor Home wizard (reason: {reason_code})",
+    )
+
+    # ── Bundler → RR ─────────────────────────────────
+    await consider_defect_for_bundling(session, defect_id=defect.id, actor_id=current.id)
+
+    # ── Resolve target workshop + force-route ────────
+    target_ws = body.get("vendor_workshop_id") or body.get("vendorWorkshopId")
+    if target_ws is None:
+        # Default to the caller's first workshop.
+        my_workshops = await _vendor_workshop_ids_for_user(session, current)
+        if not my_workshops:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "no vendor_workshop_id provided and you have no workshops",
+            )
+        target_ws = my_workshops[0]
+    target_ws = int(target_ws)
+
+    # Find the RR the bundler just created for this defect.
+    rr_row = (
+        await session.execute(
+            select(RepairRequestDefect.repair_request_id)
+            .where(RepairRequestDefect.defect_id == defect.id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if rr_row is None:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "bundler did not create an RR for the new defect (unexpected)",
+        )
+
+    new_wo = await route_repair_request(
+        session,
+        repair_request_id=rr_row,
+        actor_id=current.id,
+        target_workshop_id=target_ws,
+    )
+
+    # ── Optional: replace the auto TBD-{id} placeholder RO ──
+    ro_number_raw = body.get("ro_number") or body.get("roNumber")
+    if new_wo is not None and ro_number_raw:
+        # The /accept endpoint adds the placeholder, but here the WO is
+        # still pending_acceptance (no placeholder yet). Add an RO row
+        # directly so the SW's typed RO# sticks from the start.
+        new_ro = WorkOrderRo(
+            work_order_id=new_wo.id,
+            ro_number=str(ro_number_raw).strip(),
+            is_primary=True,
+            added_by_id=current.id,
+        )
+        session.add(new_ro)
+
+    await session.commit()
+    if new_wo is not None:
+        await session.refresh(new_wo)
+
+    return {
+        "defect_id": defect.id,
+        "repair_request_id": rr_row,
+        "work_order_id": new_wo.id if new_wo else None,
+        "work_order_id_str": new_wo.id_str if new_wo else None,
+        "routed": new_wo is not None,
+    }
+
+
+@router.post(
     "/{wo_id}/ros/{ro_id}/sync-event",
     response_model=RoSyncEventResponse,
     summary="SW: stamp an RO sync event (parts_ordered, FMC submitted, no_show, …)",
@@ -2609,3 +3065,155 @@ async def ro_sync_event(
         prior_value=prior_value,
     )
 
+
+# ═════════════════════════════════════════════════════
+# WO V2 iter-1 — activity log read endpoint
+# ═════════════════════════════════════════════════════
+#
+# Returns the merged audit trail for a WO and all its child entities
+# (ROs, notes — the demo shows these inline under the "Activity (N)"
+# disclosure). We DON'T mix in defect_review activity here because that
+# lives on the RR, not the WO; the customer-side defect approval modal
+# has its own activity tab on the defect itself.
+
+
+class ActivityLogEntry(BaseModel):
+    """A single wo_activity_log row reshaped for the WO modal timeline."""
+
+    id: int
+    entity_type: Literal[
+        "repair_request", "work_order", "line_item",
+        "defect_resolution", "defect_review", "note", "ro",
+    ]
+    entity_id: int
+    action: str
+    actor_id: int | None
+    actor_name: str | None
+    details: dict
+    created_at: datetime
+
+
+class ActivityLogResponse(BaseModel):
+    items: list[ActivityLogEntry]
+    total: int = Field(
+        ..., description="Total count over the filter (independent of limit)."
+    )
+
+
+@router.get(
+    "/{wo_id}/activity",
+    response_model=ActivityLogResponse,
+    summary="Read the activity timeline for a WO (WO + its ROs + notes)",
+)
+async def get_wo_activity(
+    request: Request,
+    wo_id: str = Path(..., examples=["WO-00001"]),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> ActivityLogResponse:
+    """Merge the WO's own log with its child ROs' + notes' logs, sorted
+    newest first. Used by the WO detail modal's "Activity (N)" panel.
+
+    Tenancy: same as get_work_order — the caller has to be able to see
+    the WO at all.
+    """
+    lang = get_request_language(request)
+    wo = await _load_wo_or_404(session, _parse_wo_id(wo_id), lang)
+    if not await _can_view_wo(session, wo, current):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, tr_error(E.NOT_YOUR_WORK_ORDER, lang)
+        )
+
+    # Look up the child entity IDs once — we OR them into the main query
+    # so we don't have to UNION two SELECTs.
+    ro_ids = list(
+        (
+            await session.execute(
+                select(WorkOrderRo.id).where(WorkOrderRo.work_order_id == wo.id)
+            )
+        ).scalars()
+    )
+    note_ids = list(
+        (
+            await session.execute(
+                select(WorkOrderNote.id).where(WorkOrderNote.work_order_id == wo.id)
+            )
+        ).scalars()
+    )
+
+    # Build (entity_type, entity_id) predicates for each child set.
+    conditions = [
+        and_(
+            WoActivityLog.entity_type == WoActivityLogEntityType.WORK_ORDER,
+            WoActivityLog.entity_id == wo.id,
+        )
+    ]
+    if ro_ids:
+        conditions.append(
+            and_(
+                WoActivityLog.entity_type == WoActivityLogEntityType.RO,
+                WoActivityLog.entity_id.in_(ro_ids),
+            )
+        )
+    if note_ids:
+        conditions.append(
+            and_(
+                WoActivityLog.entity_type == WoActivityLogEntityType.NOTE,
+                WoActivityLog.entity_id.in_(note_ids),
+            )
+        )
+    # The repair_request the WO descends from also belongs in the timeline
+    # (routed / no_eligible_vendor / status rollups). Cheap join, single
+    # row from the WO so just OR in the RR's entries.
+    conditions.append(
+        and_(
+            WoActivityLog.entity_type == WoActivityLogEntityType.REPAIR_REQUEST,
+            WoActivityLog.entity_id == wo.repair_request_id,
+        )
+    )
+
+    base = select(WoActivityLog).where(or_(*conditions))
+
+    # Total count for pagination metadata. Use the same WHERE so we don't
+    # diverge from the page query.
+    total_q = select(func.count(WoActivityLog.id)).where(or_(*conditions))
+    total = (await session.execute(total_q)).scalar() or 0
+
+    page_q = (
+        base.order_by(WoActivityLog.created_at.desc(), WoActivityLog.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    log_rows = list((await session.execute(page_q)).scalars().all())
+
+    # Resolve actor names in one round-trip so the timeline can print
+    # "Mario set parts_ordered_at" instead of "user 17".
+    actor_ids = {r.actor_id for r in log_rows if r.actor_id is not None}
+    actor_names: dict[int, str] = {}
+    if actor_ids:
+        users = (
+            await session.execute(
+                select(User.id, User.full_name).where(User.id.in_(actor_ids))
+            )
+        ).all()
+        actor_names = {uid: name for uid, name in users}
+
+    items = [
+        ActivityLogEntry(
+            id=r.id,
+            entity_type=(
+                r.entity_type.value if hasattr(r.entity_type, "value")
+                else str(r.entity_type)
+            ),
+            entity_id=r.entity_id,
+            action=r.action,
+            actor_id=r.actor_id,
+            actor_name=actor_names.get(r.actor_id) if r.actor_id else None,
+            details=r.details or {},
+            created_at=r.created_at,
+        )
+        for r in log_rows
+    ]
+    return ActivityLogResponse(items=items, total=total)

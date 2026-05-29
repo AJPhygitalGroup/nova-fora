@@ -170,11 +170,24 @@ async def _derive_review_status(
     )
     if decision == "rejected":
         return "rejected"
-    # Approved — check downstream WO state via RR linkage
+    # Approved — check downstream WO state via RR linkage. A defect can
+    # be in MULTIPLE repair_request_defects rows when it gets deferred
+    # mid-repair and the router re-bundles it into a new RR (spec §7.H).
+    # Without the ORDER BY + LIMIT the scalar_one_or_none() blew up with
+    # MultipleResultsFound and the whole /defects list 500'd ("Could not
+    # load defects — Network error" in the DSP customer view, 2026-05-27).
+    # The newest RR row is the right one to check because it owns the
+    # current WO state for this defect.
+    # NOTE: RepairRequestDefect uses a composite PK (repair_request_id +
+    # defect_id) — there is NO `id` column. Order by repair_request_id
+    # desc instead: RR ids are monotonically increasing, so the highest
+    # one is the most-recent bundle that owns this defect.
     rr_id = (
         await session.execute(
             select(RepairRequestDefect.repair_request_id)
             .where(RepairRequestDefect.defect_id == defect_id)
+            .order_by(RepairRequestDefect.repair_request_id.desc())
+            .limit(1)
         )
     ).scalar_one_or_none()
     if rr_id is None:
@@ -577,14 +590,34 @@ async def delete_defect(
     ):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "not your defect")
 
-    # Cascade attached photos (delete bucket objects + DB rows)
+    # Cascade attached photos. We MUST drop every photo row before the
+    # defect row or the FK photos.defect_id → defects.id 500s the request
+    # ("Failed to fetch" surface in the browser, since the unhandled
+    # IntegrityError tears down the response without CORS headers).
+    #
+    # The bucket-delete is best-effort: if MinIO is unreachable or the
+    # key is already gone, we log and keep going so the DB row still gets
+    # removed. Orphan bucket objects are cheap; orphan DB rows would block
+    # the FK forever.
+    #
+    # Then a single flush() forces the photo DELETEs to execute BEFORE
+    # the defect DELETE. Without the explicit flush, SQLAlchemy's
+    # unit-of-work has occasionally been observed to issue them in the
+    # wrong order (the defect first), tripping the same FK.
     photo_rows = (
         await session.execute(select(Photo).where(Photo.defect_id == defect.id))
     ).scalars().all()
     for p in photo_rows:
-        if not p.is_deleted:
-            delete_object(p.storage_key)
+        if not p.is_deleted and p.storage_key:
+            try:
+                delete_object(p.storage_key)
+            except Exception as e:  # noqa: BLE001
+                # Don't let storage failures block the user from removing
+                # the defect — the row still needs to go.
+                print(f"[defects.delete] best-effort bucket cleanup failed "
+                      f"for photo {p.id} ({p.storage_key}): {e}")
         await session.delete(p)
+    await session.flush()
 
     await session.delete(defect)
     await session.commit()

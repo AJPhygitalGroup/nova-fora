@@ -9,6 +9,7 @@ from app.i18n_errors import translate_known_detail
 from app.i18n_helpers import get_request_language
 from app.routes import (
     auth,
+    dashboards,
     defect_catalog,
     defect_reviews,
     defects,
@@ -20,8 +21,10 @@ from app.routes import (
     inspections,
     invitations,
     repair_requests,
+    rewards,
     uploads,
     vehicles,
+    vendor_scorecard,
     vendor_workshops,
     work_orders,
 )
@@ -131,11 +134,16 @@ app.include_router(dvic_template.router)
 app.include_router(inspection_rules.router)
 app.include_router(work_orders.router)
 app.include_router(vendor_workshops.router)
+app.include_router(vendor_workshops.preferred_router)
+app.include_router(vendor_scorecard.router)
+app.include_router(vendor_workshops.bucks_router)
 app.include_router(dsp_settings.router)
 app.include_router(defect_reviews.router)
 app.include_router(repair_requests.router)
+app.include_router(rewards.router)
 app.include_router(directory.router)
 app.include_router(uploads.router)
+app.include_router(dashboards.router)
 
 
 @app.get("/", tags=["root"])
