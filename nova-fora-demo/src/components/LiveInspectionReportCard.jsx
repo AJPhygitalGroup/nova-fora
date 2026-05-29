@@ -300,6 +300,22 @@ function formatDetailsSummary(details) {
   return parts.join(' · ');
 }
 
+// Read-only status labels — shown to roles that can't approve (e.g. the
+// vendor viewing the QC DVIC heatmap). Keeps a defect's lifecycle legible
+// without exposing the DSP-only Approve/Reject buttons.
+const REVIEW_STATUS_LABEL = {
+  pending_review: 'Pending DSP review',
+  pending: 'Pending DSP review',
+  rejected: 'Rejected',
+  dismissed: 'Rejected',
+  approved: 'Approved — work order created',
+  acknowledged: 'Approved — work order created',
+  sent_to_vendor: 'Sent to vendor',
+  converted_to_wo: 'Work order created',
+  scheduled: 'Scheduled for repair',
+  repaired: 'Repaired',
+};
+
 function DefectRow({ defect, photos, action, canAct, onApprove, onReject }) {
   const isV2 = !!defect.isV2;
   const partHeader = isV2
@@ -381,8 +397,8 @@ function DefectRow({ defect, photos, action, canAct, onApprove, onReject }) {
           </button>
         </div>
       ) : (
-        <div className="text-[11px] text-navy-500 italic">
-          Status: {defect.status}
+        <div className="flex items-center gap-1.5 text-[11px] text-navy-400 italic">
+          <ClipboardList size={12} /> {REVIEW_STATUS_LABEL[defect.reviewStatus || defect.status] || 'Pending DSP review'}
         </div>
       )}
     </div>

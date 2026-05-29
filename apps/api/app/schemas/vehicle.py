@@ -35,7 +35,14 @@ class VehicleResponse(BaseModel):
 
     # Derived from inspections / defects
     defect_count: int = 0
+    # Open defects from the LATEST inspection only (vendor-scoped if the
+    # requester is a vendor) — drives the QC DVIC heatmap badge so the
+    # number on the tile matches the number in the inspection report when
+    # clicked. `defect_count` above stays van-lifetime-wide for the other
+    # surfaces (MyVehicles list, etc.) that want "open jobs on this van".
+    last_inspection_defect_count: int = 0
     last_inspected: str | None = None
+    last_inspection_id: str | None = None   # "INS-47330" — opens the real report
     photos: int = 0
     inspector: str | None = None
 

@@ -18,6 +18,7 @@ import {
 import { isDspRole } from '../lib/permissions';
 import Badge from './ui/Badge';
 import VendorPickerModal from './ui/VendorPickerModal';
+import LiveInspectionReportCard from './LiveInspectionReportCard';
 
 // Mirrors `wo_bundler._GROUP_TO_REPAIR_TYPE` on the backend so the
 // VendorPickerModal can filter workshops to the right eligibility set
@@ -1722,9 +1723,18 @@ export default function FleetSnapshot({ user, embedded = false }) {
     const base = serverVans ?? [];
     return base.map((v) => {
       const composedModel = [v.year, v.make, v.model].filter(Boolean).join(' ');
+      // QC DVIC heatmap shows ONE result per van — the latest inspection.
+      // The tile badge and color must match the number rendered in the
+      // inspection report when the tile is clicked. Backend ships both
+      // counts (van-lifetime `defectCount` for other consumers + per-last-
+      // inspection `lastInspectionDefectCount`); we override defectCount
+      // for inspected vans so HeatmapTile, the "with issues" filter, and
+      // tint() all line up automatically.
+      const heatmapCount = v.lastInspectionDefectCount ?? v.defectCount ?? 0;
       const normalized = {
         ...v,
         model: composedModel || v.model || '',
+        defectCount: heatmapCount,
         // Preserve the ISO so the inspection-window filter can do real
         // date math; `lastInspected` is the display string.
         _rawLastInspected: v.lastInspected || null,
@@ -1954,7 +1964,26 @@ export default function FleetSnapshot({ user, embedded = false }) {
 
       {/* Modals */}
       <AnimatePresence>
-        {selectedVan && (
+        {/* When the van has a real submitted inspection, open the live
+            report (real photos + real defects grouped by section, same as
+            the fleet-owner side). Per-defect Approve/Create-WO buttons only
+            render for DSP-side approvers (canApproveDefects) — vendors see it
+            read-only, and any defect that already has a work order shows
+            "Approved — work order created" instead of a create button.
+            Vans with no inspection on record fall back to the lightweight
+            mock card (which still shows the van's real grounded/mileage). */}
+        {selectedVan && selectedVan.lastInspectionId && (
+          <LiveInspectionReportCard
+            inspection={{
+              inspectionId: selectedVan.lastInspectionId,
+              fleetId: selectedVan.fleetId,
+            }}
+            user={user}
+            onClose={() => setSelectedVan(null)}
+            onCreateWO={(van, defect) => { setSelectedVan(null); openCreateWO(van, defect); }}
+          />
+        )}
+        {selectedVan && !selectedVan.lastInspectionId && (
           <VehicleReportCard
             van={selectedVan}
             onClose={() => setSelectedVan(null)}

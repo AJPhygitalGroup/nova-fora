@@ -13,6 +13,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import func, or_, select
@@ -140,7 +141,166 @@ async def list_vehicles(
     ).scalars().all()
     org_by_id = {o.id: o for o in orgs_rows}
 
-    items = [VehicleResponse.from_vehicle(v, org_by_id[v.dsp_id]) for v in vehicles]
+    # Per-vehicle inspection rollup for the QC DVIC heatmap. Two batch
+    # queries scoped to just this page's vehicle ids — these feed
+    # `last_inspected` (drives the "Inspected today/week" filter) and
+    # `defect_count` (drives the heatmap colour: Clean / 1-2 / 3+).
+    # Before this the schema fields existed but from_vehicle never set
+    # them, so the heatmap saw every van as never-inspected / 0 defects
+    # and the "Inspected today" filter showed nothing (2026-05-29 bug:
+    # vendor QC DVIC tab empty despite techs having inspected).
+    vehicle_ids = [v.id for v in vehicles]
+    last_inspected_by_vehicle: dict[int, datetime] = {}
+    last_inspection_id_by_vehicle: dict[int, int] = {}
+    defect_count_by_vehicle: dict[int, int] = {}
+    last_ins_count_by_vehicle: dict[int, int] = {}
+    if vehicle_ids:
+        # Latest SUBMITTED inspection per vehicle (draft inspections don't
+        # count — they're not real QC DVIC results yet). DISTINCT ON keeps
+        # the most-recent row per vehicle so we get both its timestamp AND
+        # its id (the id lets the heatmap open the real inspection report).
+        insp_rows = (
+            await session.execute(
+                select(
+                    Inspection.vehicle_id,
+                    Inspection.id,
+                    Inspection.submitted_at,
+                )
+                .where(Inspection.vehicle_id.in_(vehicle_ids))
+                .where(Inspection.submitted_at.is_not(None))
+                .order_by(
+                    Inspection.vehicle_id,
+                    Inspection.submitted_at.desc(),
+                )
+                .distinct(Inspection.vehicle_id)
+            )
+        ).all()
+        last_inspected_by_vehicle = {vid: ts for vid, _iid, ts in insp_rows}
+        last_inspection_id_by_vehicle = {vid: iid for vid, iid, _ts in insp_rows}
+
+        # Open-defect count per vehicle — exclude defects whose
+        # DefectResolution is terminal (resolved / deferred / declined),
+        # same definition the DSP open-defects donut uses. This is what
+        # colours the heatmap cell.
+        terminal = (
+            DefectResolutionStatus.RESOLVED.value,
+            DefectResolutionStatus.DEFERRED.value,
+            DefectResolutionStatus.DECLINED.value,
+        )
+        closed_sub = (
+            select(DefectResolution.defect_id)
+            .where(DefectResolution.status.in_(terminal))
+        ).subquery()
+
+        # Vendor-scope filter: a vendor should only count defects whose
+        # DefectGroup maps to a repair_type their workshop services. Keeps
+        # the heatmap badge consistent with the inspection-report filter
+        # in routes/inspections.py — otherwise the badge says "4 defects"
+        # but the report opens with 2 visible.
+        from app.services.permissions import vendor_allowed_repair_types
+        allowed_rts = await vendor_allowed_repair_types(session, current)
+
+        if allowed_rts is None:
+            # Non-vendor (DSP / site_admin): cheap SQL count, no JOIN.
+            defect_rows = (
+                await session.execute(
+                    select(Defect.vehicle_id, func.count(Defect.id))
+                    .where(Defect.vehicle_id.in_(vehicle_ids))
+                    .where(~Defect.id.in_(select(closed_sub.c.defect_id)))
+                    .group_by(Defect.vehicle_id)
+                )
+            ).all()
+            defect_count_by_vehicle = {vid: int(n) for vid, n in defect_rows}
+        else:
+            # Vendor: invert _GROUP_TO_REPAIR_TYPE to get the DefectGroup
+            # values whose repair_type is in the vendor's catalogue, then
+            # JOIN catalog + applicability to filter.
+            from app.services.wo_bundler import _GROUP_TO_REPAIR_TYPE
+            from app.models.defect_catalog import DefectRule, DefectApplicability
+
+            allowed_groups = {
+                group for group, rt in _GROUP_TO_REPAIR_TYPE.items()
+                if (rt.value if hasattr(rt, "value") else str(rt)) in allowed_rts
+            }
+            if allowed_groups:
+                # COUNT(DISTINCT id) because DefectApplicability fans out
+                # (one rule applies to multiple vehicle_classes).
+                defect_rows = (
+                    await session.execute(
+                        select(Defect.vehicle_id, func.count(func.distinct(Defect.id)))
+                        .join(Vehicle, Vehicle.id == Defect.vehicle_id)
+                        .join(DefectRule, and_(
+                            DefectRule.part == Defect.part,
+                            DefectRule.defect_type == Defect.defect_type,
+                        ))
+                        .join(DefectApplicability, and_(
+                            DefectApplicability.rule_id == DefectRule.id,
+                            DefectApplicability.vehicle_class == Vehicle.vehicle_class,
+                        ))
+                        .where(Defect.vehicle_id.in_(vehicle_ids))
+                        .where(~Defect.id.in_(select(closed_sub.c.defect_id)))
+                        .where(DefectRule.group.in_(allowed_groups))
+                        .group_by(Defect.vehicle_id)
+                    )
+                ).all()
+                defect_count_by_vehicle = {vid: int(n) for vid, n in defect_rows}
+            # else: vendor org has no workshop services configured → all
+            #       counts stay at 0, consistent with "vendor sees nothing".
+
+        # ─── Last-inspection-scoped defect count ─────────────────
+        # Same filter as defect_count but constrained to defects belonging
+        # to the vehicle's LATEST submitted inspection. This is what the QC
+        # DVIC heatmap badge shows so the tile number matches the number of
+        # defects rendered when the inspection report opens (otherwise the
+        # badge counts off-inspection / ad-hoc defects the report doesn't
+        # show — exactly the user-reported mismatch).
+        if last_inspection_id_by_vehicle:
+            ins_ids = list(last_inspection_id_by_vehicle.values())
+            if allowed_rts is None:
+                rows = (
+                    await session.execute(
+                        select(Defect.inspection_id, func.count(Defect.id))
+                        .where(Defect.inspection_id.in_(ins_ids))
+                        .where(~Defect.id.in_(select(closed_sub.c.defect_id)))
+                        .group_by(Defect.inspection_id)
+                    )
+                ).all()
+                count_by_ins = {iid: int(n) for iid, n in rows}
+            elif allowed_groups:
+                rows = (
+                    await session.execute(
+                        select(Defect.inspection_id, func.count(func.distinct(Defect.id)))
+                        .join(Vehicle, Vehicle.id == Defect.vehicle_id)
+                        .join(DefectRule, and_(
+                            DefectRule.part == Defect.part,
+                            DefectRule.defect_type == Defect.defect_type,
+                        ))
+                        .join(DefectApplicability, and_(
+                            DefectApplicability.rule_id == DefectRule.id,
+                            DefectApplicability.vehicle_class == Vehicle.vehicle_class,
+                        ))
+                        .where(Defect.inspection_id.in_(ins_ids))
+                        .where(~Defect.id.in_(select(closed_sub.c.defect_id)))
+                        .where(DefectRule.group.in_(allowed_groups))
+                        .group_by(Defect.inspection_id)
+                    )
+                ).all()
+                count_by_ins = {iid: int(n) for iid, n in rows}
+            else:
+                count_by_ins = {}
+            for vid, iid in last_inspection_id_by_vehicle.items():
+                last_ins_count_by_vehicle[vid] = count_by_ins.get(iid, 0)
+
+    items = []
+    for v in vehicles:
+        resp = VehicleResponse.from_vehicle(v, org_by_id[v.dsp_id])
+        ts = last_inspected_by_vehicle.get(v.id)
+        resp.last_inspected = ts.isoformat() if ts else None
+        iid = last_inspection_id_by_vehicle.get(v.id)
+        resp.last_inspection_id = f"INS-{iid:05d}" if iid is not None else None
+        resp.defect_count = defect_count_by_vehicle.get(v.id, 0)
+        resp.last_inspection_defect_count = last_ins_count_by_vehicle.get(v.id, 0)
+        items.append(resp)
     return VehicleListResponse(items=items, total=total, page=page, per_page=per_page)
 
 
