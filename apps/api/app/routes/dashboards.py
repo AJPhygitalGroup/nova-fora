@@ -42,6 +42,7 @@ from app.models.vehicle import Vehicle
 from app.models.work_orders import (
     DefectReview,
     DvicNightlyConfirmation,
+    DvicSchedule,
     RepairRequest,
     RepairRequestDefect,
     VendorWorkshop,
@@ -807,6 +808,254 @@ async def confirm_upcoming_dvic(
         confirmed=True,
         confirmed_at=row.confirmed_at,
         confirmation_date=today.isoformat(),
+    )
+
+
+# ═════════════════════════════════════════════════════
+# QC DVIC Schedules — vendor admin schedules an inspection at a DSP,
+# DSP customer home shows readiness banner 12hrs before the appointment.
+# Replaces the day-flag-only chip flow above. Old endpoints are kept
+# around in iter-1 for backward compat with any cached frontend bundle;
+# they'll be deleted once the new UI is live everywhere.
+# ═════════════════════════════════════════════════════
+
+class DvicScheduleCreateBody(BaseModel):
+    dsp_id: int
+    scheduled_at: datetime
+    notes: str | None = None
+
+
+class DvicScheduleRow(BaseModel):
+    id: int
+    id_str: str
+    vendor_workshop_id: int
+    dsp_id: int
+    dsp_name: str | None = None
+    scheduled_at: datetime
+    notes: str | None = None
+    cancelled_at: datetime | None = None
+    cancellation_reason: str | None = None
+    created_by_id: int
+    created_at: datetime
+
+
+class NextQcDvicRow(BaseModel):
+    """DSP-side response — the nearest upcoming inspection that's within
+    the readiness-banner window, or null if nothing scheduled soon.
+    `hours_until` is computed server-side so the frontend doesn't have
+    to do tz math (it just shows the banner whenever this is non-null).
+    """
+    id: int
+    scheduled_at: datetime
+    hours_until: float
+    vendor_workshop_id: int
+    vendor_workshop_name: str | None = None
+    notes: str | None = None
+
+
+# Banner readiness window. Vendor schedule + DSP banner agree on this
+# constant — any inspection scheduled within the next 12 hours shows up
+# as "ready your van" on the DSP home.
+QC_DVIC_BANNER_WINDOW_HOURS = 12
+
+
+def _dvic_row(s: "DvicSchedule", dsp_name: str | None) -> DvicScheduleRow:
+    return DvicScheduleRow(
+        id=s.id,
+        id_str=s.id_str,
+        vendor_workshop_id=s.vendor_workshop_id,
+        dsp_id=s.dsp_id,
+        dsp_name=dsp_name,
+        scheduled_at=s.scheduled_at,
+        notes=s.notes,
+        cancelled_at=s.cancelled_at,
+        cancellation_reason=s.cancellation_reason,
+        created_by_id=s.created_by_id,
+        created_at=s.created_at,
+    )
+
+
+@router.get(
+    "/vendor-home/{vendor_workshop_id}/dvic-schedules",
+    response_model=list[DvicScheduleRow],
+    summary="List upcoming QC DVICs the vendor has scheduled (active, sorted by date)",
+)
+async def list_dvic_schedules(
+    vendor_workshop_id: int = Path(..., ge=1),
+    include_past: bool = Query(default=False, description="Include past appointments"),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[DvicScheduleRow]:
+    if current.role != UserRole.SITE_ADMIN:
+        allowed = await _vendor_workshop_ids_for(session, current)
+        if vendor_workshop_id not in allowed:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "workshop not under your vendor")
+
+    now = datetime.now(timezone.utc)
+    stmt = (
+        select(DvicSchedule, Organization)
+        .join(Organization, Organization.id == DvicSchedule.dsp_id)
+        .where(DvicSchedule.vendor_workshop_id == vendor_workshop_id)
+        .where(DvicSchedule.cancelled_at.is_(None))
+        .order_by(DvicSchedule.scheduled_at.asc())
+    )
+    if not include_past:
+        stmt = stmt.where(DvicSchedule.scheduled_at >= now)
+    rows = (await session.execute(stmt)).all()
+    return [_dvic_row(s, o.name) for s, o in rows]
+
+
+@router.post(
+    "/vendor-home/{vendor_workshop_id}/dvic-schedules",
+    response_model=DvicScheduleRow,
+    status_code=status.HTTP_201_CREATED,
+    summary="Schedule a new QC DVIC for a DSP the workshop services",
+)
+async def create_dvic_schedule(
+    body: DvicScheduleCreateBody,
+    vendor_workshop_id: int = Path(..., ge=1),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> DvicScheduleRow:
+    if current.role != UserRole.SITE_ADMIN:
+        allowed = await _vendor_workshop_ids_for(session, current)
+        if vendor_workshop_id not in allowed:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "workshop not under your vendor")
+
+    # Workshop must service this DSP (same guardrail the legacy chip flow
+    # uses — prevents random vendor↔DSP pairings via API).
+    served = await _dsp_ids_for_workshop(session, vendor_workshop_id)
+    if body.dsp_id not in served:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "this workshop has no work orders with that DSP; can't schedule an inspection",
+        )
+
+    # Refuse scheduling in the past (a 5-min buffer for clock drift).
+    now = datetime.now(timezone.utc)
+    if body.scheduled_at < now - timedelta(minutes=5):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "scheduled_at must be in the future",
+        )
+
+    s = DvicSchedule(
+        vendor_workshop_id=vendor_workshop_id,
+        dsp_id=body.dsp_id,
+        scheduled_at=body.scheduled_at,
+        notes=body.notes,
+        created_by_id=current.id,
+    )
+    session.add(s)
+    await session.commit()
+    await session.refresh(s)
+
+    org = (
+        await session.execute(select(Organization).where(Organization.id == s.dsp_id))
+    ).scalar_one_or_none()
+    return _dvic_row(s, org.name if org else None)
+
+
+class CancelDvicBody(BaseModel):
+    reason: str | None = None
+
+
+@router.post(
+    "/vendor-home/{vendor_workshop_id}/dvic-schedules/{schedule_id}/cancel",
+    response_model=DvicScheduleRow,
+    summary="Cancel a scheduled QC DVIC (soft — row stays for audit)",
+)
+async def cancel_dvic_schedule(
+    body: CancelDvicBody,
+    vendor_workshop_id: int = Path(..., ge=1),
+    schedule_id: int = Path(..., ge=1),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> DvicScheduleRow:
+    if current.role != UserRole.SITE_ADMIN:
+        allowed = await _vendor_workshop_ids_for(session, current)
+        if vendor_workshop_id not in allowed:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "workshop not under your vendor")
+
+    s = (
+        await session.execute(
+            select(DvicSchedule)
+            .where(DvicSchedule.id == schedule_id)
+            .where(DvicSchedule.vendor_workshop_id == vendor_workshop_id)
+        )
+    ).scalar_one_or_none()
+    if s is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "schedule not found")
+    if s.cancelled_at is not None:
+        # Idempotent — re-cancel returns the existing row.
+        org = (
+            await session.execute(select(Organization).where(Organization.id == s.dsp_id))
+        ).scalar_one_or_none()
+        return _dvic_row(s, org.name if org else None)
+
+    s.cancelled_at = datetime.now(timezone.utc)
+    s.cancelled_by_id = current.id
+    s.cancellation_reason = body.reason
+    session.add(s)
+    await session.commit()
+    await session.refresh(s)
+
+    org = (
+        await session.execute(select(Organization).where(Organization.id == s.dsp_id))
+    ).scalar_one_or_none()
+    return _dvic_row(s, org.name if org else None)
+
+
+@router.get(
+    "/dsp/{dsp_id}/next-qc-dvic",
+    response_model=NextQcDvicRow | None,
+    summary="DSP home banner trigger — nearest upcoming QC DVIC within 12 hours",
+)
+async def dsp_next_qc_dvic(
+    dsp_id: int = Path(..., ge=1),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> NextQcDvicRow | None:
+    """Returns null when nothing's scheduled within the banner window.
+    The DSP frontend shows the readiness banner ONLY when this is
+    non-null — no more manual show/hide toggle. Polled by the home page
+    on mount + every 5 min so the banner appears in the background as
+    the window opens.
+    """
+    if current.role != UserRole.SITE_ADMIN:
+        if current.organization_id != dsp_id:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "not your DSP")
+
+    now = datetime.now(timezone.utc)
+    window_end = now + timedelta(hours=QC_DVIC_BANNER_WINDOW_HOURS)
+
+    # Lookup needs the workshop name for the banner subtitle ("Dulles
+    # Midas will inspect tonight"). Joining keeps it one round-trip.
+    from app.models.work_orders import VendorWorkshop  # local: import-cycle guard
+    row = (
+        await session.execute(
+            select(DvicSchedule, VendorWorkshop)
+            .join(VendorWorkshop, VendorWorkshop.id == DvicSchedule.vendor_workshop_id)
+            .where(DvicSchedule.dsp_id == dsp_id)
+            .where(DvicSchedule.cancelled_at.is_(None))
+            .where(DvicSchedule.scheduled_at > now)
+            .where(DvicSchedule.scheduled_at <= window_end)
+            .order_by(DvicSchedule.scheduled_at.asc())
+            .limit(1)
+        )
+    ).first()
+    if row is None:
+        return None
+    s, ws = row
+    delta = s.scheduled_at - now
+    hours_until = delta.total_seconds() / 3600.0
+    return NextQcDvicRow(
+        id=s.id,
+        scheduled_at=s.scheduled_at,
+        hours_until=round(hours_until, 2),
+        vendor_workshop_id=s.vendor_workshop_id,
+        vendor_workshop_name=ws.name if ws else None,
+        notes=s.notes,
     )
 
 

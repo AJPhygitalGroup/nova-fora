@@ -1833,8 +1833,20 @@ const PREVIOUS_PENDING = [
   { fleetId: 'VAN-6002', reason: 'Awaiting baseline DVIC approval', days: 1 },
 ];
 
-function InspectionReadinessBanner({ onClick }) {
+function InspectionReadinessBanner({ onClick, nextQcDvic }) {
   const { t } = useTranslation('dashboard');
+  // Render a friendly "in N hours" + the vendor workshop name + the local
+  // wall-clock time when a real schedule drives the banner. nextQcDvic is
+  // guaranteed non-null by the caller — RealDVIC only mounts this when
+  // /next-qc-dvic returned a row inside the 12-hour window.
+  const dt = new Date(nextQcDvic.scheduledAt);
+  const niceTime = dt.toLocaleString(undefined, {
+    weekday: 'short', hour: 'numeric', minute: '2-digit',
+  });
+  const hours = nextQcDvic.hoursUntil;
+  const hoursLabel = hours < 1
+    ? `${Math.max(1, Math.round(hours * 60))} min`
+    : `${hours < 2 ? hours.toFixed(1) : Math.round(hours)} hr${hours < 1.5 ? '' : 's'}`;
   return (
     <motion.button
       initial={{ opacity: 0, y: -10 }}
@@ -1846,13 +1858,18 @@ function InspectionReadinessBanner({ onClick }) {
         <Calendar size={18} className="text-accent-green" />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-0.5">
-          <span className="text-sm font-semibold text-white">{t('readinessBanner.heading', 'QC DVIC Scheduled Tonight')}</span>
+        <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+          <span className="text-sm font-semibold text-white">
+            {t('readinessBanner.heading', 'QC DVIC scheduled in')} {hoursLabel}
+          </span>
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-red/15 border border-accent-red/40 text-accent-red text-[10px] font-semibold">
             {t('readinessBanner.actionRequired', 'Action Required')}
           </span>
         </div>
-        <div className="text-xs text-navy-300">{t('readinessBanner.subtitleFmt', { count: INSPECTION_VEHICLES.length + 34, defaultValue: `Confirm QC inspection readiness — ${INSPECTION_VEHICLES.length + 34} vehicles scheduled for tonight` })}</div>
+        <div className="text-xs text-navy-300">
+          {nextQcDvic.vendorWorkshopName || t('readinessBanner.vendorFallback', 'Your vendor')} · {niceTime}
+          {nextQcDvic.notes ? ` · ${nextQcDvic.notes}` : ''}
+        </div>
       </div>
       <div className="hidden sm:flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs font-semibold text-white group-hover:bg-white/10 transition-all">
         {t('readinessBanner.review', 'Review')} <ChevronRight size={12} />
@@ -3933,29 +3950,51 @@ export default function RealDVIC({ user }) {
   const canStartInspection =
     canInspect(user) && !['dsp_owner', 'dsp_manager'].includes(user?.role);
 
-  // QC inspection banner: in production it appears automatically on
-  // inspection day. For the demo we expose a barely-visible toggle in the
-  // top-right corner of the Home view so we can show/hide it on demand.
-  const [showQcBanner, setShowQcBanner] = useState(false);
+  // QC DVIC banner — now driven by a real schedule, not a manual toggle.
+  // Polls /dashboards/dsp/{id}/next-qc-dvic on mount + every 5 min, and
+  // shows the readiness banner ONLY when a vendor has scheduled an
+  // inspection within the next 12 hours. The vendor admin sets these via
+  // the new "QC DVIC Schedule" card on VendorHome.
+  //
+  // The legacy `showQcBanner` toggle (a barely-visible demo button) is
+  // gone — keeping it would invite confusion between "manual override"
+  // and "real upcoming inspection". `nextQcDvic` being non-null IS the
+  // signal to render.
+  const [nextQcDvic, setNextQcDvic] = useState(null);
+  useEffect(() => {
+    if (!isDspRole(user) && user?.role !== 'site_admin') return;
+    const dspIdInt = (() => {
+      const raw = user?.organizationId ?? user?.orgId;
+      if (raw == null) return null;
+      const m = String(raw).match(/(\d+)/);
+      return m ? Number(m[1]) : null;
+    })();
+    if (!dspIdInt) return;
+    let alive = true;
+    const fetchNext = () => {
+      dashboardsApi.dspNextQcDvic(dspIdInt)
+        .then((row) => { if (alive) setNextQcDvic(row || null); })
+        .catch(() => { if (alive) setNextQcDvic(null); });
+    };
+    fetchNext();
+    // Poll every 5 min so the banner appears in the background as the
+    // 12-hour window opens (e.g. inspection at 8pm; banner visible
+    // starting 8am that day without a page refresh).
+    const id = setInterval(fetchNext, 5 * 60 * 1000);
+    return () => { alive = false; clearInterval(id); };
+  }, [user]);
 
   return (
     <div>
-      {/* Subtle banner-visibility toggle — DSP users only */}
-      {(isDspRole(user) || user?.role === 'site_admin') && (
-        <div className="flex justify-end -mt-2 mb-1">
-          <button
-            onClick={() => setShowQcBanner((s) => !s)}
-            title={showQcBanner ? t('realDvic.qcBannerHideTitle', 'Hide QC inspection banner') : t('realDvic.qcBannerShowTitle', 'Simulate inspection day (show banner)')}
-            className="text-[10px] text-navy-600 hover:text-navy-300 px-2 py-1 rounded transition-colors cursor-pointer"
-          >
-            {showQcBanner ? t('realDvic.qcBannerToggleHide', '· hide banner ·') : t('realDvic.qcBannerToggleShow', '· · ·')}
-          </button>
-        </div>
-      )}
-
-      {/* Daily QC Inspection Readiness banner — only when toggle is on (simulating inspection day) */}
-      {(user?.role === 'dsp_owner' || user?.role === 'site_admin') && showQcBanner && (
-        <InspectionReadinessBanner onClick={() => setShowInspection(true)} />
+      {/* Auto-shown readiness banner — appears when a vendor has scheduled
+          a QC DVIC within the next 12 hours. No manual toggle anymore;
+          `nextQcDvic` is null until the window opens. The vendor sets the
+          schedule from VendorHome → "QC DVIC Schedule" card. */}
+      {(user?.role === 'dsp_owner' || user?.role === 'site_admin') && nextQcDvic && (
+        <InspectionReadinessBanner
+          nextQcDvic={nextQcDvic}
+          onClick={() => setShowInspection(true)}
+        />
       )}
 
       {/* Start New Inspection banner — for Vendor / Technician */}

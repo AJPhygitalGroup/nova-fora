@@ -26,8 +26,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import {
-  ClipboardList, AlertTriangle, Truck, Briefcase, CheckCircle2,
-  CalendarCheck, Plus, RefreshCw, Loader2, Flame, PlayCircle,
+  ClipboardList, AlertTriangle, AlertCircle, Truck, Briefcase, CheckCircle2,
+  CalendarCheck, Plus, RefreshCw, Loader2, Flame, PlayCircle, X,
 } from 'lucide-react';
 import {
   vendorWorkshops as workshopsApi,
@@ -186,7 +186,7 @@ export default function VendorHome({ user }) {
       )}
 
       {/* ── Upcoming DVIC banner (Phase 1b will wire chips) ── */}
-      <UpcomingDvicBanner workshopId={workshopId} />
+      <DvicScheduleManager workshopId={workshopId} availableDsps={availableDsps} />
 
       {counterErr && (
         <div className="mb-3 px-3 py-2 rounded-md bg-accent-red/10 border border-accent-red/40 text-sm text-accent-red flex items-center gap-2">
@@ -257,99 +257,222 @@ export default function VendorHome({ user }) {
 }
 
 // ─────────────────────────────────────────────────────
-// Upcoming DVIC banner — confirm tonight's inspections
-// Wired to /dashboards/vendor-home/{ws}/upcoming-dvic; chips
-// flip from red ("Tap to confirm") to green ("Confirmed") on
-// successful POST. Each chip is one DSP the workshop services.
+// QC DVIC Schedule Manager — vendor admin schedules a real QC DVIC
+// appointment per DSP (date + time + optional notes). Replaces the old
+// chip-flag flow ("Upcoming DVIC: tap to confirm tonight"), which was
+// just a per-day flag with no actual time. Each row here corresponds to
+// one `dvic_schedules` DB row; the DSP customer home reads its own
+// /next-qc-dvic endpoint to show the readiness banner 12hrs before.
 // ─────────────────────────────────────────────────────
-function UpcomingDvicBanner({ workshopId }) {
+function DvicScheduleManager({ workshopId, availableDsps }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [busyId, setBusyId] = useState(null);
   const [err, setErr] = useState(null);
+  const [showForm, setShowForm] = useState(false);
 
   const load = useCallback(() => {
     if (!workshopId) return;
     setLoading(true);
     setErr(null);
     dashboardsApi
-      .upcomingDvic(workshopId)
-      .then((r) => setRows(Array.isArray(r) ? r : (r?.items || [])))
+      .listDvicSchedules(workshopId)
+      .then((r) => setRows(Array.isArray(r) ? r : []))
       .catch((e) => setErr(e.detail || e.message || 'Failed'))
       .finally(() => setLoading(false));
   }, [workshopId]);
 
   useEffect(() => { load(); }, [load]);
 
-  const confirm = async (dspId) => {
-    setErr(null);
-    setBusyId(dspId);
+  const cancel = async (scheduleId) => {
+    const reason = window.prompt('Cancellation reason (optional):', '');
+    if (reason === null) return;  // user dismissed the prompt
     try {
-      const updated = await dashboardsApi.confirmUpcomingDvic(workshopId, dspId);
-      setRows((cur) => cur.map((r) => r.dspId === dspId ? { ...r, ...updated } : r));
+      await dashboardsApi.cancelDvicSchedule(workshopId, scheduleId, { reason: reason.trim() || undefined });
+      load();
     } catch (e) {
-      setErr(e.detail || e.message || 'Failed to confirm');
-    } finally {
-      setBusyId(null);
+      alert(e.detail || e.message || 'Cancel failed');
     }
   };
 
   return (
-    <section className="rounded-lg border border-accent-green/40 bg-accent-green/5 px-4 py-3 mb-4 flex items-center gap-3 flex-wrap">
-      <PlayCircle className="w-5 h-5 text-accent-green shrink-0" />
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-semibold text-accent-green flex items-center gap-2">
-          Upcoming DVIC
-          <span className="px-1.5 py-0.5 rounded-md bg-accent-green/20 text-[10px] font-mono uppercase">
-            Inspector workflow
-          </span>
+    <section className="rounded-lg border border-accent-green/40 bg-accent-green/5 px-4 py-3 mb-4">
+      <div className="flex items-start gap-3 flex-wrap">
+        <PlayCircle className="w-5 h-5 text-accent-green shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-semibold text-accent-green flex items-center gap-2">
+            QC DVIC Schedule
+            <span className="px-1.5 py-0.5 rounded-md bg-accent-green/20 text-[10px] font-mono uppercase">
+              Inspector workflow
+            </span>
+          </div>
+          <div className="text-[11px] text-text-muted mt-0.5">
+            Schedule when your inspector visits each customer. The DSP sees a readiness banner 12 hours before each appointment.
+          </div>
+          {err && (
+            <div className="text-[10px] text-accent-red mt-1">{err}</div>
+          )}
         </div>
-        <div className="text-[11px] text-text-muted mt-0.5">
-          Confirm QC DVIC scheduled tonight for each customer — unconfirmed inspections will not be completed.
-        </div>
-        {err && (
-          <div className="text-[10px] text-accent-red mt-1">{err}</div>
-        )}
+        <button
+          type="button"
+          onClick={() => setShowForm((v) => !v)}
+          className="px-3 py-1.5 rounded-md bg-accent-green text-navy-950 text-xs font-semibold hover:opacity-90 flex items-center gap-1 shrink-0"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          {showForm ? 'Close' : 'Schedule QC DVIC'}
+        </button>
       </div>
-      {/* Per-DSP chips wired to upcoming_dvic endpoint */}
-      <div className="flex gap-2 flex-wrap">
+
+      {showForm && (
+        <ScheduleDvicForm
+          workshopId={workshopId}
+          availableDsps={availableDsps}
+          onCancel={() => setShowForm(false)}
+          onCreated={() => { setShowForm(false); load(); }}
+        />
+      )}
+
+      {/* Upcoming list — sorted asc by scheduled_at (server-side). */}
+      <div className="mt-3 space-y-1.5">
         {loading && (
-          <Loader2 className="w-4 h-4 animate-spin text-text-muted" />
+          <div className="text-[11px] text-text-muted flex items-center gap-1.5">
+            <Loader2 className="w-3 h-3 animate-spin" /> Loading…
+          </div>
         )}
         {!loading && rows.length === 0 && (
-          <span className="text-[11px] text-text-muted italic">
-            No DSPs serviced yet.
-          </span>
+          <div className="text-[11px] text-text-muted italic">
+            No QC DVICs scheduled yet. Use the button above to add one.
+          </div>
         )}
         {!loading && rows.map((r) => {
-          const isBusy = busyId === r.dspId;
-          if (r.confirmed) {
-            return (
-              <span
-                key={r.dspId}
-                className="px-3 py-1.5 rounded-md bg-accent-green/20 border border-accent-green/50 text-accent-green text-xs font-semibold cursor-default"
-                title={`Confirmed ${r.confirmedAt ? new Date(r.confirmedAt).toLocaleTimeString() : ''}`}
-              >
-                {dspShort(r.dspName)} ✓ Confirmed
-              </span>
-            );
-          }
+          // Display the scheduled instant in the vendor admin's local tz.
+          const dt = new Date(r.scheduledAt);
+          const niceDt = dt.toLocaleString(undefined, {
+            weekday: 'short', month: 'short', day: 'numeric',
+            hour: 'numeric', minute: '2-digit',
+          });
           return (
-            <button
-              key={r.dspId}
-              type="button"
-              onClick={() => confirm(r.dspId)}
-              disabled={isBusy}
-              className="px-3 py-1.5 rounded-md bg-accent-red/15 border border-accent-red/40 text-accent-red text-xs font-semibold hover:bg-accent-red/25 disabled:opacity-40 flex items-center gap-1"
-              title="Tap to confirm tonight"
+            <div
+              key={r.id}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-navy-700 bg-navy-900 text-xs"
             >
-              {isBusy && <Loader2 className="w-3 h-3 animate-spin" />}
-              {dspShort(r.dspName)}
-            </button>
+              <CalendarCheck className="w-3.5 h-3.5 text-accent-blue shrink-0" />
+              <span className="text-text-strong font-semibold">{dspShort(r.dspName)}</span>
+              <span className="text-text-muted">·</span>
+              <span className="text-text-strong">{niceDt}</span>
+              {r.notes && (
+                <span className="text-text-muted truncate" title={r.notes}>· {r.notes}</span>
+              )}
+              <button
+                type="button"
+                onClick={() => cancel(r.id)}
+                className="ml-auto text-text-muted hover:text-accent-red px-1.5"
+                title="Cancel this appointment"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
           );
         })}
       </div>
     </section>
+  );
+}
+
+// Inline "Schedule QC DVIC" form — expands below the manager header.
+// Local state only; on submit POSTs and notifies parent to reload.
+function ScheduleDvicForm({ workshopId, availableDsps, onCancel, onCreated }) {
+  // Default: tomorrow at 8:00 PM local — typical AM-DSP overnight slot.
+  const tomorrow8pm = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    d.setHours(20, 0, 0, 0);
+    const tzOffset = d.getTimezoneOffset() * 60_000;
+    return new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
+  })();
+  const [dspId, setDspId] = useState('');
+  const [scheduledLocal, setScheduledLocal] = useState(tomorrow8pm);
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const submit = async (e) => {
+    e?.preventDefault?.();
+    if (!dspId) { setErr('Pick a customer'); return; }
+    if (!scheduledLocal) { setErr('Pick a date + time'); return; }
+    // datetime-local has no tz suffix; toISOString takes it as local
+    // time and produces the correct UTC instant.
+    const iso = new Date(scheduledLocal).toISOString();
+    setBusy(true); setErr(null);
+    try {
+      await dashboardsApi.createDvicSchedule(workshopId, {
+        dspId: Number(dspId),
+        scheduledAt: iso,
+        notes: notes.trim() || undefined,
+      });
+      onCreated && onCreated();
+    } catch (e) {
+      setErr(e.detail || e.message || 'Schedule failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="mt-3 p-3 rounded-md border border-navy-700 bg-navy-900 space-y-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <label className="block">
+          <span className="text-[10px] uppercase tracking-wide text-text-muted font-semibold block mb-1">Customer</span>
+          <select
+            value={dspId}
+            onChange={(e) => setDspId(e.target.value)}
+            className="w-full rounded-md px-2 py-2 text-sm bg-navy-800 border border-navy-700 text-text-strong"
+          >
+            <option value="">— pick a customer —</option>
+            {availableDsps.map((d) => (
+              <option key={d.id} value={parseOrgInt(d.id)}>{d.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-[10px] uppercase tracking-wide text-text-muted font-semibold block mb-1">Date + time (your tz)</span>
+          <input
+            type="datetime-local"
+            value={scheduledLocal}
+            onChange={(e) => setScheduledLocal(e.target.value)}
+            className="w-full rounded-md px-2 py-2 text-sm bg-navy-800 border border-navy-700 text-text-strong"
+          />
+        </label>
+      </div>
+      <label className="block">
+        <span className="text-[10px] uppercase tracking-wide text-text-muted font-semibold block mb-1">Notes (optional)</span>
+        <input
+          type="text"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          maxLength={500}
+          placeholder="e.g. bring extra battery tester · park at back gate"
+          className="w-full rounded-md px-2 py-2 text-sm bg-navy-800 border border-navy-700 text-text-strong"
+        />
+      </label>
+      {err && (
+        <div className="text-[11px] text-accent-red flex items-center gap-1">
+          <AlertCircle className="w-3 h-3" /> {err}
+        </div>
+      )}
+      <div className="flex justify-end gap-2">
+        <button type="button" onClick={onCancel} className="px-3 py-1.5 rounded-md text-xs text-text-muted hover:text-text-strong">
+          Cancel
+        </button>
+        <button
+          type="submit"
+          disabled={busy || !dspId || !scheduledLocal}
+          className="px-3 py-1.5 rounded-md bg-accent-green text-navy-950 text-xs font-semibold hover:opacity-90 disabled:opacity-40 flex items-center gap-1"
+        >
+          {busy && <Loader2 className="w-3 h-3 animate-spin" />}
+          Schedule
+        </button>
+      </div>
+    </form>
   );
 }
 

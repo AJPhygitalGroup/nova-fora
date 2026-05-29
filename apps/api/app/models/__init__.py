@@ -52,6 +52,7 @@ from app.models.work_orders import (
     DeclineReasonCode,
     RepairFeedback,
     DvicNightlyConfirmation,
+    DvicSchedule,
     RewardsProgram,
     RewardsTier,
     DefectResolution,

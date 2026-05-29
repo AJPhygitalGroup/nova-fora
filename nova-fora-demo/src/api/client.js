@@ -1663,6 +1663,49 @@ export const dashboards = {
     );
   },
 
+  // QC DVIC schedules — replaces the chip flow. Vendor admin schedules
+  // a real appointment (date + time + DSP); DSP customer home polls
+  // /dsp/{id}/next-qc-dvic and shows the readiness banner when an
+  // appointment is within the 12-hour window.
+  listDvicSchedules(vendorWorkshopId, { includePast = false } = {}) {
+    const q = new URLSearchParams();
+    if (includePast) q.set('include_past', 'true');
+    const qs = q.toString();
+    return apiFetch(
+      `/dashboards/vendor-home/${encodeURIComponent(vendorWorkshopId)}/dvic-schedules${qs ? '?' + qs : ''}`
+    );
+  },
+  createDvicSchedule(vendorWorkshopId, { dspId, scheduledAt, notes }) {
+    return apiFetch(
+      `/dashboards/vendor-home/${encodeURIComponent(vendorWorkshopId)}/dvic-schedules`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          dsp_id: dspId,
+          scheduled_at: scheduledAt,
+          notes: notes || null,
+        }),
+      },
+    );
+  },
+  cancelDvicSchedule(vendorWorkshopId, scheduleId, { reason } = {}) {
+    return apiFetch(
+      `/dashboards/vendor-home/${encodeURIComponent(vendorWorkshopId)}/dvic-schedules/${encodeURIComponent(scheduleId)}/cancel`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ reason: reason || null }),
+      },
+    );
+  },
+  // DSP-side: nearest upcoming QC DVIC within the readiness banner
+  // window (12 hours). Returns null when there's nothing scheduled
+  // soon — frontend then hides the banner.
+  dspNextQcDvic(dspId) {
+    return apiFetch(
+      `/dashboards/dsp/${encodeURIComponent(dspId)}/next-qc-dvic`
+    );
+  },
+
   /**
    * GET /dashboards/dsp/{dspId}/counters — DSP-scoped.
    * Returns: { vansInService, approveCost, approveDefects, confirmPickup,
