@@ -210,6 +210,8 @@ PART_LABELS: dict[P, dict[str, str]] = {
     P.DEF_FLUID: {"label": "DEF fluid", "icon": "🧪"},
     P.ENGINE_OIL: {"label": "Engine oil", "icon": "🛢️"},
     P.GEAR_OIL: {"label": "Gear oil", "icon": "⚙️"},
+    P.WASHER_FLUID: {"label": "Windshield washer fluid", "icon": "💦"},
+    P.GEAR_GREASE: {"label": "Gear grease", "icon": "⚙️"},
     P.FUEL_CAP: {"label": "Fuel cap", "icon": "⛽"},
     P.BATTERY_12V: {"label": "12V battery", "icon": "🔋"},
     P.BATTERY_COVER: {"label": "Battery cover", "icon": "🔋"},
@@ -229,6 +231,8 @@ PART_LABELS: dict[P, dict[str, str]] = {
     # attached
     P.LIFT_GATE: {"label": "Lift gate", "icon": "🚪"},
     P.MUD_FLAP: {"label": "Mud flap", "icon": "🟫"},
+    # body cosmetic — Body damage card; multi-instance per section
+    P.BODY_DAMAGE: {"label": "Body damage", "icon": "🚙"},
     # PM umbrella — invisible to the inspector wizard (no system mapping)
     # and only surfaced through the DSP "Create WO → Schedule PM" flow.
     P.PM_SERVICE: {"label": "PM service", "icon": "🛠️"},
@@ -286,8 +290,11 @@ TYPE_LABELS: dict[T, dict[str, str]] = {
     T.STUD_BROKEN: {"label": "Stud broken", "icon": "🧨"},
     T.HUB_CAP_MISSING: {"label": "Hub cap missing", "icon": "🚫"},
     # fluid-specific
-    T.LOW_FLUID: {"label": "Low fluid", "icon": "📉"},
+    T.LOW_FLUID: {"label": "Need refill", "icon": "📉"},
     T.EMPTY: {"label": "Empty", "icon": "🪫"},
+    T.TANK_BROKEN: {"label": "Tank broken", "icon": "🧨"},
+    T.MISSING_CAP: {"label": "Missing cap", "icon": "🔓"},
+    T.OTHER: {"label": "Other", "icon": "❓"},
     # documentation
     T.EXPIRED: {"label": "Expired", "icon": "📅"},
     T.ILLEGIBLE: {"label": "Illegible", "icon": "🔍"},
@@ -307,6 +314,9 @@ TYPE_LABELS: dict[T, dict[str, str]] = {
     T.HAS_LOOSE_OBJECTS: {"label": "Has loose objects", "icon": "📦"},
     # mount / pressure / approval / catchall
     T.MOUNT_DAMAGED: {"label": "Mount damaged", "icon": "🔩"},
+    # body-cosmetic — pair with part=BODY_DAMAGE
+    T.SCRATCH: {"label": "Scratch", "icon": "✏️"},
+    T.DENT: {"label": "Dent", "icon": "💢"},
     T.OVER_PRESSURE: {"label": "Over pressure", "icon": "💨"},
     T.NON_APPROVED: {"label": "Non-approved", "icon": "🚫"},
     T.OBSTRUCTED: {"label": "Obstructed", "icon": "🚧"},

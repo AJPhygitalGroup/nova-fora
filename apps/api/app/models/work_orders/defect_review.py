@@ -94,6 +94,20 @@ class DefectReview(SQLModel, table=True):
         ),
     )
     reason: str | None = Field(default=None)
+    # Structured rejection reason — set only when decision='rejected'.
+    # Iter-1 (mockup p.9) ships two SW-driven codes:
+    #   • 'shop_no_capability' — vendor can't do this kind of work
+    #   • 'illegitimate_defect' — defect isn't real or shouldn't have been
+    #                              reported (counts against the inspector's KPI)
+    # DSP-driven rejections from the scope-review queue may also use these
+    # plus 'other'. CHECK constraint in the migration enforces the set.
+    reject_reason_code: str | None = Field(
+        default=None,
+        max_length=40,
+        description="Structured reject code (mockup p.9). NULL unless "
+                    "decision='rejected'. Drives inspector KPI when "
+                    "'illegitimate_defect'.",
+    )
 
     is_rush: bool = Field(
         default=False,

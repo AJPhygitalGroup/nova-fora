@@ -232,6 +232,14 @@ class DefectPart(str, Enum):
     DEF_FLUID = "def_fluid"
     ENGINE_OIL = "engine_oil"
     GEAR_OIL = "gear_oil"
+    # Washer fluid is the reservoir liquid; distinct from WASHER_SYSTEM
+    # which is the pump/spray mechanism (different defect surface: a leak
+    # vs. a non-working pump).
+    WASHER_FLUID = "washer_fluid"
+    # Gear grease is the semi-solid lubricant for step van differentials;
+    # distinct from GEAR_OIL. Step Van DOT only — applicability rules
+    # restrict it to STEP_VAN_DOT.
+    GEAR_GREASE = "gear_grease"
     FUEL_CAP = "fuel_cap"
     BATTERY_12V = "battery_12v"
     BATTERY_COVER = "battery_cover"
@@ -251,6 +259,13 @@ class DefectPart(str, Enum):
     # attached
     LIFT_GATE = "lift_gate"
     MUD_FLAP = "mud_flap"
+    # body cosmetic — the catch-all "Body damage" wizard card. Lives in the
+    # outer sections (front/back/driver/passenger). Multiple instances per
+    # (vehicle, inspection, section) are allowed via details.damage_seq —
+    # the inspector can log 3 different scratches on the driver side and
+    # they stay as 3 separate Defect rows without colliding on the unique
+    # index. See the index in migration 20260526_2000_defects_uq_damage_seq.
+    BODY_DAMAGE = "body_damage"
     # PM umbrella — not surfaced in the inspector wizard (no PART_SYSTEMS
     # row). Exists solely so the DSP "Create Work Order → Schedule PM"
     # flow can mint a defect with one of the PM defect_types below and
@@ -326,8 +341,11 @@ class DefectType(str, Enum):
     STUD_BROKEN = "stud_broken"
     HUB_CAP_MISSING = "hub_cap_missing"
     # fluid-specific
-    LOW_FLUID = "low_fluid"
+    LOW_FLUID = "low_fluid"             # surfaced in the wizard as "Need refill"
     EMPTY = "empty"
+    TANK_BROKEN = "tank_broken"         # reservoir cracked / split / no longer holds fluid
+    MISSING_CAP = "missing_cap"         # cap on the fluid reservoir is missing
+    OTHER = "other"                     # generic catch-all for fluid defects not covered by above
     # documentation
     EXPIRED = "expired"
     ILLEGIBLE = "illegible"
@@ -345,6 +363,9 @@ class DefectType(str, Enum):
     # cleanliness
     DIRTY = "dirty"
     HAS_LOOSE_OBJECTS = "has_loose_objects"
+    # body-cosmetic — pair with part=BODY_DAMAGE for scratch/dent reporting.
+    SCRATCH = "scratch"
+    DENT = "dent"
     # mount / pressure / approval / catchall
     MOUNT_DAMAGED = "mount_damaged"
     OVER_PRESSURE = "over_pressure"

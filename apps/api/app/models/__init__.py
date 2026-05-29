@@ -46,8 +46,15 @@ from app.models.organization import OrgType, Organization
 from app.models.photo import Photo, PhotoCategory
 from app.models.user import User, UserRole, UserStatus
 from app.models.vehicle import Ownership, Vehicle
+from app.models.vehicle_note import VehicleNote
 from app.models.work_orders import (
+    CustomerPreferredVendor,
     DeclineReasonCode,
+    RepairFeedback,
+    DvicNightlyConfirmation,
+    DvicSchedule,
+    RewardsProgram,
+    RewardsTier,
     DefectResolution,
     DefectResolutionStatus,
     DefectReview,
@@ -63,6 +70,7 @@ from app.models.work_orders import (
     RepairRequestStatus,
     RepairType,
     StatusTrackingMode,
+    VendorBucksLedger,
     VendorWorkshop,
     WoActivityLog,
     WoActivityLogEntityType,
@@ -118,8 +126,13 @@ __all__ = [
     "UserStatus",
     "Vehicle",
     "VehicleClass",
+    "VehicleNote",
     # WO V2.0 (14 tables + enums)
+    "CustomerPreferredVendor",
     "DeclineReasonCode",
+    "RepairFeedback",
+    "RewardsProgram",
+    "RewardsTier",
     "DefectResolution",
     "DefectResolutionStatus",
     "DefectReview",

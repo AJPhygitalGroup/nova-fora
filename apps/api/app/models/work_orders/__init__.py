@@ -16,7 +16,13 @@ Convention notes:
   - `id_str` properties match the frontend's prefix convention (WO-XXXXX,
     RR-XXX, etc.) when relevant.
 """
+from app.models.work_orders.customer_preferred_vendor import CustomerPreferredVendor
 from app.models.work_orders.decline_reason_code import DeclineReasonCode
+from app.models.work_orders.repair_feedback import RepairFeedback
+from app.models.work_orders.dvic_nightly_confirmation import DvicNightlyConfirmation
+from app.models.work_orders.dvic_schedule import DvicSchedule
+from app.models.work_orders.vendor_bucks_ledger import VendorBucksLedger
+from app.models.work_orders.rewards_program import RewardsProgram, RewardsTier
 from app.models.work_orders.defect_resolution import (
     DefectResolution,
     DefectResolutionStatus,
@@ -74,12 +80,19 @@ __all__ = [
     "WorkOrderPhotoStage",
     "WorkOrderStatus",
     # Tables
+    "CustomerPreferredVendor",
     "DeclineReasonCode",
+    "RepairFeedback",
+    "DvicNightlyConfirmation",
+    "DvicSchedule",
+    "RewardsProgram",
+    "RewardsTier",
     "DefectResolution",
     "DefectReview",
     "DspSetting",
     "RepairRequest",
     "RepairRequestDefect",
+    "VendorBucksLedger",
     "VendorWorkshop",
     "WoActivityLog",
     "WorkOrder",
