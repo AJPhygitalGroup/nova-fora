@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import {
@@ -56,6 +56,27 @@ const VIEW_CATALOG = {
   admin:       { id: 'admin',       i18nKey: 'admin',       icon: Settings,       color: 'text-accent-gold',   Component: AdminPanel },
   ghost:       { id: 'ghost',       i18nKey: 'ghost',       icon: Eye,            color: 'text-accent-red',    Component: GhostMode },
 };
+
+// URL-hash slugs for top-level tabs. The internal view ids are legacy
+// (`dvic` literally means "the DVIC dashboard tab" from V1; on the
+// vendor side it's been repurposed as Home, and `snapshot` is the QC
+// DVIC heatmap). Showing those raw in the address bar is confusing —
+// e.g. /#dvic when the visible label says "Home". This map is COSMETIC
+// only: the React state and history-state payload still carry the
+// internal id, the slug just decorates the URL. Unknown ids fall back
+// to the id with underscores swapped for dashes.
+const TAB_SLUG = {
+  dvic:        'home',
+  snapshot:    'qc-dvic',
+  my_dsps:     'my-dsps',
+  work_orders: 'work-orders',
+  wo_status:   'work-orders',
+};
+
+function tabSlug(id) {
+  if (TAB_SLUG[id]) return TAB_SLUG[id];
+  return String(id || '').replace(/_/g, '-');
+}
 
 // 'Dashboard' is a virtual group rendered as a dropdown that contains the
 // defects + body repairs + work orders views (so they share a single nav
@@ -197,6 +218,66 @@ export default function Layout({ user, onSwitchRole, onLogout, onImpersonate, im
       setActiveTab(defaultTab);
     }
   }, [user.role, tabs, activeTab, defaultTab]);
+
+  // ─── Browser back/forward integration (minimal — no react-router) ───
+  // Each top-level activeTab change pushes a history entry tagged
+  // { nf: true, tab: id }. Browser back triggers popstate, we read the
+  // stored tab id and restore it instead of letting the browser exit
+  // the SPA. Without this the user got "back kicks me out of the app"
+  // (no history entries existed because every nav was a setState).
+  //
+  // The URL hash uses a human-friendly slug (#home, #qc-dvic) — the
+  // internal `dvic`/`snapshot`/etc. ids are legacy from the demo's
+  // evolution and confusing in the address bar ("dvic" used to mean the
+  // DVIC dashboard; now for the vendor it's just Home). The slug is
+  // cosmetic; the state we push/restore is still the canonical id.
+  //
+  // Scope is intentionally tabs only — modals/sub-views still use their
+  // own state. If a modal is open when the user hits back, the tab
+  // switch tears it down via re-render, which is acceptable for now.
+  const skipNextPushRef = useRef(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    // Tag the current entry with the active tab so popstate landing
+    // back here knows what to restore. replaceState (not push) — we
+    // don't synthesise a fake step.
+    window.history.replaceState(
+      { nf: true, tab: activeTab },
+      '',
+      `${window.location.pathname}#${tabSlug(activeTab)}`,
+    );
+    const onPopState = (e) => {
+      const tab = e.state && e.state.nf ? e.state.tab : null;
+      if (tab) {
+        skipNextPushRef.current = true;
+        setActiveTab(tab);
+      }
+      // If state has no nf tag (user navigated back beyond the app's
+      // first entry), do nothing — the browser handles it natively.
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+    // intentionally [] — runs once per mount; activeTab updates handled
+    // by the second effect below
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    // popstate already restored this tab — don't push a duplicate entry
+    if (skipNextPushRef.current) {
+      skipNextPushRef.current = false;
+      return;
+    }
+    // Avoid duplicate on initial render (replaceState above just set it)
+    const cur = window.history.state;
+    if (cur && cur.nf && cur.tab === activeTab) return;
+    window.history.pushState(
+      { nf: true, tab: activeTab },
+      '',
+      `${window.location.pathname}#${tabSlug(activeTab)}`,
+    );
+  }, [activeTab]);
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [theme, setTheme] = useState(() => {
