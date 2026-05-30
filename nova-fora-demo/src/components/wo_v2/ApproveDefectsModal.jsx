@@ -22,6 +22,7 @@ import {
   workOrders as woApi,
   defectReviews as defectReviewsApi,
 } from '../../api/client';
+import { primaryRoLabel } from '../../lib/wo';
 
 // Reject reason codes (mockup p.9). illegitimate_defect feeds the
 // inspector KPI; shop_no_capability is the vendor saying "wrong shop";
@@ -146,7 +147,7 @@ export default function ApproveDefectsModal({ woId, onClose, onAfter }) {
                 {wo ? ` · Van ${wo.vehicleFleetId || wo.vehicleIdStr || wo.vehicleId}` : ''}
               </h3>
               <p className="text-[11px] text-text-muted">
-                {wo ? wo.id : ''}{wo?.workshopName ? ` · ${wo.workshopName}` : ''}
+                {wo ? primaryRoLabel(wo) : ''}{wo?.workshopName ? ` · ${wo.workshopName}` : ''}
               </p>
             </div>
           </div>

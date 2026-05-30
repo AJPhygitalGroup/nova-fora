@@ -957,6 +957,18 @@ export const workOrders = {
     return apiFetch(`/work-orders/${encodeURIComponent(id)}`);
   },
 
+  /**
+   * GET /work-orders/by-ro/{ro_number} — canonical user-facing lookup.
+   * Per Jorge 2026-05-29: the internal WO id (WO-XXXXX) is being
+   * deprecated as a user-facing handle in favour of the vendor's RO#.
+   * Use this when URL/state should carry the RO# (deep links, share
+   * URLs, etc.). Returns 404 for unknown RO# OR for cross-tenant —
+   * silent on both, by design.
+   */
+  getByRo(roNumber) {
+    return apiFetch(`/work-orders/by-ro/${encodeURIComponent(roNumber)}`);
+  },
+
   // ── Lifecycle transitions ─────────────────────────
   /** POST /work-orders/{id}/accept — vendor accept; generates line items */
   accept(id) {

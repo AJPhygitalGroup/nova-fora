@@ -30,6 +30,7 @@ import {
   directory as directoryApi,
   repairRequests as rrApi,
 } from '../../api/client';
+import { primaryRoLabel } from '../../lib/wo';
 
 const PART_ICON_LABELS = {
   // Friendly labels for the defect-card icon column. The schema's
@@ -170,7 +171,7 @@ export default function ReviewRequestModal({
               New request{wo ? ` · Van ${wo.vehicleFleetId || wo.vehicleIdStr || wo.vehicleId}` : ''}
             </h3>
             <p className="text-[11px] text-text-muted">
-              {wo?.dspName || ''} {wo ? `· ${wo.id}` : ''}
+              {wo?.dspName || ''} {wo ? `· ${primaryRoLabel(wo)}` : ''}
             </p>
           </div>
           <button

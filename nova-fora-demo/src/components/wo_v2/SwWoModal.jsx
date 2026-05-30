@@ -17,6 +17,7 @@ import {
   Phone, Mail, User as UserIcon, Send, Calendar, CheckCircle2, Check,
 } from 'lucide-react';
 import { workOrders as woApi } from '../../api/client';
+import { primaryRoLabel } from '../../lib/wo';
 
 const PICKUP_TYPES = [
   { value: 'overnight_rush', label: 'Overnight (return before AM shift)' },
@@ -66,7 +67,7 @@ export default function SwWoModal({ woId, onClose, onAction }) {
   return (
     <ModalShell
       onClose={onClose}
-      title={wo.id}
+      title={primaryRoLabel(wo)}
       subtitle={`Van ${wo.vehicleFleetId || wo.vehicleIdStr || wo.vehicleId} · ${wo.dspName || ''}`}
     >
       <div className="px-5 py-4 space-y-5">

@@ -10,6 +10,7 @@
 import { useState } from 'react';
 import { X, CheckCircle2, Loader2, AlertTriangle } from 'lucide-react';
 import { workOrders as woApi } from '../../api/client';
+import { primaryRoLabel } from '../../lib/wo';
 
 export default function CompleteModal({ wo, onClose, onSuccess }) {
   // Pull whatever floor we can find from the cached WO so the UI can
@@ -57,7 +58,7 @@ export default function CompleteModal({ wo, onClose, onSuccess }) {
             </div>
             <div>
               <h3 className="text-base font-semibold text-text-strong">
-                Complete {wo.id}
+                Complete {primaryRoLabel(wo)}
               </h3>
               <p className="text-xs text-text-muted">
                 Captures final mileage and marks the work order done.

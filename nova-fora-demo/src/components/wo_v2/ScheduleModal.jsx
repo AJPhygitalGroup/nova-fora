@@ -19,6 +19,7 @@
 import { useState } from 'react';
 import { X, Calendar, Loader2, AlertCircle } from 'lucide-react';
 import { workOrders as woApi } from '../../api/client';
+import { primaryRoLabel } from '../../lib/wo';
 
 export default function ScheduleModal({ wo, onSuccess, onClose }) {
   // Default to today 9 AM if no current scheduled_at; preserve otherwise.
@@ -92,7 +93,7 @@ export default function ScheduleModal({ wo, onSuccess, onClose }) {
             </div>
             <div>
               <h3 className="text-base font-semibold text-text-strong">Schedule Work Order</h3>
-              <p className="text-[11px] text-text-muted">{wo.id} · Picks the slot the DSP + tech will see</p>
+              <p className="text-[11px] text-text-muted">{primaryRoLabel(wo)} · Picks the slot the DSP + tech will see</p>
             </div>
           </div>
           <button onClick={onClose} className="text-text-muted hover:text-text-strong p-2 -mr-2">

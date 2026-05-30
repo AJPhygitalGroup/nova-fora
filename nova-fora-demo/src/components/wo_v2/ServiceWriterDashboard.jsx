@@ -321,7 +321,7 @@ export default function ServiceWriterDashboard({ user }) {
   }, [refreshAll]);
 
   const onStart = useCallback(async (wo) => {
-    if (!window.confirm(`Start work on ${wo.id}? This flips status to in_progress.`)) return;
+    if (!window.confirm(`Start work on ${primaryRoLabel(wo)}? This flips status to in_progress.`)) return;
     setError(null);
     try {
       await woApi.start(wo.id);
@@ -332,7 +332,7 @@ export default function ServiceWriterDashboard({ user }) {
   }, [refreshAll]);
 
   const onCancel = useCallback(async (wo) => {
-    const reason = window.prompt(`Cancel ${wo.id}? Reason (optional):`, '');
+    const reason = window.prompt(`Cancel ${primaryRoLabel(wo)}? Reason (optional):`, '');
     if (reason === null) return;  // cancelled
     setError(null);
     try {

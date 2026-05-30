@@ -11,6 +11,7 @@ import { useState } from 'react';
 import { X, XCircle, Loader2, AlertTriangle } from 'lucide-react';
 import { workOrders as woApi } from '../../api/client';
 import { WO_DECLINE_REASONS } from '../../data/mockData';
+import { primaryRoLabel } from '../../lib/wo';
 
 // int code → backend string code (decline_reason_codes table).
 // Same mapping the legacy WorkOrders.jsx uses so DSPs see the same
@@ -55,7 +56,7 @@ export default function DeclineModal({ wo, onClose, onSuccess }) {
             </div>
             <div>
               <h3 className="text-base font-semibold text-text-strong">
-                Decline {wo.id}
+                Decline {primaryRoLabel(wo)}
               </h3>
               <p className="text-xs text-text-muted">
                 The repair request will be auto-routed to the next eligible vendor.

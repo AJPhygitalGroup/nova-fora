@@ -20,6 +20,7 @@ import {
   workOrders as woApi,
   defects as defectsApi,
 } from '../../api/client';
+import { primaryRoLabel } from '../../lib/wo';
 
 export default function ApproveCostModal({ woId, onClose, onAfter }) {
   const [wo, setWo] = useState(null);
@@ -92,7 +93,7 @@ export default function ApproveCostModal({ woId, onClose, onAfter }) {
                 {wo ? ` · Van ${wo.vehicleFleetId || wo.vehicleIdStr || wo.vehicleId}` : ''}
               </h3>
               <p className="text-[11px] text-text-muted">
-                {wo ? wo.id : ''}{wo?.workshopName ? ` · ${wo.workshopName}` : ''}
+                {wo ? primaryRoLabel(wo) : ''}{wo?.workshopName ? ` · ${wo.workshopName}` : ''}
               </p>
             </div>
           </div>
