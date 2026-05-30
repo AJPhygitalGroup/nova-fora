@@ -1057,6 +1057,65 @@ async def stream_wo_events(
 
 
 @router.get(
+    "/by-ro/{ro_number}",
+    response_model=WorkOrderDetailResponse,
+    summary="Get a work order by its primary RO number (user-facing canonical handle)",
+)
+async def get_work_order_by_ro(
+    request: Request,
+    ro_number: str = Path(..., min_length=1, max_length=60, examples=["12345"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> WorkOrderDetailResponse:
+    """Lookup a WO by its primary RO# (the Repair Order number the
+    Service Writer enters at accept time). This is the canonical
+    user-facing handle going forward — the internal WO id (WO-XXXXX) is
+    being deprecated as a user-visible identifier in favour of the
+    vendor's RO# (Jorge decision 2026-05-29).
+
+    Returns 404 if no WO has that RO# as primary OR if tenancy hides it
+    from the requester. Tenancy is enforced the same way as the
+    `/{wo_id}` route via `_can_view_wo`.
+
+    Path placement: registered BEFORE `/{wo_id}` because `/by-ro/<x>`
+    has two segments and `/{wo_id}` only matches one — no conflict in
+    practice, but the deliberate order keeps intent readable.
+    """
+    lang = get_request_language(request)
+    wo = (
+        await session.execute(
+            select(WorkOrder)
+            .join(WorkOrderRo, WorkOrderRo.work_order_id == WorkOrder.id)
+            .where(WorkOrderRo.ro_number == ro_number)
+            .where(WorkOrderRo.is_primary.is_(True))
+        )
+    ).scalar_one_or_none()
+    if wo is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            tr_error(E.WORK_ORDER_NOT_FOUND, lang),
+        )
+    if not await _can_view_wo(session, wo, current):
+        # 404 rather than 403 — don't confirm RO# existence to a vendor
+        # who shouldn't see it.
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            tr_error(E.WORK_ORDER_NOT_FOUND, lang),
+        )
+    # Delegate to the existing /{wo_id} loader so we don't duplicate the
+    # ~165 lines of line_items / DRs / ROs / notes / defects+photos
+    # assembly. FastAPI handlers are plain async functions; calling one
+    # from another is safe (it re-runs the tenancy check, which is
+    # idempotent here).
+    return await get_work_order(
+        request=request,
+        wo_id=wo.id_str,
+        current=current,
+        session=session,
+    )
+
+
+@router.get(
     "/{wo_id}",
     response_model=WorkOrderDetailResponse,
     summary="Get a work order with line items / DRs / ROs / notes",

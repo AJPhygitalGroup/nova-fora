@@ -24,13 +24,10 @@ Verified 2026-05-29: 11/11 PASS including sub-check of the
 vendor-repair_type defect scope filter shipped same day
 (commits 3aa9000 + 5b2aba4).
 
-NOTE — deprecated coverage gap (2026-05-29): the WO-by-internal-id tests
-(/work-orders/{WO-XXXXX}) were intentionally removed because the internal
-WO id is being deprecated as a user-facing handle in favour of the
-service writer's RO# (Repair Order number). When the RO#-as-primary
-work lands, re-add cross-tenant tests using `/work-orders/by-ro/{RO}`
-or whatever the canonical lookup becomes. Vendor↔Vendor isolation is
-not currently exercised by this matrix as a result — TODO when RO# ships.
+2026-05-29 (post-RO#-migration): the WO-by-internal-id tests were
+removed because the internal WO id is being deprecated as a user-facing
+handle. Vendor↔Vendor cross-tenant coverage was re-added via the new
+`/work-orders/by-ro/{ro_number}` endpoint (same commit) — see tests 12-13.
 """
 import json
 import sys
@@ -56,6 +53,10 @@ DSP_A_VAN = "VAN-0113"   # Safety First
 DSP_A_INS = "INS-00037"  # Safety First
 DSP_B_VAN = "VAN-0164"   # Service Logistic
 DSP_B_INS = "INS-00053"  # Service Logistic
+# Primary RO# of WO id=13 (Dulles Midas / Olger). Used to prove the new
+# /work-orders/by-ro/{ro} endpoint enforces tenancy (Mike from Capital
+# Body must 404 on it).
+VENDOR_A_RO = "RO-PR13"
 
 
 def http(method, path, token=None, body=None):
@@ -107,22 +108,28 @@ TESTS = [
     ("04", "jorge", "GET", f"/vehicles/{DSP_A_VAN}",       None, [403, 404], "DSP B → DSP A's van (symmetric)"),
     ("05", "jorge", "GET", f"/inspections/{DSP_A_INS}",    None, [403, 404], "DSP B → DSP A's inspection (symmetric)"),
 
-    # Vendor↔Vendor coverage TODO — re-add once RO#-as-primary lookup ships
-    # (currently the only handle is internal WO id which is being deprecated).
+    # Vendor↔Vendor cross-tenant via the NEW /work-orders/by-ro/{ro}
+    # lookup (added same commit as the RO#-as-primary migration). 404 on
+    # cross-tenant is intentional — don't confirm RO# existence to a
+    # vendor who shouldn't see it.
+    ("06", "olger", "GET", f"/work-orders/by-ro/{VENDOR_A_RO}",   None, [200],      "Vendor A → own WO by RO# (allowed)"),
+    ("07", "mike",  "GET", f"/work-orders/by-ro/{VENDOR_A_RO}",   None, [404],      "Vendor B → Vendor A's WO by RO# (404 silent)"),
+    ("08", "olger", "GET", "/work-orders/by-ro/DOESNOTEXIST",     None, [404],      "Unknown RO# → 404"),
 
     # Technician escalation
-    ("06", "david", "POST", "/auth/invitations", {"email": "test@example.com", "role": "vendor_admin"}, [403, 422], "Technician → invite (role-matrix gate)"),
-    ("07", "david", "POST", "/vehicles", {"dsp_id": 1, "fleet_id": "XX", "vin": "1HGCM82633A123456", "plate": "ABC1234", "year": 2024, "make": "X", "model": "Y"}, [403, 422], "Technician → create vehicle"),
+    ("09", "david", "POST", "/auth/invitations", {"email": "test@example.com", "role": "vendor_admin"}, [403, 422], "Technician → invite (role-matrix gate)"),
+    ("10", "david", "POST", "/vehicles", {"dsp_id": 1, "fleet_id": "XX", "vin": "1HGCM82633A123456", "plate": "ABC1234", "year": 2024, "make": "X", "model": "Y"}, [403, 422], "Technician → create vehicle"),
 
     # Owned-resource sanity
-    ("08", "jon",   "GET", f"/vehicles/{DSP_A_VAN}",       None, [200],      "DSP A → own van (allowed)"),
+    ("11", "jon",   "GET", f"/vehicles/{DSP_A_VAN}",       None, [200],      "DSP A → own van (allowed)"),
 
     # site_admin god mode
-    ("09", "maria", "GET", f"/vehicles/{DSP_A_VAN}",       None, [200],      "site_admin → DSP A van"),
-    ("10", "maria", "GET", f"/vehicles/{DSP_B_VAN}",       None, [200],      "site_admin → DSP B van"),
+    ("12", "maria", "GET", f"/vehicles/{DSP_A_VAN}",       None, [200],      "site_admin → DSP A van"),
+    ("13", "maria", "GET", f"/vehicles/{DSP_B_VAN}",       None, [200],      "site_admin → DSP B van"),
+    ("14", "maria", "GET", f"/work-orders/by-ro/{VENDOR_A_RO}", None, [200], "site_admin → any RO (god mode)"),
 
     # Today's vendor repair_type scope filter (regression check)
-    ("11", "olger", "GET", "/inspections/INS-00055",        None, [200],      "Vendor scope filter still works (body filtered)"),
+    ("15", "olger", "GET", "/inspections/INS-00055",        None, [200],      "Vendor scope filter still works (body filtered)"),
 ]
 
 print()
@@ -148,7 +155,7 @@ for tid, actor, method, path, body, ok_codes, why in TESTS:
 
     # Sub-check on the vendor scope filter test: the body defect must be
     # filtered from the response.
-    if tid == "11" and code == 200:
+    if tid == "15" and code == 200:
         full = urllib.request.urlopen(urllib.request.Request(
             BASE + "/inspections/INS-00055",
             headers={"Authorization": "Bearer " + tokens[actor]},
