@@ -30,6 +30,7 @@ import RoModal from './RoModal';
 import ApproveCostModal from './ApproveCostModal';
 import ApproveDefectsModal from './ApproveDefectsModal';
 import { StatusPill, STATUS_OPTIONS, deriveStatusKey } from './StatusChanger';
+import { primaryRo } from '../../lib/wo';
 
 // ─────────────────────────────────────────────────────
 // Status filter — same 8 chip statuses the SW sees, plus an "All"
@@ -53,16 +54,9 @@ const STATUS_FILTERS = [
 
 const ALL_TERMINAL = new Set(['completed', 'cancelled', 'declined']);
 
-function primaryRo(wo) {
-  // List endpoint exposes a compact `primary_ro` snapshot inline; detail
-  // exposes the full `ros` array. Prefer inline so the table renders
-  // without an extra fetch per row.
-  if (wo?.primaryRo) return wo.primaryRo;
-  if (Array.isArray(wo?.ros) && wo.ros.length > 0) {
-    return wo.ros.find((r) => r.isPrimary) || wo.ros[0];
-  }
-  return null;
-}
+// `primaryRo(wo)` now lives in src/lib/wo.js as the single source of
+// truth (was a local copy here + 3 other files; de-duped 2026-05-29
+// as part of the WO id → RO# migration cleanup).
 
 // ─────────────────────────────────────────────────────
 // Component

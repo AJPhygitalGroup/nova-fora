@@ -41,6 +41,7 @@ import ReviewRequestModal from './ReviewRequestModal';
 import CreateWoWizard from './CreateWoWizard';
 import RoModal from './RoModal';
 import StatusChanger from './StatusChanger';
+import { primaryRo, primaryRoLabel } from '../../lib/wo';
 
 // ─────────────────────────────────────────────────────
 // Chip catalog (8 buckets, derived from wo.status + primary RO state)
@@ -58,16 +59,9 @@ const CHIPS = [
 
 const ALL_TERMINAL = new Set(['completed', 'cancelled', 'declined']);
 
-function primaryRo(wo) {
-  // List endpoint surfaces a compact `primary_ro` snapshot inline; the
-  // detail endpoint exposes the full `ros` array. Prefer the inline
-  // snapshot if present so SwWoRow doesn't need to fetch detail.
-  if (wo?.primaryRo) return wo.primaryRo;
-  if (Array.isArray(wo?.ros) && wo.ros.length > 0) {
-    return wo.ros.find((r) => r.isPrimary) || wo.ros[0];
-  }
-  return null;
-}
+// `primaryRo(wo)` + `primaryRoLabel(wo)` now live in src/lib/wo.js as
+// the single source of truth (de-duped 2026-05-29 as part of the WO id
+// → RO# migration cleanup).
 
 // ─────────────────────────────────────────────────────
 // Component
@@ -1166,11 +1160,3 @@ function vehicleShortLabel(wo) {
   return label;
 }
 
-// Jorge#2: WO list/cards primary label is the vendor RO# (RO-44936)
-// not the Nova Fora WO# (WO-00026). Falls back to WO# when no RO
-// is attached yet (e.g., before /accept generates the placeholder).
-function primaryRoLabel(wo) {
-  const r = wo?.primaryRo
-    || (Array.isArray(wo?.ros) ? wo.ros.find((x) => x.isPrimary) : null);
-  return r?.roNumber || wo?.id || '—';
-}

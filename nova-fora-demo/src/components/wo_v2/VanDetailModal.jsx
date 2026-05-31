@@ -26,6 +26,7 @@ import {
   workOrders as woApi,
   defects as defectsApi,
 } from '../../api/client';
+import { primaryRo } from '../../lib/wo';
 
 export default function VanDetailModal({ wo, user, mode = 'customer', onClose, onAction }) {
   return (
@@ -391,15 +392,7 @@ function ActivityPanel({ wo }) {
   );
 }
 
-// ─────────────────────────────────────────────────────
-// helpers
-// ─────────────────────────────────────────────────────
-function primaryRo(wo) {
-  // Detail endpoint returns full `ros` array; list endpoint returns a
-  // compact `primary_ro` snapshot. Prefer the array (richer) when present.
-  if (Array.isArray(wo?.ros) && wo.ros.length > 0) {
-    return wo.ros.find((r) => r.isPrimary) || wo.ros[0];
-  }
-  if (wo?.primaryRo) return wo.primaryRo;
-  return null;
-}
+// `primaryRo(wo)` now imported from src/lib/wo.js (single source of
+// truth). Note: this file's old local copy preferred `wo.ros` over
+// `wo.primaryRo` — the shared helper inverts that. Both fields point
+// at the same record when both are populated, so behaviour is unchanged.

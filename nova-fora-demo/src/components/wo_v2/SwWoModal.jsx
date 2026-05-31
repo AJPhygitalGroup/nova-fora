@@ -17,7 +17,7 @@ import {
   Phone, Mail, User as UserIcon, Send, Calendar, CheckCircle2, Check,
 } from 'lucide-react';
 import { workOrders as woApi } from '../../api/client';
-import { primaryRoLabel } from '../../lib/wo';
+import { primaryRo, primaryRoLabel } from '../../lib/wo';
 
 const PICKUP_TYPES = [
   { value: 'overnight_rush', label: 'Overnight (return before AM shift)' },
@@ -365,13 +365,8 @@ function ActivityPanel({ woId }) {
   );
 }
 
-// ─────────────────────────────────────────────────────
-// helpers
-// ─────────────────────────────────────────────────────
-function primaryRo(wo) {
-  if (Array.isArray(wo?.ros) && wo.ros.length > 0) {
-    return wo.ros.find((r) => r.isPrimary) || wo.ros[0];
-  }
-  if (wo?.primaryRo) return wo.primaryRo;
-  return null;
-}
+// `primaryRo(wo)` now imported from src/lib/wo.js (single source of
+// truth). Note: this file's old local copy preferred `wo.ros` over
+// `wo.primaryRo` — the shared helper inverts that (prefers
+// `primaryRo` inline snapshot first). Both fields point at the same
+// record when both are populated, so behaviour is unchanged.
