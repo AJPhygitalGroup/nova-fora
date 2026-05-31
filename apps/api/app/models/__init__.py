@@ -9,6 +9,7 @@ WO V2.0 note (branch `wo-v2-rebuild`):
   (folder package). They're exported here for Alembic visibility AND for
   convenience: callers can keep doing `from app.models import WorkOrder`.
 """
+from app.models.auth_audit_log import AuthAuditEvent, AuthAuditLog
 from app.models.base import timestamp_column, utc_now
 from app.models.defect import Defect, DefectSource
 from app.models.defect_catalog import (
@@ -85,6 +86,9 @@ from app.models.work_orders import (
 )
 
 __all__ = [
+    # Auth audit
+    "AuthAuditEvent",
+    "AuthAuditLog",
     # Defects
     "Defect",
     "DefectApplicability",

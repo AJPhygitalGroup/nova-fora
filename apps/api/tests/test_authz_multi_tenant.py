@@ -234,3 +234,84 @@ class TestLogoutRevoke:
         assert code == 204
         code, _ = http("GET", "/auth/me", access)
         assert code == 401
+
+
+# ─────────────────────────────────────────────────────
+# Auth audit log (commit 2026-05-31 — table + GET endpoint).
+# Verifies that login / logout / impersonate_start each persist a row
+# and that the read surface is site_admin-only.
+# ─────────────────────────────────────────────────────
+class TestAuditLog:
+    def test_non_admin_cannot_read_audit_log(self, token_olger):
+        code, _ = http("GET", "/auth/audit-log", token_olger)
+        assert code == 403
+
+    def test_site_admin_can_read_audit_log(self, token_maria):
+        code, body = http("GET", "/auth/audit-log?per_page=5", token_maria)
+        assert code == 200
+        assert isinstance(body, dict)
+        assert "items" in body and "total" in body
+
+    def test_login_event_persists(self):
+        # Fresh login → audit should grow by one with event_type=login
+        # for this actor. Read as site_admin filtered by actor_id.
+        from .conftest import PWD
+        # Maria's user id is 4 — known seed fact.
+        code, body = http(
+            "POST", "/auth/login",
+            body={"email": "maria@novafora.com", "password": PWD},
+        )
+        assert code == 200
+        maria_access = body["access_token"]
+        # Read most-recent audit row for actor 4 + event=login
+        code, body = http(
+            "GET", "/auth/audit-log?actor_id=4&event_type=login&per_page=1",
+            maria_access,
+        )
+        assert code == 200
+        assert body["total"] >= 1
+        latest = body["items"][0]
+        assert latest["event_type"] == "login"
+        assert latest["actor_email"] == "maria@novafora.com"
+
+    def test_impersonate_event_persists_with_target(self, token_maria):
+        # Impersonate olger (user.id=2) and confirm the row carries
+        # target_email + extra.target_role.
+        code, _ = http("POST", "/auth/impersonate/2", token_maria)
+        assert code == 200
+        code, body = http(
+            "GET", "/auth/audit-log?event_type=impersonate_start&per_page=1",
+            token_maria,
+        )
+        assert code == 200
+        assert body["total"] >= 1
+        latest = body["items"][0]
+        assert latest["event_type"] == "impersonate_start"
+        assert latest["actor_email"] == "maria@novafora.com"
+        assert latest["target_email"] == "olger@dullesmidas.com"
+        assert latest["extra"].get("target_role") == "vendor_admin"
+
+    def test_logout_event_records_refresh_revoked_flag(self):
+        from .conftest import PWD
+        code, body = http(
+            "POST", "/auth/login",
+            body={"email": "maria@novafora.com", "password": PWD},
+        )
+        access, refresh = body["access_token"], body["refresh_token"]
+        code, _ = http(
+            "POST", "/auth/logout", access, body={"refresh_token": refresh}
+        )
+        assert code == 204
+        # Read latest logout event as a fresh admin token
+        code, body = http(
+            "POST", "/auth/login",
+            body={"email": "maria@novafora.com", "password": PWD},
+        )
+        fresh = body["access_token"]
+        code, body = http(
+            "GET", "/auth/audit-log?event_type=logout&per_page=1", fresh,
+        )
+        assert code == 200
+        latest = body["items"][0]
+        assert latest["event_type"] == "logout"
+        assert latest["extra"].get("refresh_revoked") is True

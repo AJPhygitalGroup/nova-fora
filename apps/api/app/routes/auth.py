@@ -5,7 +5,9 @@
   POST /auth/logout    stateless JWT — server-side is a no-op, frontend clears storage
   GET  /auth/me        returns the current user (full UserResponse shape)
 """
-from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
+from datetime import datetime
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -22,10 +24,12 @@ from app.auth.jwt import (
 from app.db import get_session
 from app.i18n_errors import E, tr_error
 from app.i18n_helpers import get_request_language
+from app.models.auth_audit_log import AuthAuditEvent
 from app.models.organization import Organization
 from app.models.user import User, UserRole, UserStatus
 from app.schemas.auth import LoginRequest, RefreshRequest, TokenPair
 from app.schemas.user import UserResponse
+from app.services.auth_audit import record as record_audit
 from app.settings import get_settings
 from app.models.base import utc_now
 
@@ -112,6 +116,14 @@ async def login(
     # Update last_login_at (best effort — don't fail login if this fails)
     user.last_login_at = utc_now()
     session.add(user)
+    # Audit row — same transaction as the last_login_at bump so they
+    # either both persist or both roll back (consistent state).
+    await record_audit(
+        session,
+        event_type=AuthAuditEvent.LOGIN,
+        actor_user_id=user.id,
+        request=request,
+    )
     await session.commit()
 
     return TokenPair(
@@ -253,6 +265,19 @@ async def impersonate(
         "auth.impersonate admin_id=%s admin_email=%s target_id=%s target_email=%s role=%s",
         current.id, current.email, target.id, target.email, target.role.value,
     )
+    # Audit row — admin is the actor, target is the user being acted on.
+    await record_audit(
+        session,
+        event_type=AuthAuditEvent.IMPERSONATE_START,
+        actor_user_id=current.id,
+        target_user_id=target.id,
+        request=request,
+        extra={
+            "target_email": target.email,
+            "target_role": target.role.value,
+        },
+    )
+    await session.commit()
     return TokenPair(
         access_token=create_access_token(user_id=target.id, extra=extra),
         refresh_token=create_refresh_token(user_id=target.id, extra=extra),
@@ -272,6 +297,7 @@ async def logout(
     request: Request,
     current: User = Depends(get_current_user),
     body: dict | None = Body(default=None),
+    session: AsyncSession = Depends(get_session),
 ) -> None:
     """Real revocation as of 2026-05-29 — was a no-op (Semana 7 TODO,
     flagged by tester #5). The bearer access token's `jti` is inserted
@@ -313,6 +339,7 @@ async def logout(
     # Optional refresh-token revoke so a logged-out client can't mint
     # fresh access tokens via /auth/refresh.
     refresh_jwt = (body or {}).get("refresh_token") if isinstance(body, dict) else None
+    refresh_revoked = False
     if refresh_jwt:
         try:
             payload = decode_token(refresh_jwt, expected_type=TokenType.REFRESH)
@@ -320,12 +347,22 @@ async def logout(
             exp = int(payload.get("exp", 0))
             if jti:
                 await revoke_token(jti, ttl_seconds=max(1, exp - now_ts))
+                refresh_revoked = True
         except TokenError:
             # Bad refresh token → silently ignore; the access revoke
             # already happened so we don't fail the logout for this.
             pass
 
-    _ = current  # ensures we required auth (already enforced by dep)
+    # Audit row — captures who logged out + whether refresh was also
+    # revoked (useful for forensic "did this device get fully signed out?").
+    await record_audit(
+        session,
+        event_type=AuthAuditEvent.LOGOUT,
+        actor_user_id=current.id,
+        request=request,
+        extra={"refresh_revoked": refresh_revoked},
+    )
+    await session.commit()
     return None
 
 
@@ -389,3 +426,137 @@ async def update_language(
         await session.commit()
         await session.refresh(current)
     return await _build_user_response(current, session, get_request_language(request))
+
+
+# ─────────────────────────────────────────────────────
+# GET /auth/audit-log — site_admin only
+# ─────────────────────────────────────────────────────
+class _AuditLogRow(BaseModel):
+    """One row of the auth audit feed. Mirrors AuthAuditLog + adds
+    actor_email/target_email joined on read so the admin UI doesn't
+    need a second round trip per row."""
+
+    id: str  # AAL-00042
+    event_type: str
+    actor_user_id: int | None = None
+    actor_email: str | None = None
+    target_user_id: int | None = None
+    target_email: str | None = None
+    ip_address: str | None = None
+    user_agent: str | None = None
+    extra: dict
+    created_at: datetime
+
+
+class _AuditLogResponse(BaseModel):
+    items: list[_AuditLogRow]
+    total: int
+    page: int
+    per_page: int
+
+
+@router.get(
+    "/audit-log",
+    response_model=_AuditLogResponse,
+    summary="List auth audit events (site_admin only)",
+    responses={
+        403: {"description": "Caller is not site_admin"},
+    },
+)
+async def list_audit_log(
+    request: Request,
+    event_type: str | None = Query(
+        None,
+        description="Filter by event ('login' / 'logout' / 'impersonate_start')",
+    ),
+    actor_id: int | None = Query(None, description="Filter by acting user id"),
+    target_id: int | None = Query(None, description="Filter by impersonated user id"),
+    since: datetime | None = Query(
+        None, description="ISO timestamp lower bound on created_at"
+    ),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=200),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> _AuditLogResponse:
+    """Paginated reverse-chronological view of the auth audit log.
+
+    Site_admin gate: the audit log can leak email addresses + IP
+    patterns, so it's restricted to the platform org. Other roles get
+    403.
+
+    Joins actor + target emails inline so the admin UI doesn't need a
+    /users/{id} per row — the page renders from one fetch.
+    """
+    from app.models.auth_audit_log import AuthAuditLog
+    from sqlalchemy.orm import aliased
+
+    if current.role != UserRole.SITE_ADMIN:
+        lang = get_request_language(request)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=tr_error(
+                E.REQUIRES_ROLE, lang, roles=[UserRole.SITE_ADMIN.value],
+            ),
+        )
+
+    actor_u = aliased(User)
+    target_u = aliased(User)
+
+    base = (
+        select(
+            AuthAuditLog, actor_u.email.label("actor_email"),
+            target_u.email.label("target_email"),
+        )
+        .outerjoin(actor_u, AuthAuditLog.actor_user_id == actor_u.id)
+        .outerjoin(target_u, AuthAuditLog.target_user_id == target_u.id)
+    )
+
+    from sqlmodel import func as sqlfunc
+    count_q = select(sqlfunc.count(AuthAuditLog.id))
+
+    if event_type:
+        base = base.where(AuthAuditLog.event_type == event_type)
+        count_q = count_q.where(AuthAuditLog.event_type == event_type)
+    if actor_id is not None:
+        base = base.where(AuthAuditLog.actor_user_id == actor_id)
+        count_q = count_q.where(AuthAuditLog.actor_user_id == actor_id)
+    if target_id is not None:
+        base = base.where(AuthAuditLog.target_user_id == target_id)
+        count_q = count_q.where(AuthAuditLog.target_user_id == target_id)
+    if since is not None:
+        base = base.where(AuthAuditLog.created_at >= since)
+        count_q = count_q.where(AuthAuditLog.created_at >= since)
+
+    total = (await session.execute(count_q)).scalar() or 0
+
+    rows = (
+        await session.execute(
+            base.order_by(AuthAuditLog.created_at.desc(), AuthAuditLog.id.desc())
+            .offset((page - 1) * per_page)
+            .limit(per_page)
+        )
+    ).all()
+
+    items = [
+        _AuditLogRow(
+            id=log.id_str,
+            event_type=(
+                log.event_type.value if hasattr(log.event_type, "value")
+                else str(log.event_type)
+            ),
+            actor_user_id=log.actor_user_id,
+            actor_email=actor_email,
+            target_user_id=log.target_user_id,
+            target_email=target_email,
+            ip_address=log.ip_address,
+            user_agent=log.user_agent,
+            extra=log.extra or {},
+            created_at=log.created_at,
+        )
+        for log, actor_email, target_email in rows
+    ]
+
+    return _AuditLogResponse(
+        items=items, total=total, page=page, per_page=per_page,
+    )
