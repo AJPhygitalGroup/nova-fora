@@ -84,10 +84,18 @@ export default function LiveInspectionReportCard({ inspection, user, onClose }) 
 
   const defects = detail?.defects || [];
   const defectsBySection = useMemo(() => {
+    // Defensive fallback: backend populates `section` for inspection-
+    // report defects (Front Side / Driver Side / In Cab / etc.) via
+    // the DVIC catalog lookup. If a defect's section can't be derived
+    // — e.g. a part with no catalog row or a legacy defect — group it
+    // under "Other" instead of letting the React key become the literal
+    // string "undefined" (which the uppercase CSS rendered as
+    // "UNDEFINED" before this fix).
     const groups = {};
     for (const d of defects) {
-      if (!groups[d.section]) groups[d.section] = [];
-      groups[d.section].push(d);
+      const key = d.section || 'Other';
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(d);
     }
     return groups;
   }, [defects]);

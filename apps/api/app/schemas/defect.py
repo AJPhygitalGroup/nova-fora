@@ -77,6 +77,12 @@ class DefectV2Response(BaseModel):
     # Derived from defect_applicability (read-time JOIN)
     classification: str | None = None    # Sev1/Sev2/Sev3/ULC/Advisory
     group: str | None = None             # AMR/Body/CMR/CNMR/PM/Tires/Detailing/Netradyne
+    # DVIC section the defect belongs to ("Front Side" / "Driver Side" /
+    # "Passenger Side" / "Back Side" / "In Cab" / "General"). Drives the
+    # section-grouped layout in the inspection report card. Populated by
+    # the inspection-report path; null on other paths (frontend treats
+    # null as "Other" so the header doesn't render "UNDEFINED").
+    section: str | None = None
 
     # V2.0 derived lifecycle status — V1 had defect.status as a column, V2.0
     # composes it from defect_reviews + repair_request + work_order state so

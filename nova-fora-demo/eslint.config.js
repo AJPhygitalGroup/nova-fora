@@ -5,7 +5,11 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // Vite output + Playwright artifacts. Without these, `npm run lint`
+  // walks into generated HTML/JS in playwright-report and reports
+  // ~500 false-positive errors (the actual source code lints to
+  // ~9 warnings). See the tester critique (point #4, 2026-05-28).
+  globalIgnores(['dist', 'playwright-report', 'test-results']),
   {
     files: ['**/*.{js,jsx}'],
     extends: [

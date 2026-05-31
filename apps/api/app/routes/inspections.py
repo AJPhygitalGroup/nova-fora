@@ -73,6 +73,89 @@ def _parse_inspection_id(raw: str) -> int:
         ) from None
 
 
+# ─────────────────────────────────────────────────────
+# Section enrichment for defect responses
+# ─────────────────────────────────────────────────────
+# Friendly labels for DvicSection enum values. Backend owns these so the
+# inspection-report card doesn't need a separate label map (one source
+# of truth). Position values that coincide with section names get the
+# same friendly form so positioned defects (body_damage front/driver/
+# passenger/back) read consistently.
+_SECTION_LABELS = {
+    "front_side":     "Front Side",
+    "driver_side":    "Driver Side",
+    "passenger_side": "Passenger Side",
+    "back_side":      "Back Side",
+    "in_cab":         "In Cab",
+    "general":        "General",
+}
+
+
+async def _section_map_for_parts(
+    session: AsyncSession,
+    vehicle_class,
+    parts: list,
+) -> dict[str, str]:
+    """For each (part, vehicle_class), return the raw section value.
+
+    Part → section is N:M for some parts (body_damage appears in 4
+    sections by position), so this returns ONE section per part — the
+    deterministic-min picked by `dvic_template_item.id`. Positioned
+    defects are disambiguated in `_resolve_defect_section` below.
+
+    Empty map if no vehicle_class or empty parts list.
+    """
+    if vehicle_class is None or not parts:
+        return {}
+    from app.models.defect_catalog import (
+        DefectRule, DvicTemplateItem,
+    )
+    vc = (
+        vehicle_class.value if hasattr(vehicle_class, "value")
+        else str(vehicle_class)
+    )
+    # DISTINCT ON to pick one section per part deterministically.
+    rows = (
+        await session.execute(
+            select(DefectRule.part, DvicTemplateItem.section)
+            .join(DvicTemplateItem, DvicTemplateItem.rule_id == DefectRule.id)
+            .where(DvicTemplateItem.vehicle_class == vc)
+            .where(DefectRule.part.in_(parts))
+            .order_by(DefectRule.part, DvicTemplateItem.id)
+            .distinct(DefectRule.part)
+        )
+    ).all()
+    out: dict[str, str] = {}
+    for part_val, sec_val in rows:
+        part_key = part_val.value if hasattr(part_val, "value") else str(part_val)
+        sec_key = sec_val.value if hasattr(sec_val, "value") else str(sec_val)
+        out[part_key] = sec_key
+    return out
+
+
+def _resolve_defect_section(defect, section_map: dict[str, str]) -> str | None:
+    """Pick the section label for a defect.
+
+    Order: defect.position (if it names a section — body_damage etc.) →
+    catalog lookup via section_map → None (frontend renders "Other").
+    """
+    # Position-as-section (body_damage carries presetPosition that maps
+    # 1:1 to DVIC sections).
+    pos = defect.position
+    pos_raw = pos.value if pos is not None and hasattr(pos, "value") else (
+        str(pos) if pos is not None else None
+    )
+    if pos_raw and pos_raw in _SECTION_LABELS:
+        return _SECTION_LABELS[pos_raw]
+    # Catalog lookup
+    part = defect.part
+    part_raw = part.value if hasattr(part, "value") else str(part)
+    sec_raw = section_map.get(part_raw)
+    if sec_raw:
+        return _SECTION_LABELS.get(sec_raw, sec_raw)
+    return None
+
+
 async def _build_inspection_response(
     session: AsyncSession, insp: Inspection
 ) -> InspectionResponse:
@@ -111,14 +194,25 @@ async def _build_inspection_response(
         )
     ).all()
 
-    # Build defect responses with classification + group derived per-row
+    # Build defect responses with classification + group derived per-row.
+    # Also enrich each with `section` (DVIC template section like
+    # "Front Side" / "Driver Side" / "In Cab") so the report card can
+    # group defects under a real header — without this, `d.section` is
+    # undefined on the wire and the React group renders "UNDEFINED".
     from app.routes.defects import _build_response as _defect_response
+
+    section_map = await _section_map_for_parts(
+        session,
+        vehicle.vehicle_class if vehicle is not None else None,
+        [d.part for d, _r in defect_rows],
+    )
+
     defect_items: list[DefectV2Response] = []
     for d, reporter in defect_rows:
         if vehicle is not None:
-            defect_items.append(
-                await _defect_response(session, d, vehicle, org, reporter)
-            )
+            resp = await _defect_response(session, d, vehicle, org, reporter)
+            resp.section = _resolve_defect_section(d, section_map)
+            defect_items.append(resp)
 
     # Per-part pass/N/A marks for the new checklist UI. Returned as
     # {part_value: status} so the client can compute each part's tile
