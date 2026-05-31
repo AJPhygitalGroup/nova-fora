@@ -227,7 +227,8 @@ export const auth = {
     });
   },
 
-  /** POST /auth/logout — best-effort; always clears local tokens. */
+  /** POST /auth/logout — best-effort; always clears local tokens AND
+   *  any impersonation marker left in sessionStorage. */
   async logout() {
     try {
       await apiFetch('/auth/logout', { method: 'POST' });
@@ -235,8 +236,79 @@ export const auth = {
       // ignore — logout should never fail from the user's perspective
     }
     clearTokens();
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.removeItem(IMPERSONATION_KEY);
+    }
+  },
+
+  /**
+   * POST /auth/impersonate/{userId} — site_admin only.
+   *
+   * Mints a token pair scoped to `userId` while remembering the original
+   * admin via the `acting_as_id` JWT claim (survives refresh rotation).
+   * Replaces the legacy "swap setState only" pattern that didn't change
+   * the API identity (App.jsx:91 TODO).
+   *
+   * Side effects:
+   *   - Saves the current admin's tokens in sessionStorage under the
+   *     IMPERSONATION_KEY so stopImpersonate() can restore them.
+   *   - Overwrites localStorage tokens with the target's tokens — every
+   *     subsequent API call goes out as the target.
+   *
+   * Returns the target user (via /auth/me) so the caller can setUser()
+   * in one round trip.
+   */
+  async impersonate(userId) {
+    // Snapshot the admin's tokens BEFORE we overwrite them. sessionStorage
+    // (per-tab, survives reload, dies on tab close) is the right scope —
+    // localStorage would let a different tab pick up the admin token
+    // accidentally.
+    const adminAccess = getAccessToken();
+    const adminRefresh = getRefreshToken();
+    if (adminAccess && adminRefresh && typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(IMPERSONATION_KEY, JSON.stringify({
+        adminAccess,
+        adminRefresh,
+        startedAt: new Date().toISOString(),
+      }));
+    }
+    const pair = await apiFetch(`/auth/impersonate/${encodeURIComponent(userId)}`, {
+      method: 'POST',
+    });
+    setTokens({
+      access_token: pair.accessToken,
+      refresh_token: pair.refreshToken,
+    });
+    return this.me();
+  },
+
+  /**
+   * Restore the admin's tokens from sessionStorage and refresh user state.
+   * Returns the admin's UserResponse (via /auth/me).
+   *
+   * Safe to call even when not impersonating — no-op, returns null. The
+   * caller should bail in that case.
+   */
+  async stopImpersonate() {
+    if (typeof sessionStorage === 'undefined') return null;
+    const raw = sessionStorage.getItem(IMPERSONATION_KEY);
+    if (!raw) return null;
+    let saved;
+    try { saved = JSON.parse(raw); } catch { return null; }
+    if (!saved?.adminAccess || !saved?.adminRefresh) return null;
+    setTokens({
+      access_token: saved.adminAccess,
+      refresh_token: saved.adminRefresh,
+    });
+    sessionStorage.removeItem(IMPERSONATION_KEY);
+    return this.me();
   },
 };
+
+// sessionStorage key for the impersonation marker. Survives page reload
+// within the same tab; dies on tab close. Holds the admin's tokens so
+// stopImpersonate can restore them.
+const IMPERSONATION_KEY = 'nf-impersonation';
 
 
 // ─────────────────────────────────────────────────────

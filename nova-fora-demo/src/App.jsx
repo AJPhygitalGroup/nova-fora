@@ -41,6 +41,19 @@ export default function App() {
       .me()
       .then((me) => {
         setUser(me);
+        // If bootstrap loaded an impersonation session (e.g. page reload
+        // mid-impersonation), reconstruct the `adminUser` slot so the
+        // "Viewing as X" banner + exit button persist. The actual admin
+        // tokens still live in sessionStorage under IMPERSONATION_KEY;
+        // this just rehydrates the UI marker from the JWT claim.
+        if (me?.actingAs) {
+          setAdminUser({
+            id: me.actingAs.id,
+            email: me.actingAs.email,
+            name: me.actingAs.name,
+            role: 'site_admin',
+          });
+        }
         // Sync the user's stored language preference to i18n so the UI
         // shows their language right after auth bootstrap (without making
         // them re-pick on every device).
@@ -87,17 +100,42 @@ export default function App() {
       });
   };
 
-  // Called from GhostMode when site admin picks a user to impersonate
-  const handleImpersonate = (targetUser) => {
-    setAdminUser(user); // stash the current site admin
-    setUser(targetUser); // switch view to the target
-    // TODO(Semana 6): call /auth/impersonate to get a real impersonation token
+  // Called from GhostMode when site admin picks a user to impersonate.
+  // Real impersonation as of 2026-05-29: POST /auth/impersonate/{id}
+  // returns a token pair scoped to the target with `acting_as_id=admin.id`.
+  // The client helper saves the admin's tokens to sessionStorage before
+  // overwriting localStorage with the target's pair, so every API call
+  // henceforth goes out as the target — backend authz now actually fires
+  // for the impersonated identity (the previous setState-only swap kept
+  // the admin's token and masked vendor/DSP scoping bugs).
+  const handleImpersonate = async (targetUser) => {
+    try {
+      const targetId = targetUser?.id;
+      if (!targetId) return;
+      const stashedAdmin = user;
+      const meAsTarget = await auth.impersonate(targetId);
+      setAdminUser(stashedAdmin);
+      setUser(meAsTarget);
+    } catch (err) {
+      const detail = err?.detail || err?.message || 'unknown';
+      // eslint-disable-next-line no-alert
+      alert(`Impersonation failed: ${detail}`);
+    }
   };
 
-  // Called from the impersonation banner
-  const handleExitImpersonation = () => {
-    if (adminUser) {
-      setUser(adminUser);
+  // Called from the impersonation banner. Pops the admin's tokens back
+  // out of sessionStorage and refreshes user state — symmetric to
+  // handleImpersonate. Always clears adminUser even if the server call
+  // fails so the user isn't stuck staring at a stale banner.
+  const handleExitImpersonation = async () => {
+    try {
+      const admin = await auth.stopImpersonate();
+      if (admin) setUser(admin);
+    } catch (err) {
+      const detail = err?.detail || err?.message || 'unknown';
+      // eslint-disable-next-line no-alert
+      alert(`Exit impersonation failed: ${detail}`);
+    } finally {
       setAdminUser(null);
     }
   };

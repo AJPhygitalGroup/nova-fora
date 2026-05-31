@@ -42,8 +42,14 @@ def create_access_token(user_id: int, extra: dict | None = None) -> str:
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def create_refresh_token(user_id: int) -> str:
-    """Long-lived token — only used against POST /auth/refresh."""
+def create_refresh_token(user_id: int, extra: dict | None = None) -> str:
+    """Long-lived token — only used against POST /auth/refresh.
+
+    `extra` lets the caller stamp claims that should survive refresh
+    rotation. Notably `acting_as_id` (set by /auth/impersonate) needs
+    to ride along on the refresh so a token rotation mid-impersonation
+    keeps the "really admin X" context.
+    """
     now = datetime.now(UTC)
     payload = {
         "sub": str(user_id),
@@ -51,6 +57,8 @@ def create_refresh_token(user_id: int) -> str:
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(days=settings.jwt_refresh_token_expire_days)).timestamp()),
     }
+    if extra:
+        payload.update(extra)
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 

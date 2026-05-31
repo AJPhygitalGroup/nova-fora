@@ -31,6 +31,13 @@ class UserResponse(BaseModel):
     two_fa_enabled: bool
     last_login_at: datetime | None = None
 
+    # Populated only when the request's JWT carries an `acting_as_id`
+    # claim (= site admin is impersonating this user via /auth/impersonate).
+    # Lets the frontend show the "Viewing as X" banner + exit button even
+    # after a page reload, without keeping the admin identity in client
+    # state only. Null on every other path.
+    acting_as: dict | None = None
+
     model_config = ConfigDict(from_attributes=True)
 
     @classmethod

@@ -72,6 +72,10 @@ async def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=tr_error(E.USER_STATUS, lang, status=user.status.value),
         )
+    # Stash impersonation marker on request.state so endpoints that care
+    # (today: /auth/me, future: audit logging) can read it without each
+    # one re-decoding the token. Always set — None when not impersonating.
+    request.state.acting_as_id = payload.get("acting_as_id")
     return user
 
 

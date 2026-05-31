@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Eye, Search, AlertTriangle, Check, Clock, User, Building2, Briefcase, Wrench as WrenchIcon, UserCheck, ClipboardCheck, Headphones } from 'lucide-react';
-import { demoAccounts } from '../data/mockData';
+import { Eye, Search, AlertTriangle, Check, Clock, User, Building2, Briefcase, Wrench as WrenchIcon, UserCheck, ClipboardCheck, Headphones, Loader2 } from 'lucide-react';
+import { directory as directoryApi } from '../api/client';
 import Badge from './ui/Badge';
 
 // 9-role icon map (mirrors RoleSwitcher.jsx).
@@ -29,20 +29,46 @@ const roleTint = {
   site_admin:     { bg: 'bg-accent-gold/15',   text: 'text-accent-gold',   border: 'border-accent-gold/40' },
 };
 
-// In a real system this would fetch users from the API. For the demo we use the demo accounts list.
-const IMPERSONABLE_USERS = demoAccounts;
-
 export default function GhostMode({ user, onImpersonate }) {
   const [search, setSearch] = useState('');
   const [confirming, setConfirming] = useState(null);
+  // Real /users fetch (site_admin sees every user across orgs). Was a
+  // mock import (`demoAccounts` from mockData) until 2026-05-29 — switching
+  // to live data was the prerequisite for the real /auth/impersonate
+  // flow (App.jsx handleImpersonate) — without real users the picker
+  // would have stale ids that wouldn't match DB rows.
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    directoryApi
+      .users()
+      .then((res) => {
+        if (cancelled) return;
+        // /users returns a flat array of UserResponse. site_admin sees
+        // all; other roles see only their org (but only site_admin can
+        // hit this surface anyway via the Ghost tab gate in Layout).
+        const arr = Array.isArray(res) ? res : (res?.items || []);
+        setUsers(arr);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setError(e?.detail || e?.message || 'Failed to load users');
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
 
   const filtered = search
-    ? IMPERSONABLE_USERS.filter((u) =>
-        u.name.toLowerCase().includes(search.toLowerCase()) ||
-        u.email.toLowerCase().includes(search.toLowerCase()) ||
-        u.org.toLowerCase().includes(search.toLowerCase())
+    ? users.filter((u) =>
+        (u.name || '').toLowerCase().includes(search.toLowerCase()) ||
+        (u.email || '').toLowerCase().includes(search.toLowerCase()) ||
+        (u.org || '').toLowerCase().includes(search.toLowerCase())
       )
-    : IMPERSONABLE_USERS;
+    : users;
 
   return (
     <div>
@@ -102,7 +128,20 @@ export default function GhostMode({ user, onImpersonate }) {
             </div>
           );
         })}
-        {filtered.length === 0 && (
+        {loading && (
+          <div className="bg-navy-900/60 border border-navy-700/40 rounded-xl p-10 text-center">
+            <Loader2 size={20} className="text-navy-400 mx-auto mb-2 animate-spin" />
+            <p className="text-sm text-navy-400">Loading users…</p>
+          </div>
+        )}
+        {!loading && error && (
+          <div className="bg-accent-red/10 border border-accent-red/40 rounded-xl p-6 text-center">
+            <AlertTriangle size={20} className="text-accent-red mx-auto mb-2" />
+            <p className="text-sm text-white mb-1">Couldn't load users</p>
+            <p className="text-xs text-navy-400">{error}</p>
+          </div>
+        )}
+        {!loading && !error && filtered.length === 0 && (
           <div className="bg-navy-900/60 border border-navy-700/40 rounded-xl p-10 text-center">
             <p className="text-sm text-white mb-1">No users match your search</p>
             <p className="text-xs text-navy-400">Try a different keyword</p>
