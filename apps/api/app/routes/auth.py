@@ -5,11 +5,12 @@
   POST /auth/logout    stateless JWT — server-side is a no-op, frontend clears storage
   GET  /auth/me        returns the current user (full UserResponse shape)
 """
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.auth.dependencies import get_current_user
+from app.auth.denylist import is_token_revoked, revoke_token
 from app.auth.hashing import verify_password
 from app.auth.jwt import (
     TokenError,
@@ -140,6 +141,15 @@ async def refresh(
             detail=tr_error(E.INVALID_TOKEN, lang),
         ) from e
 
+    # Reject refresh tokens revoked at logout — without this check, a
+    # logged-out client holding the refresh could still mint fresh
+    # access tokens, defeating the access-side revoke.
+    if await is_token_revoked(payload.get("jti")):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=tr_error(E.INVALID_TOKEN, lang),
+        )
+
     try:
         user_id = int(payload["sub"])
     except (KeyError, ValueError):
@@ -253,17 +263,69 @@ async def impersonate(
 @router.post(
     "/logout",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Logout (stateless — clears client-side state only)",
+    summary="Logout — revokes the access (+ optional refresh) token",
+    responses={
+        204: {"description": "Tokens revoked. Same client must not reuse them."},
+    },
 )
-async def logout(current: User = Depends(get_current_user)) -> None:
-    """With stateless JWT, logout is client-side. This endpoint exists as a
-    hook for future features (token revocation list, audit log, etc.).
+async def logout(
+    request: Request,
+    current: User = Depends(get_current_user),
+    body: dict | None = Body(default=None),
+) -> None:
+    """Real revocation as of 2026-05-29 — was a no-op (Semana 7 TODO,
+    flagged by tester #5). The bearer access token's `jti` is inserted
+    into the Redis denylist with TTL = remaining lifetime; if the client
+    also sends `refresh_token` in the body, that jti is revoked too.
 
-    Returns 204. Requires a valid access token so only authenticated users
-    can hit it (for audit logging later).
+    No-op on tokens minted before this code shipped (they had no `jti`
+    claim) — they stay valid until natural expiry. Cleanest deploy: the
+    next time each user logs in they'll get jti-stamped tokens and
+    subsequent logouts actually revoke.
+
+    Body shape (all optional):
+        { "refresh_token": "<jwt>" }
     """
-    # TODO(Semana 7 — Hardening): insert token jti into Redis denylist.
-    _ = current  # silence unused — present for future use
+    # The access token came in via the Authorization header; pull it
+    # back out of request.headers since the dependency consumed but
+    # didn't expose it.
+    auth_header = request.headers.get("authorization", "")
+    access_jwt = (
+        auth_header.split(" ", 1)[1].strip()
+        if auth_header.lower().startswith("bearer ")
+        else ""
+    )
+    now_ts = int(utc_now().timestamp())
+
+    if access_jwt:
+        try:
+            payload = decode_token(access_jwt, expected_type=TokenType.ACCESS)
+            jti = payload.get("jti")
+            exp = int(payload.get("exp", 0))
+            if jti:
+                await revoke_token(jti, ttl_seconds=max(1, exp - now_ts))
+        except TokenError:
+            # Malformed bearer? get_current_user would have already 401'd,
+            # so reaching here means decode succeeded once already.
+            # Defensive: swallow so logout is best-effort.
+            pass
+
+    # Optional refresh-token revoke so a logged-out client can't mint
+    # fresh access tokens via /auth/refresh.
+    refresh_jwt = (body or {}).get("refresh_token") if isinstance(body, dict) else None
+    if refresh_jwt:
+        try:
+            payload = decode_token(refresh_jwt, expected_type=TokenType.REFRESH)
+            jti = payload.get("jti")
+            exp = int(payload.get("exp", 0))
+            if jti:
+                await revoke_token(jti, ttl_seconds=max(1, exp - now_ts))
+        except TokenError:
+            # Bad refresh token → silently ignore; the access revoke
+            # already happened so we don't fail the logout for this.
+            pass
+
+    _ = current  # ensures we required auth (already enforced by dep)
     return None
 
 
@@ -292,7 +354,6 @@ async def me(
 # PATCH /auth/me/language — i18n preference
 # ─────────────────────────────────────────────────────
 from pydantic import BaseModel, Field, field_validator
-from fastapi import Body
 
 
 class _LanguageUpdate(BaseModel):

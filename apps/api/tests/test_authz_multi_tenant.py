@@ -178,3 +178,59 @@ class TestImpersonation:
     def test_impersonating_unknown_user_returns_404(self, token_maria):
         code, _ = http("POST", "/auth/impersonate/99999", token_maria)
         assert code == 404
+
+
+# ─────────────────────────────────────────────────────
+# Logout revocation (Redis denylist). Closes tester critique #5:
+# logout used to be a no-op so a leaked token stayed valid until
+# natural expiry. Real revoke + denylist landed 2026-05-29.
+# These tests DO NOT use the session-scoped token fixtures because
+# they revoke tokens — a session fixture would poison every later
+# test in the same run. Each test logs in fresh.
+# ─────────────────────────────────────────────────────
+class TestLogoutRevoke:
+    @staticmethod
+    def _fresh_login(email: str = "maria@novafora.com") -> tuple[str, str]:
+        from .conftest import PWD
+        code, body = http("POST", "/auth/login", body={"email": email, "password": PWD})
+        assert code == 200, body
+        return body["access_token"], body["refresh_token"]
+
+    def test_access_token_works_before_logout(self):
+        access, _ = self._fresh_login()
+        code, _ = http("GET", "/auth/me", access)
+        assert code == 200
+
+    def test_access_token_rejected_after_logout(self):
+        access, refresh = self._fresh_login()
+        code, _ = http(
+            "POST", "/auth/logout", access,
+            body={"refresh_token": refresh},
+        )
+        assert code == 204
+        # Reused access token must be rejected
+        code, _ = http("GET", "/auth/me", access)
+        assert code == 401
+
+    def test_refresh_token_rejected_after_logout(self):
+        access, refresh = self._fresh_login()
+        code, _ = http(
+            "POST", "/auth/logout", access,
+            body={"refresh_token": refresh},
+        )
+        assert code == 204
+        # The refresh token must ALSO be revoked — otherwise a logged-out
+        # client holding the refresh could mint fresh access tokens.
+        code, _ = http(
+            "POST", "/auth/refresh",
+            body={"refresh_token": refresh},
+        )
+        assert code == 401
+
+    def test_logout_without_refresh_body_still_revokes_access(self):
+        access, _ = self._fresh_login()
+        # Body is optional — access-only revoke must still work.
+        code, _ = http("POST", "/auth/logout", access)
+        assert code == 204
+        code, _ = http("GET", "/auth/me", access)
+        assert code == 401

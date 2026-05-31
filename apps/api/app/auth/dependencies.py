@@ -15,6 +15,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from app.auth.denylist import is_token_revoked
 from app.auth.jwt import TokenError, TokenType, decode_token
 from app.db import get_session
 from app.i18n_errors import E, tr_error
@@ -52,6 +53,16 @@ async def get_current_user(
             detail=tr_error(E.INVALID_TOKEN, lang),
             headers={"WWW-Authenticate": "Bearer"},
         ) from e
+
+    # Reject tokens revoked via /auth/logout. Cheap Redis GET; fails
+    # open on Redis errors (see denylist module docstring) so a Redis
+    # blip can't lock the fleet out mid-shift.
+    if await is_token_revoked(payload.get("jti")):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=tr_error(E.INVALID_TOKEN, lang),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     try:
         user_id = int(payload["sub"])
@@ -99,6 +110,13 @@ async def get_current_user_from_query_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=tr_error(E.INVALID_TOKEN, lang),
         ) from e
+    # Same denylist check as the header path — SSE clients must respect
+    # revoke too (otherwise a logged-out tab could keep streaming).
+    if await is_token_revoked(payload.get("jti")):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=tr_error(E.INVALID_TOKEN, lang),
+        )
     try:
         user_id = int(payload["sub"])
     except (ValueError, KeyError):

@@ -228,10 +228,20 @@ export const auth = {
   },
 
   /** POST /auth/logout — best-effort; always clears local tokens AND
-   *  any impersonation marker left in sessionStorage. */
+   *  any impersonation marker left in sessionStorage.
+   *
+   *  As of 2026-05-29 the backend revokes the token's jti in a Redis
+   *  denylist (closes tester critique #5). We send the refresh token
+   *  in the body too so the server can revoke BOTH — otherwise a
+   *  logged-out client holding the refresh could mint fresh access
+   *  tokens via /auth/refresh. */
   async logout() {
     try {
-      await apiFetch('/auth/logout', { method: 'POST' });
+      const refresh = getRefreshToken();
+      await apiFetch('/auth/logout', {
+        method: 'POST',
+        body: JSON.stringify(refresh ? { refresh_token: refresh } : {}),
+      });
     } catch {
       // ignore — logout should never fail from the user's perspective
     }
