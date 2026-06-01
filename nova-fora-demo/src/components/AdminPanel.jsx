@@ -8,7 +8,7 @@ import {
   Clock, Calendar, RefreshCw, RotateCw, Send, QrCode, Eye, EyeOff, Copy, Package, Sparkles,
   Armchair, Paintbrush, Car, Zap, Circle, Search, Lightbulb, Droplet, Wind,
   LifeBuoy, Gauge, MonitorSmartphone, ThermometerSun, HelpCircle, Zap as ZapIcon,
-  Ban, CheckCheck, ExternalLink, UserCircle, Loader2, Gift
+  Ban, CheckCheck, ExternalLink, UserCircle, Loader2, Gift, ScrollText
 } from 'lucide-react';
 import { orgUsers, AVAILABLE_ROLES, rolesAssignableBy, preventiveMaintenanceJobs, pmIntervalsByVehicleType, VENDOR_SERVICES, DEFECT_CATEGORIES, fleetSnapshotVans, VENDOR_ASSIGNABLE_DSPS } from '../data/mockData';
 import { inspectionRules as inspectionRulesApi, catalog as defectCatalogApi, invitations as invitationsApi, APIError } from '../api/client';
@@ -16,6 +16,7 @@ import { isOrgAdmin as isOrgAdminRole, isVendorRole } from '../lib/permissions';
 import Badge from './ui/Badge';
 import RewardsTab from './admin/RewardsTab';
 import InspectorPerformanceTab from './admin/InspectorPerformanceTab';
+import AuditLogTab from './admin/AuditLogTab';
 
 // V2.2 vehicle classes — drive both the DVIC checklist and this admin
 // catalog view. Labels intentionally describe the *physical* vehicle type;
@@ -2358,6 +2359,7 @@ export default function AdminPanel({ user }) {
     { id: 'rewards',     label: t('tabs.rewards', 'Rewards'),           icon: Gift,         available: isVendor || isSiteAdmin },
     { id: 'inspectors',  label: t('tabs.inspectors', 'Inspector Performance'), icon: Shield, available: isDspOwner || isSiteAdmin },
     { id: 'defects',     label: t('tabs.defects', 'Defect Rules'),      icon: CheckCheck,   available: isDspOwner || isSiteAdmin },
+    { id: 'audit',       label: t('tabs.audit', 'Audit Log'),           icon: ScrollText,   available: isSiteAdmin },
   ].filter((tab) => tab.available);
 
   const [activeTab, setActiveTab] = useState(tabs[0]?.id || 'security');
@@ -2409,6 +2411,7 @@ export default function AdminPanel({ user }) {
           {activeTab === 'rewards' && <RewardsTab user={user} />}
           {activeTab === 'inspectors' && <InspectorPerformanceTab />}
           {activeTab === 'defects' && <DefectRulesTab user={user} />}
+          {activeTab === 'audit' && <AuditLogTab />}
         </motion.div>
       </AnimatePresence>
     </div>

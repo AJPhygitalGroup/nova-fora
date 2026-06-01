@@ -313,6 +313,36 @@ export const auth = {
     sessionStorage.removeItem(IMPERSONATION_KEY);
     return this.me();
   },
+
+  /**
+   * GET /auth/audit-log — site_admin only. Returns paginated audit
+   * events (login / logout / impersonate_start) joined with actor +
+   * target user emails inline (one fetch per page renders the table).
+   *
+   * params: { eventType?, actorId?, targetId?, since?, page?, perPage? }
+   *   - eventType: 'login' | 'logout' | 'impersonate_start'
+   *   - since:     ISO timestamp lower bound on created_at
+   *
+   * Returns 403 for non-site_admin. UI should gate the menu item before
+   * calling — the 403 is the defense-in-depth, not the primary check.
+   */
+  async auditLog(params = {}) {
+    const q = new URLSearchParams();
+    const map = {
+      eventType: 'event_type',
+      actorId: 'actor_id',
+      targetId: 'target_id',
+      since: 'since',
+      page: 'page',
+      perPage: 'per_page',
+    };
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined || v === null || v === '') continue;
+      q.set(map[k] || k, String(v));
+    }
+    const qs = q.toString();
+    return apiFetch(`/auth/audit-log${qs ? '?' + qs : ''}`);
+  },
 };
 
 // sessionStorage key for the impersonation marker. Survives page reload
