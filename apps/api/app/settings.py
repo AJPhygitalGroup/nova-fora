@@ -49,6 +49,13 @@ class Settings(BaseSettings):
     s3_secret_key: str = "minioadmin"
     s3_region: str = "us-east-1"  # MinIO ignores, but boto3 requires a value
     s3_presign_ttl_seconds: int = 900  # 15 min upload window
+    # Photo upload hard cap (bytes). Phone JPEGs are ~3-5 MB; we cap at
+    # 10 MB to keep one accidental high-res burst from filling the
+    # bucket. Enforced at three layers: client-side pre-check (friendly
+    # error), presign signs ContentLength so MinIO 403s mismatched
+    # bodies, and PhotoCommitRequest.size_bytes refuses oversized
+    # records. Pilot P0 #6 minimum subset (2026-06-01).
+    max_photo_bytes: int = 10 * 1024 * 1024
 
     # ── SMTP ──────────────────────────────────────────
     # When smtp_host is empty, the email service falls back to logging the

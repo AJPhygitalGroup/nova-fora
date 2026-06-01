@@ -1846,12 +1846,58 @@ export const dashboards = {
 // ─────────────────────────────────────────────────────
 // Uploads module — presigned URL flow
 // ─────────────────────────────────────────────────────
+// Photo upload hard cap (bytes). Keep in sync with backend's
+// `settings.max_photo_bytes` (default 10 MB, pilot P0 #6 2026-06-01).
+// Client-side guards short-circuit BEFORE requesting the presign so the
+// user sees a friendly error instead of an API 422; backend stays
+// authoritative — even if the client lies, the presign refuses and
+// MinIO refuses oversized PUTs because ContentLength is signed.
+export const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
+export const ALLOWED_PHOTO_TYPES = /^image\/(jpeg|png|webp|heic|heif)$/i;
+
+export class PhotoTooLargeError extends Error {
+  constructor(sizeBytes, maxBytes = MAX_PHOTO_BYTES) {
+    super(`Photo is ${(sizeBytes / 1024 / 1024).toFixed(1)} MB; limit is ${(maxBytes / 1024 / 1024).toFixed(0)} MB.`);
+    this.name = 'PhotoTooLargeError';
+    this.sizeBytes = sizeBytes;
+    this.maxBytes = maxBytes;
+  }
+}
+
+export class PhotoTypeError extends Error {
+  constructor(contentType) {
+    super(`File type ${contentType || '(unknown)'} not supported. Use JPEG, PNG, WebP, or HEIC.`);
+    this.name = 'PhotoTypeError';
+    this.contentType = contentType;
+  }
+}
+
+/**
+ * Throw if a File / Blob fails the photo upload preconditions. Callers
+ * should call this BEFORE requesting a presigned URL so the user sees
+ * a friendly error instead of a backend 422.
+ */
+export function validatePhotoFile(file) {
+  if (!file) throw new PhotoTypeError(null);
+  const ct = file.type || '';
+  if (!ALLOWED_PHOTO_TYPES.test(ct)) throw new PhotoTypeError(ct);
+  if (typeof file.size === 'number' && file.size > MAX_PHOTO_BYTES) {
+    throw new PhotoTooLargeError(file.size);
+  }
+}
+
 export const uploads = {
   /**
    * POST /uploads/presigned — mint a PUT URL for a new photo.
-   * { kind: 'defect'|'inspection'|'work_order', parentId, filename, contentType }
+   * { kind: 'defect'|'inspection'|'work_order', parentId, filename,
+   *   contentType, sizeBytes }
+   *
+   * `sizeBytes` is REQUIRED (pilot P0 #6 minimum, 2026-06-01). The
+   * backend signs it into the URL so MinIO 403s any PUT whose
+   * Content-Length doesn't match exactly. Callers should run
+   * `validatePhotoFile(file)` first for a friendly pre-check.
    */
-  presigned({ kind, parentId, filename, contentType }) {
+  presigned({ kind, parentId, filename, contentType, sizeBytes }) {
     return apiFetch('/uploads/presigned', {
       method: 'POST',
       body: JSON.stringify({
@@ -1859,6 +1905,7 @@ export const uploads = {
         parent_id: parentId,
         filename,
         content_type: contentType,
+        size_bytes: sizeBytes,
       }),
     });
   },

@@ -115,21 +115,35 @@ def new_storage_key(
 # ─────────────────────────────────────────────────────
 # Presigned URLs
 # ─────────────────────────────────────────────────────
-def generate_upload_url(storage_key: str, content_type: str) -> tuple[str, int]:
+def generate_upload_url(
+    storage_key: str,
+    content_type: str,
+    size_bytes: int | None = None,
+) -> tuple[str, int]:
     """Return (presigned PUT URL, expires_in_seconds).
 
     The client PUTs the bytes directly to this URL; MinIO verifies the
     signature and content_type match before accepting.
+
+    When `size_bytes` is provided, we sign `ContentLength` into the URL.
+    MinIO then 403s any PUT whose Content-Length header doesn't match —
+    closes the gap where a client could lie about size at presign time
+    and dump GBs into the bucket. Pilot P0 #6 minimum (2026-06-01).
+    Callers SHOULD pass size_bytes; it's optional for back-compat with
+    older paths that haven't been wired through yet.
     """
     cli = _public_client()
     ttl = settings.s3_presign_ttl_seconds
+    params = {
+        "Bucket": settings.s3_bucket,
+        "Key": storage_key,
+        "ContentType": content_type,
+    }
+    if size_bytes is not None:
+        params["ContentLength"] = int(size_bytes)
     url = cli.generate_presigned_url(
         "put_object",
-        Params={
-            "Bucket": settings.s3_bucket,
-            "Key": storage_key,
-            "ContentType": content_type,
-        },
+        Params=params,
         ExpiresIn=ttl,
     )
     return url, ttl

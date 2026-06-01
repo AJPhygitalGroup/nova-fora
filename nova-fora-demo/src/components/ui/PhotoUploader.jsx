@@ -16,7 +16,10 @@ import { useTranslation } from 'react-i18next';
 import imageCompression from 'browser-image-compression';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Camera, X, AlertCircle, RotateCcw, Check } from 'lucide-react';
-import { uploads, defects, inspections } from '../../api/client';
+import {
+  uploads, defects, inspections,
+  validatePhotoFile, PhotoTooLargeError, PhotoTypeError, MAX_PHOTO_BYTES,
+} from '../../api/client';
 
 const COMPRESSION_OPTIONS = {
   maxSizeMB: 0.5,           // 500 KB target
@@ -153,20 +156,35 @@ export default function PhotoUploader({
     }
 
     try {
+      // 0. Pre-flight guard. Rejects oversized files BEFORE compression
+      // (so a 50 MB camera dump doesn't burn worker time) and surfaces
+      // a friendly error. Backend stays authoritative — the presign
+      // endpoint refuses oversized size_bytes too, and MinIO 403s any
+      // PUT whose Content-Length doesn't match the signed value.
+      validatePhotoFile(file);
+
       // 1. Compress (Web Worker → doesn't freeze UI)
       const compressed = await imageCompression(file, COMPRESSION_OPTIONS);
+
+      // 1b. Re-validate the compressed blob — compression should make
+      // it smaller, but a corrupted input could come out larger.
+      if (compressed.size > MAX_PHOTO_BYTES) {
+        throw new PhotoTooLargeError(compressed.size);
+      }
 
       // 2. Status: uploading
       setItems((prev) =>
         prev.map((x) => (x.tempId === tempId ? { ...x, status: 'uploading' } : x))
       );
 
-      // 3. Get presigned URL
+      // 3. Get presigned URL. size_bytes is signed into the URL so MinIO
+      // rejects mismatched payloads (pilot P0 #6 2026-06-01).
       const { uploadUrl, storageKey } = await uploads.presigned({
         kind: parentKind,
         parentId,
         filename: file.name || 'photo.jpg',
         contentType: compressed.type || 'image/jpeg',
+        sizeBytes: compressed.size,
       });
 
       // 4. PUT directly to MinIO

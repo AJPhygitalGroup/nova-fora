@@ -196,7 +196,9 @@ async def create_presigned_upload(
         body.kind, body.parent_id, current, session
     )
     storage_key = new_storage_key(kind_str, parent_int_id, body.filename)
-    url, ttl = generate_upload_url(storage_key, body.content_type)
+    url, ttl = generate_upload_url(
+        storage_key, body.content_type, size_bytes=body.size_bytes,
+    )
     return PresignedUploadResponse(
         upload_url=url, storage_key=storage_key, expires_in=ttl
     )
