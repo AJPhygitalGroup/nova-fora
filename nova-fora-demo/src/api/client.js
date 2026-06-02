@@ -668,7 +668,10 @@ export const inspections = {
 export const defects = {
   /**
    * GET /defects — flat list across all inspections + off-inspection sources.
-   * params: { dspId?, vehicleId?, inspectionId?, source?, dateFrom?, dateTo?, page?, perPage? }
+   * params: { dspId?, vehicleId?, inspectionId?, source?, dateFrom?, dateTo?, tzOffsetMinutes?, page?, perPage? }
+   * tzOffsetMinutes is Date.prototype.getTimezoneOffset() — positive west of
+   * UTC. Backend uses it to shift the date_from/date_to UTC boundaries so
+   * "today" matches the caller's local clock, not server UTC.
    */
   list(params = {}) {
     const q = new URLSearchParams();
@@ -678,6 +681,7 @@ export const defects = {
       inspectionId: 'inspection_id',
       dateFrom: 'date_from',
       dateTo: 'date_to',
+      tzOffsetMinutes: 'tz_offset_minutes',
       perPage: 'per_page',
     };
     for (const [k, v] of Object.entries(params)) {

@@ -16,7 +16,7 @@ flow inherited from V1: presigned PUT to MinIO via /uploads/presigned,
 then commit metadata via this route.
 """
 import json
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
@@ -363,6 +363,18 @@ async def list_defects(
     source: DefectSource | None = Query(default=None),
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
+    tz_offset_minutes: int = Query(
+        default=0,
+        description=(
+            "Caller's timezone offset west of UTC in minutes (matches "
+            "Date.prototype.getTimezoneOffset() — positive for west). "
+            "Applied to shift date_from/date_to so 'today' means the "
+            "caller's local day, not the server's UTC day. Without this, "
+            "the 'DSP-reported defects today' tile reset to 0 at 8pm EST "
+            "(= UTC midnight). 2026-06-02 bug 06 fix."
+        ),
+        ge=-840, le=840,
+    ),
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
     current: User = Depends(get_current_user),
@@ -402,12 +414,22 @@ async def list_defects(
     if source is not None:
         base = base.where(Defect.source == source.value)
         count_q = count_q.where(Defect.source == source.value)
+    # Shift the date boundaries by the caller's tz offset so "today"
+    # in the caller's local clock maps to the correct UTC window.
+    # tz_offset_minutes is positive for west of UTC (matches JS
+    # getTimezoneOffset()), so adding that many minutes to the naive-UTC
+    # date_from gives us the equivalent UTC instant.
+    # Example: tester at 8pm EST 2026-06-01 sends date_from=2026-06-01,
+    # tz_offset_minutes=240. We compute dt_from = "2026-06-01 00:00 UTC"
+    # + 240min = "2026-06-01 04:00 UTC" — which is EST midnight, the
+    # actual start of the caller's local day.
+    tz_shift = timedelta(minutes=tz_offset_minutes)
     if date_from is not None:
-        dt_from = datetime.combine(date_from, time.min, tzinfo=timezone.utc)
+        dt_from = datetime.combine(date_from, time.min, tzinfo=timezone.utc) + tz_shift
         base = base.where(Defect.reported_at >= dt_from)
         count_q = count_q.where(Defect.reported_at >= dt_from)
     if date_to is not None:
-        dt_to = datetime.combine(date_to, time.max, tzinfo=timezone.utc)
+        dt_to = datetime.combine(date_to, time.max, tzinfo=timezone.utc) + tz_shift
         base = base.where(Defect.reported_at <= dt_to)
         count_q = count_q.where(Defect.reported_at <= dt_to)
 

@@ -3802,9 +3802,16 @@ export default function RealDVIC({ user }) {
 
   useEffect(() => {
     let cancelled = false;
-    const today = new Date().toISOString().slice(0, 10);
+    // 2026-06-02 bug 06 fix: was `new Date().toISOString().slice(0,10)`
+    // which returns the UTC date — at 8pm EST = midnight UTC, the
+    // filter advanced to the next day and the tile reset to 0. Now
+    // we send the LOCAL calendar date + tz_offset_minutes so the
+    // backend shifts the UTC boundaries to match the user's day.
+    const _now = new Date();
+    const today = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`;
+    const tzOffsetMinutes = _now.getTimezoneOffset(); // positive = west of UTC
     defectsApi
-      .list({ dateFrom: today, dateTo: today, perPage: 100 })
+      .list({ dateFrom: today, dateTo: today, tzOffsetMinutes, perPage: 100 })
       .then((res) => {
         if (cancelled) return;
         // Filter to DSP-originated sources so inspector-found defects don't
@@ -3993,7 +4000,14 @@ export default function RealDVIC({ user }) {
       {(user?.role === 'dsp_owner' || user?.role === 'site_admin') && nextQcDvic && (
         <InspectionReadinessBanner
           nextQcDvic={nextQcDvic}
-          onClick={() => setShowInspection(true)}
+          // 2026-06-02 bug 04 fix: was opening the MOCK
+          // InspectionReadinessModal which hardcoded "Pacific Northwest
+          // Logistics" vans (lines 1824-1834 + 1952). A real Ceiba
+          // tester clicking this saw zero matching vehicles. Reroute
+          // to the same `CreateInspectionWizard` the vendor uses —
+          // the wizard fetches real /vehicles and lets DSP own scope
+          // pick from the actual fleet.
+          onClick={() => setShowStartInspection(true)}
         />
       )}
 
