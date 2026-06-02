@@ -74,7 +74,23 @@ export default function ServiceWriterDashboard({ user }) {
   const [woLoading, setWoLoading] = useState(true);
   const [woError, setWoError] = useState(null);
   const [rrs, setRrs] = useState([]);
-  const [chipFilter, setChipFilter] = useState(null);  // null = show all
+  // Initial chip filter can be pre-set by VendorHome KPI tile clicks.
+  // Layout's `nf:navigate` handler stashes `{ chip }` in sessionStorage
+  // under `nf:tabIntent:work_orders` before flipping activeTab here.
+  // We read + delete on mount so a later natural mount doesn't re-apply.
+  const [chipFilter, setChipFilter] = useState(() => {
+    if (typeof sessionStorage === 'undefined') return null;
+    try {
+      const raw = sessionStorage.getItem('nf:tabIntent:work_orders');
+      if (!raw) return null;
+      sessionStorage.removeItem('nf:tabIntent:work_orders');
+      const { chip } = JSON.parse(raw);
+      if (chip && CHIPS.some((c) => c.id === chip)) return chip;
+    } catch {
+      /* malformed payload — ignore */
+    }
+    return null;
+  });
   // Clicking a row opens the VAN detail (not the WO detail). The mental
   // model is "I want to see what's going on with this truck" — the SW
   // navigates by vehicle, not by RO. The lifecycle action buttons (accept /

@@ -196,6 +196,14 @@ export default function VendorHome({ user }) {
       )}
 
       {/* ── 5 KPI tiles ─────────────────────────────────────── */}
+      {/* Jorge 2026-06-02 — tiles need to be clickeable. Each fires
+          a `nf:navigate` custom event that Layout consumes to flip
+          the active tab + stash a `chip` intent that the target tab's
+          dashboard reads on mount (SW dashboard for work_orders).
+          AdHoc keeps its in-place modal — different model. The
+          "X pending feedback" inner badge on KpiTileRepaired routes
+          to Vendor Scorecard tab (different destination from the
+          outer tile, hence stopPropagation in the subchip handler). */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
         <KpiTileAdHoc
           loading={loading}
@@ -208,21 +216,42 @@ export default function VendorHome({ user }) {
           inspected={counters?.vansInspectedToday ?? 0}
           total={counters?.vansTotal ?? 0}
           newDefects={counters?.newDefectsToday ?? 0}
+          onClick={() => window.dispatchEvent(
+            new CustomEvent('nf:navigate', { detail: { tab: 'snapshot' } }),
+          )}
         />
         <KpiTilePendingFmc
           loading={loading}
           pending={counters?.defectsPendingFmc ?? 0}
           total={counters?.defectsPendingFmcTotal ?? 0}
+          onClick={() => window.dispatchEvent(
+            new CustomEvent('nf:navigate', { detail: { tab: 'work_orders', chip: 'pendingFmc' } }),
+          )}
         />
         <KpiTileScheduled
           loading={loading}
           count={counters?.scheduledRepairsCount ?? 0}
+          onClick={() => window.dispatchEvent(
+            // "Scheduled repairs / next 48h" maps best to the SW's
+            // `awaitingCustomer` chip (pickup arranged, scheduled
+            // start pending) — that's the WOs the SW has lined up.
+            new CustomEvent('nf:navigate', { detail: { tab: 'work_orders', chip: 'awaitingCustomer' } }),
+          )}
         />
         <KpiTileRepaired
           loading={loading}
           count={counters?.defectsRepairedWeek ?? 0}
           pctChange={counters?.defectsRepairedPctChange ?? 0}
           pendingFeedback={counters?.pendingFeedback ?? 0}
+          onClick={() => window.dispatchEvent(
+            new CustomEvent('nf:navigate', { detail: { tab: 'work_orders', chip: 'completed' } }),
+          )}
+          onPendingFeedbackClick={() => window.dispatchEvent(
+            // Feedback is the DSP's rating of completed work — lives
+            // on the Vendor Scorecard tab where the SW can see who
+            // owes a rating and chase it.
+            new CustomEvent('nf:navigate', { detail: { tab: 'scorecard' } }),
+          )}
         />
       </div>
 
@@ -526,10 +555,10 @@ function KpiTileAdHoc({ loading, count, rushCount, onClick }) {
   );
 }
 
-function KpiTileVansInspected({ loading, inspected, total, newDefects }) {
+function KpiTileVansInspected({ loading, inspected, total, newDefects, onClick }) {
   const pct = total > 0 ? Math.round((inspected / total) * 100) : 0;
   return (
-    <KpiTileShell border="border-navy-700" bg="bg-navy-900">
+    <KpiTileShell border="border-navy-700" bg="bg-navy-900" onClick={onClick}>
       <div className="flex items-start justify-between mb-1">
         <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
           Vans Inspected
@@ -550,9 +579,9 @@ function KpiTileVansInspected({ loading, inspected, total, newDefects }) {
   );
 }
 
-function KpiTilePendingFmc({ loading, pending, total }) {
+function KpiTilePendingFmc({ loading, pending, total, onClick }) {
   return (
-    <KpiTileShell border="border-accent-purple/40" bg="bg-accent-purple/5">
+    <KpiTileShell border="border-accent-purple/40" bg="bg-accent-purple/5" onClick={onClick}>
       <div className="flex items-start justify-between mb-1">
         <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
           Pending FMC Approval
@@ -573,9 +602,9 @@ function KpiTilePendingFmc({ loading, pending, total }) {
   );
 }
 
-function KpiTileScheduled({ loading, count }) {
+function KpiTileScheduled({ loading, count, onClick }) {
   return (
-    <KpiTileShell border="border-navy-700" bg="bg-navy-900">
+    <KpiTileShell border="border-navy-700" bg="bg-navy-900" onClick={onClick}>
       <div className="flex items-start justify-between mb-1">
         <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
           Scheduled Repairs
@@ -590,13 +619,17 @@ function KpiTileScheduled({ loading, count }) {
   );
 }
 
-function KpiTileRepaired({ loading, count, pctChange, pendingFeedback }) {
+function KpiTileRepaired({
+  loading, count, pctChange, pendingFeedback,
+  onClick,                  // whole-tile click (→ Work Orders / completed chip)
+  onPendingFeedbackClick,   // inner subchip click (→ Vendor Scorecard tab)
+}) {
   const isUp = pctChange > 0;
   const isDown = pctChange < 0;
   const pctColor = isUp ? 'text-accent-green' : isDown ? 'text-accent-red' : 'text-text-muted';
   const pctSign = isUp ? '+' : '';
   return (
-    <KpiTileShell border="border-accent-green/40" bg="bg-accent-green/5">
+    <KpiTileShell border="border-accent-green/40" bg="bg-accent-green/5" onClick={onClick}>
       <div className="flex items-start justify-between mb-1">
         <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
           Defects Repaired
@@ -610,10 +643,20 @@ function KpiTileRepaired({ loading, count, pctChange, pendingFeedback }) {
       </div>
       <div className="text-[10px] text-text-muted mt-1">Current week</div>
       {pendingFeedback > 0 && (
-        <div className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-accent-gold/15 border border-accent-gold/40 text-accent-gold text-[10px] font-semibold w-fit">
+        // Separate click target — stopPropagation so the outer tile's
+        // onClick doesn't fire when the SW wants to see WHO owes the
+        // feedback (different destination: Vendor Scorecard tab).
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onPendingFeedbackClick?.();
+          }}
+          className={`mt-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-accent-gold/15 border border-accent-gold/40 text-accent-gold text-[10px] font-semibold w-fit ${onPendingFeedbackClick ? 'cursor-pointer hover:brightness-110' : ''}`}
+        >
           <AlertTriangle className="w-3 h-3" />
           {pendingFeedback} pending feedback
-        </div>
+        </button>
       )}
     </KpiTileShell>
   );

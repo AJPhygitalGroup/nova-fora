@@ -292,6 +292,42 @@ export default function Layout({ user, onSwitchRole, onLogout, onImpersonate, im
     );
   }, [activeTab]);
 
+  // ─── Cross-tab navigation w/ intent (Jorge: tiles clickeables) ───
+  // VendorHome (and others) dispatch `nf:navigate` with
+  // `{ tab, ...extras }`. We stash extras under sessionStorage key
+  // `nf:tabIntent:<tab>` for the target tab to read on mount, then
+  // flip activeTab. The target component (e.g. ServiceWriterDashboard
+  // reading `chip`) consumes + deletes its key so subsequent natural
+  // mounts don't re-apply.
+  //
+  // Why a custom event vs. lifting setActiveTab via props: every tab
+  // component is rendered by Layout already; threading a callback
+  // through each one's prop chain would touch every screen. The event
+  // bus stays in this file; the protocol is documented at the
+  // dispatcher and consumer.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const handler = (e) => {
+      const detail = e?.detail || {};
+      const { tab, ...extras } = detail;
+      if (!tab) return;
+      const extraKeys = Object.keys(extras);
+      if (extraKeys.length > 0) {
+        try {
+          sessionStorage.setItem(
+            'nf:tabIntent:' + tab,
+            JSON.stringify(extras),
+          );
+        } catch {
+          /* sessionStorage may be unavailable in some embeddings */
+        }
+      }
+      setActiveTab(tab);
+    };
+    window.addEventListener('nf:navigate', handler);
+    return () => window.removeEventListener('nf:navigate', handler);
+  }, []);
+
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [theme, setTheme] = useState(() => {
     if (typeof window === 'undefined') return 'dark';
