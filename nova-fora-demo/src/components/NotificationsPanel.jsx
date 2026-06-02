@@ -43,12 +43,24 @@ function formatRelative(dateStr) {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-export default function NotificationsPanel({ user, open, onClose }) {
+export default function NotificationsPanel({
+  user, open, onClose,
+  // 2026-06-02 bug 03 fix: list + setter come from Layout so the
+  // header badge and this modal share state. If a parent forgot to
+  // pass them (legacy callers), we fall back to a local copy so the
+  // panel still works in isolation — but the header won't update.
+  notifs: notifsProp,
+  setNotifs: setNotifsProp,
+}) {
   // Top-level panel tab: vendor notifications | rewards
   const [panelTab, setPanelTab] = useState('vendor');
 
-  // Vendor-side notifications (work orders + QC DVIC related)
-  const [notifs, setNotifs] = useState(() => notificationsSeed.filter((n) => n.userId === user?.id));
+  // Fallback local state when no parent setter was provided.
+  const [localNotifs, setLocalNotifs] = useState(
+    () => notificationsSeed.filter((n) => n.userId === user?.id),
+  );
+  const notifs = notifsProp ?? localNotifs;
+  const setNotifs = setNotifsProp ?? setLocalNotifs;
   const [filter, setFilter] = useState('all'); // all | unread
 
   const visible = useMemo(() => {

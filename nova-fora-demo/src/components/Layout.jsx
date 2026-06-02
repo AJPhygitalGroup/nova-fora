@@ -195,10 +195,23 @@ export default function Layout({ user, onSwitchRole, onLogout, onImpersonate, im
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user.role, t, vendorDoesBody]);
 
-  // Live notification count per user (computed from seed)
-  const userNotifCount = useMemo(() => {
-    return notificationsSeed.filter((n) => n.userId === user?.id && !n.read).length;
+  // 2026-06-02 bug 03 fix: lift the notif list to Layout so the header
+  // badge AND the modal share ONE source of truth. Before, the header
+  // was reading the imported notificationsSeed via useMemo and the
+  // modal had its own useState copy — clicking "mark read" in the
+  // modal updated only the local copy and the badge stayed stale.
+  // Now we own the list here, pass setUserNotifs into the modal, and
+  // it dispatches up. user?.id dep re-seeds on role switch.
+  const [userNotifs, setUserNotifs] = useState(() =>
+    notificationsSeed.filter((n) => n.userId === user?.id),
+  );
+  useEffect(() => {
+    setUserNotifs(notificationsSeed.filter((n) => n.userId === user?.id));
   }, [user?.id]);
+  const userNotifCount = useMemo(
+    () => userNotifs.filter((n) => !n.read).length,
+    [userNotifs],
+  );
 
   // Pick a sensible default landing view per role
   const defaultTab = tabs[0]?.id || 'dvic';
@@ -564,7 +577,13 @@ export default function Layout({ user, onSwitchRole, onLogout, onImpersonate, im
       </footer>
 
       {/* Notifications side panel */}
-      <NotificationsPanel user={user} open={showNotifs} onClose={() => setShowNotifs(false)} />
+      <NotificationsPanel
+        user={user}
+        open={showNotifs}
+        onClose={() => setShowNotifs(false)}
+        notifs={userNotifs}
+        setNotifs={setUserNotifs}
+      />
     </div>
   );
 }
