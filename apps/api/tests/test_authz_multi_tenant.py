@@ -237,6 +237,86 @@ class TestLogoutRevoke:
 
 
 # ─────────────────────────────────────────────────────
+# Photo upload hardening (pilot P0 #6 minimum). Closes the gap where
+# the presign endpoint signed only Content-Type — a client could PUT
+# 10 GB through a valid signature even though the commit step would
+# reject. Now: size_bytes is REQUIRED + capped + signed into the URL
+# as ContentLength so MinIO 403s mismatched bodies.
+# ─────────────────────────────────────────────────────
+class TestPhotoUploadCap:
+    """All paths use the inspection-scope (INS-00055 belongs to Service
+    Logistic; jorge owns it) so we can exercise the schema without
+    triggering tenancy errors. Token reused across cases — these are
+    pure schema/validation tests, no side effects on the DB."""
+
+    _PARENT = "INS-00055"
+    _BASE = {
+        "kind": "inspection",
+        "parent_id": _PARENT,
+        "filename": "x.jpg",
+        "content_type": "image/jpeg",
+    }
+
+    def test_presign_requires_size_bytes(self, token_jorge):
+        # No size_bytes → 422 field required.
+        code, body = http(
+            "POST", "/uploads/presigned", token_jorge,
+            body=self._BASE,
+        )
+        assert code == 422
+        # Pydantic surfaces missing field by location.
+        assert "size_bytes" in body
+
+    def test_presign_rejects_oversized(self, token_jorge):
+        # 20 MB > 10 MB cap → 422 (le constraint).
+        code, body = http(
+            "POST", "/uploads/presigned", token_jorge,
+            body={**self._BASE, "size_bytes": 20 * 1024 * 1024},
+        )
+        assert code == 422
+        # The number is in the validation detail.
+        assert "size_bytes" in body or "less_than_equal" in body
+
+    def test_presign_accepts_valid_size(self, token_jorge):
+        # 1 KB is well under the cap.
+        code, body = http(
+            "POST", "/uploads/presigned", token_jorge,
+            body={**self._BASE, "size_bytes": 1024},
+        )
+        assert code == 200, body
+        # Response shape exists.
+        assert "upload_url" in body and "storage_key" in body
+
+    def test_presign_url_signs_content_length(self, token_jorge):
+        # The whole point of signing ContentLength: it must appear in
+        # the X-Amz-SignedHeaders so MinIO can verify the actual PUT.
+        code, body = http(
+            "POST", "/uploads/presigned", token_jorge,
+            body={**self._BASE, "size_bytes": 1024},
+        )
+        assert code == 200, body
+        # Body is a string here (http() truncates to 120 chars in some
+        # cases) — fetch fresh to inspect.
+        import json as _json
+        parsed = _json.loads(body) if isinstance(body, str) else body
+        url = parsed["upload_url"]
+        # The signed-headers list is URL-encoded as %3B between names.
+        assert (
+            "content-length" in url.lower()
+            or "content-length%3b" in url.lower()
+        )
+
+    def test_presign_rejects_disallowed_content_type(self, token_jorge):
+        # PDF is not in the whitelist regex.
+        code, body = http(
+            "POST", "/uploads/presigned", token_jorge,
+            body={**self._BASE, "content_type": "application/pdf", "size_bytes": 1024},
+        )
+        assert code == 422
+        assert "content_type" in body or "string_pattern_mismatch" in body
+
+
+# ─────────────────────────────────────────────────────
 # Auth audit log (commit 2026-05-31 — table + GET endpoint).
 # Verifies that login / logout / impersonate_start each persist a row
 # and that the read surface is site_admin-only.
