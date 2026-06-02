@@ -118,32 +118,47 @@ def new_storage_key(
 def generate_upload_url(
     storage_key: str,
     content_type: str,
-    size_bytes: int | None = None,
+    size_bytes: int | None = None,  # noqa: ARG001 — kept for caller back-compat
 ) -> tuple[str, int]:
     """Return (presigned PUT URL, expires_in_seconds).
 
     The client PUTs the bytes directly to this URL; MinIO verifies the
     signature and content_type match before accepting.
 
-    When `size_bytes` is provided, we sign `ContentLength` into the URL.
-    MinIO then 403s any PUT whose Content-Length header doesn't match —
-    closes the gap where a client could lie about size at presign time
-    and dump GBs into the bucket. Pilot P0 #6 minimum (2026-06-01).
-    Callers SHOULD pass size_bytes; it's optional for back-compat with
-    older paths that haven't been wired through yet.
+    `size_bytes` was previously signed into the URL as `ContentLength`
+    (pilot P0 #6 minimum, commit 1d23769 / 2026-06-01). REVERTED on
+    2026-06-02 after real pilot testing showed legitimate PUTs failing:
+
+      - Browsers (especially iOS Safari / Android WebView) do not
+        always emit a literal `Content-Length` header on fetch(PUT)
+        with a Blob body — they may fall back to chunked transfer.
+        SigV4 canonicalisation then mismatches and MinIO 403s
+        `SignatureDoesNotMatch`.
+      - Even when the header IS sent, signing content-length forces a
+        CORS preflight whose `Access-Control-Request-Headers` lists
+        content-length. MinIO on srv824918 was set up only with
+        MINIO_API_CORS_ALLOW_ORIGIN — no allow-headers — so the
+        preflight does not advertise content-length back and the
+        browser blocks the PUT before it leaves the device.
+
+    Both failure modes surface as the same opaque "Failed to fetch"
+    TypeError in the browser. Server-side size enforcement is still in
+    place: `schemas/photo.py:PresignedUploadRequest.size_bytes` caps
+    every presign to `settings.photo_max_size_bytes` at request time
+    (Pydantic `Field(ge=1, le=_MAX_PHOTO_BYTES)` with `extra=forbid`),
+    so the abuse case the signed ContentLength was meant to close is
+    still covered at the API tier. `size_bytes` stays in the function
+    signature so callers don't break on this revert.
     """
     cli = _public_client()
     ttl = settings.s3_presign_ttl_seconds
-    params = {
-        "Bucket": settings.s3_bucket,
-        "Key": storage_key,
-        "ContentType": content_type,
-    }
-    if size_bytes is not None:
-        params["ContentLength"] = int(size_bytes)
     url = cli.generate_presigned_url(
         "put_object",
-        Params=params,
+        Params={
+            "Bucket": settings.s3_bucket,
+            "Key": storage_key,
+            "ContentType": content_type,
+        },
         ExpiresIn=ttl,
     )
     return url, ttl
