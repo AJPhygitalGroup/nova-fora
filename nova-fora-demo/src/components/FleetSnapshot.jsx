@@ -1131,20 +1131,36 @@ export function CreateWorkOrderModal({ initialVan, initialDefect, initialDefectI
                   </div>
                 </div>
 
-                {/* Mode toggle — defect vs scheduled PM */}
-                <div className="flex items-center gap-2 p-1 rounded-lg bg-navy-800/60 border border-navy-700/40 w-fit">
-                  <button onClick={() => setIsPM(false)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
-                      !isPM ? 'bg-accent-blue text-white' : 'text-navy-400 hover:text-white'
-                    }`}>
-                    <AlertTriangle size={11} /> {t('createWO.modeDefect', 'Defect repair')}
-                  </button>
-                  <button onClick={() => setIsPM(true)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
-                      isPM ? 'bg-accent-green text-white' : 'text-navy-400 hover:text-white'
-                    }`}>
-                    <Plus size={11} /> {t('createWO.modeSchedulePM', 'Schedule PM')}
-                  </button>
+                {/* 2026-06-02 bug 01 fix: the old toggle was `w-fit`
+                    with `bg-navy-800/60` and `text-xs` — visually a
+                    minor control, so testers missed the PM option
+                    entirely. Now it's a full-width segmented switch
+                    with a label above, sized to match the systems
+                    grid below. PM stays an EXCLUSIVE mode (not a peer
+                    card in the systems grid) because the submit path
+                    diverges — PM mints `part='pm_service'` with a
+                    `pmType` enum, whereas defects use a real catalog
+                    part. Keeping the mode flip explicit avoids the
+                    "I clicked PM but the system grid is still showing
+                    me parts" confusion. */}
+                <div>
+                  <label className="text-xs font-semibold text-navy-300 mb-1.5 block">
+                    {t('createWO.workTypeLabel', 'What type of work do you need?')}
+                  </label>
+                  <div className="grid grid-cols-2 gap-2 p-1 rounded-lg bg-navy-800/60 border border-navy-700/40">
+                    <button onClick={() => setIsPM(false)}
+                      className={`flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-md text-sm font-semibold transition-all cursor-pointer min-h-[44px] ${
+                        !isPM ? 'bg-accent-blue text-white shadow-lg shadow-accent-blue/20' : 'text-navy-300 hover:text-white hover:bg-navy-700/40'
+                      }`}>
+                      <AlertTriangle size={14} /> {t('createWO.modeDefect', 'Defect repair')}
+                    </button>
+                    <button onClick={() => setIsPM(true)}
+                      className={`flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-md text-sm font-semibold transition-all cursor-pointer min-h-[44px] ${
+                        isPM ? 'bg-accent-green text-white shadow-lg shadow-accent-green/20' : 'text-navy-300 hover:text-white hover:bg-navy-700/40'
+                      }`}>
+                      <Plus size={14} /> {t('createWO.modePmRequest', 'PM Request')}
+                    </button>
+                  </div>
                 </div>
 
                 {/* PM mode: show PM type selector instead of Section.
