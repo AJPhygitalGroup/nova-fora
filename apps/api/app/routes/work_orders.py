@@ -2655,11 +2655,20 @@ async def confirm_pickup(
 ) -> ConfirmPickupResponse:
     """Vehicle-scoped fan-out: writes scheduled_start_at + pickup_location
     + key_location + pickup_notes to EVERY accepted WO's primary RO on
-    the vehicle that already had a pickup_requested_at, AND flips those
-    WOs to status='in_progress'.
+    the vehicle that already had a pickup_requested_at.
 
     Customer-side action: DSP owner / manager (or site_admin), scoped to
     the vehicle's DSP.
+
+    Status note (2026-06-02 bug fix): previously this endpoint ALSO
+    flipped wo.status to IN_PROGRESS for each sibling. That was wrong —
+    the DSP confirming pickup details (location/keys/time) is the
+    customer's *agreement*, not the start of the work. The tech still
+    has to be assigned and actually start the visit. Leaving the WO in
+    `accepted` keeps it visible on the SW dashboard as "Awaiting tech /
+    ready to schedule" via deriveStatusKey on the frontend. The
+    backend's POST /work-orders/{id}/start endpoint is the canonical
+    accepted → in_progress transition.
     """
     lang = get_request_language(request)
 
@@ -2681,9 +2690,8 @@ async def confirm_pickup(
             "no accepted WO on this vehicle has a pending pickup request",
         )
 
-    now = utc_now()
     updated_ro_ids: list[int] = []
-    in_progress_wo_ids: list[int] = []
+    confirmed_wo_ids: list[int] = []
     for ro, sibling_wo in pairs:
         ro.scheduled_start_at = body.scheduled_start_at
         ro.pickup_location = body.pickup_location
@@ -2691,12 +2699,7 @@ async def confirm_pickup(
         ro.pickup_notes = body.pickup_notes
         session.add(ro)
         updated_ro_ids.append(ro.id)
-
-        prev = sibling_wo.status.value if hasattr(sibling_wo.status, "value") else str(sibling_wo.status)
-        sibling_wo.status = WorkOrderStatus.IN_PROGRESS
-        sibling_wo.in_progress_at = now
-        session.add(sibling_wo)
-        in_progress_wo_ids.append(sibling_wo.id)
+        confirmed_wo_ids.append(sibling_wo.id)
 
         await log_event(
             session,
@@ -2714,27 +2717,8 @@ async def confirm_pickup(
                 "sibling_count": len(pairs) - 1,
             },
         )
-        await log_status_change(
-            session,
-            entity_type=WoActivityLogEntityType.WORK_ORDER,
-            entity_id=sibling_wo.id,
-            from_status=prev,
-            to_status=WorkOrderStatus.IN_PROGRESS.value,
-            actor_id=current.id,
-        )
-        # Friendly verb (spec catalog): visit physically started.
-        await log_event(
-            session,
-            entity_type=WoActivityLogEntityType.WORK_ORDER,
-            entity_id=sibling_wo.id,
-            action="started",
-            actor_id=current.id,
-            details={
-                "prev_status": prev,
-                "via": "pickup_confirmed",
-                "triggering_work_order_id": wo.id,
-            },
-        )
+        # No status flip — the WO stays `accepted` until the SW (or
+        # tech) calls POST /work-orders/{id}/start. See docstring.
 
     # Vehicle-scoped pickup can touch sibling WOs across different RRs
     # (rare but possible — two RRs on the same vehicle, both with
@@ -2757,7 +2741,10 @@ async def confirm_pickup(
         work_order_id=wo.id_str,
         vehicle_id=wo.vehicle_id,
         updated_ro_ids=updated_ro_ids,
-        in_progress_work_order_ids=in_progress_wo_ids,
+        # Kept on the response shape for back-compat; will always be []
+        # now that confirm-pickup no longer flips status. The accepted
+        # → in_progress transition is now ONLY through /start.
+        in_progress_work_order_ids=[],
     )
 
 
