@@ -24,6 +24,7 @@ import {
 } from '../api/client';
 import { adaptWO } from '../api/woAdapter';
 import PendingFeedbackListModal from './feedback/PendingFeedbackListModal';
+import CheckoutVehiclesModal from './wo_v2/CheckoutVehiclesModal';
 
 const tierConfig = {
   1: { label: 'Tier 1', range: '1–25 defects', cash: '$1', bucks: '$1', color: '#3b82f6', bg: 'bg-accent-blue/10', border: 'border-accent-blue/30', pending: 1 },
@@ -3861,6 +3862,16 @@ export default function RealDVIC({ user }) {
   // bump the refresh tick from inside the modal whenever the DSP commits
   // a response so the count + list update without a full page reload.
   const [scheduledWoQueue, setScheduledWoQueue] = useState([]);
+  // Checked-out vans queue — Jorge 2026-06-02 new tile. Phase A scope:
+  // derive from in-progress WOs (vehicle is currently with a vendor for
+  // repair). Tile + modal show fleet id, vendor workshop, tech name,
+  // scheduled_start_at (proxy for pickup time), status. Photos at
+  // handoff are Phase B (needs vendor-side capture flow + a new
+  // /work-orders/{id}/checkout endpoint + WorkOrderPhoto stage
+  // 'pickup_handoff'). Modal renders a "photos coming in next round"
+  // placeholder until then.
+  const [checkedOutWoQueue, setCheckedOutWoQueue] = useState([]);
+  const [showCheckoutOpen, setShowCheckoutOpen] = useState(false);
   // SSE subscriptions — instant fan-out from the backend so vendor-side
   // and DSP-side state changes flow into the home cards within the
   // round-trip time (≲200ms), not 15-60s. Each event just bumps
@@ -3910,6 +3921,16 @@ export default function RealDVIC({ user }) {
         setScheduledWoQueue(res.items || []);
       })
       .catch((err) => console.warn('scheduled WO queue failed', err));
+    // Currently checked-out vans (in_progress WOs) — Jorge 2026-06-02
+    // tile. Backend already scopes WOs to the caller's DSP via the
+    // dsp_owner role check on /work-orders, so no extra filter needed.
+    workOrdersApi
+      .list({ status: 'in_progress', limit: 100 })
+      .then((res) => {
+        if (cancelled) return;
+        setCheckedOutWoQueue(res.items || []);
+      })
+      .catch((err) => console.warn('checked-out vans queue failed', err));
     return () => { cancelled = true; };
     // Refetch triggers:
     //   - new defect lands via SSE (totalDefectsToday changes)
@@ -4038,21 +4059,40 @@ export default function RealDVIC({ user }) {
 
       {/* Home body — single scrollable view (no sub-tabs) */}
       <div className="space-y-6">
-          {/* Key metrics */}
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
-            {/* DSP-reported defects today — + button floats right, number centered */}
+          {/* Report Vehicle Issue banner — replaces the old "+" affordance
+              that used to sit inside the DSP-reported defects KPI tile.
+              The DSP tester (2026-06-02) reported he didn't notice the
+              tiny + icon hidden in the tile corner. Promoting it to a
+              full-width banner with wrench icon + clear copy makes the
+              create-WO entry point unmissable. Tile underneath becomes
+              cleaner — pure count + label. Same handler
+              (setCreateWOContext) → same CreateWorkOrderModal. */}
+          {(user?.role === 'dsp_owner' || user?.role === 'site_admin') && (
+            <button
+              onClick={() => setCreateWOContext({ van: null, defect: null })}
+              className="w-full flex items-center gap-3 px-5 py-4 rounded-xl bg-navy-900/60 backdrop-blur border border-navy-700/40 hover:border-accent-blue/50 hover:bg-navy-800/60 transition-all cursor-pointer text-left"
+            >
+              <div className="w-10 h-10 rounded-lg bg-accent-blue/15 border border-accent-blue/40 flex items-center justify-center shrink-0">
+                <Wrench size={18} className="text-accent-blue" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold text-white">{t('realDvic.reportIssueBanner.title', 'Report Vehicle Issue')}</div>
+                <div className="text-xs text-navy-400">{t('realDvic.reportIssueBanner.subtitle', 'Create a pre-approved repair order for a van in your fleet')}</div>
+              </div>
+              <ArrowRight size={18} className="text-navy-400 shrink-0" />
+            </button>
+          )}
+
+          {/* Key metrics — 6 tiles since Checkout Vehicles landed
+              2026-06-02. The new tile goes between Scheduled Repairs
+              and Pending Feedback (per Jorge's spec). */}
+          <div className="grid grid-cols-2 lg:grid-cols-6 gap-3 sm:gap-4">
+            {/* DSP-reported defects today — no more + button (lives in
+                the Report Vehicle Issue banner above). Pure count
+                + label + rush-orders badge. */}
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
               onClick={() => setOpenCard('reported')}
               className="relative bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl p-5 hover:border-navy-600/60 transition-all cursor-pointer h-full flex flex-col">
-              <div className="flex items-start justify-end mb-3">
-                <button
-                  onClick={(e) => { e.stopPropagation(); setCreateWOContext({ van: null, defect: null }); }}
-                  className="w-9 h-9 rounded-full bg-accent-blue/15 border border-accent-blue/40 text-accent-blue hover:bg-accent-blue/25 transition-colors cursor-pointer flex items-center justify-center"
-                  title={t('realDvic.metrics.createWOTitle', 'Create work order (no inspection required)')}
-                >
-                  <Plus size={18} />
-                </button>
-              </div>
               <div className="text-center">
                 <div className="text-2xl font-bold text-white mb-1">{totalDefectsToday}</div>
                 <div className="text-sm text-navy-400">{t('realDvic.metrics.reportedToday', 'DSP-reported defects today')}</div>
@@ -4121,6 +4161,24 @@ export default function RealDVIC({ user }) {
                 value={scheduledWoQueue.length}
                 color="accent-red"
                 delay={0.15}
+              />
+            </div>
+
+            {/* Jorge 2026-06-02: Checkout Vehicles tile. Shows how many
+                vans are currently with vendors for repair. Clicking opens
+                a modal listing each van + tech + scheduled pickup time
+                + workshop + status. Photos at handoff land in Phase B
+                (vendor-side capture workflow). */}
+            <div onClick={() => setShowCheckoutOpen(true)} className="cursor-pointer h-full">
+              <MetricCard
+                icon={Camera}
+                label={t('realDvic.metrics.checkoutVehicles', 'Checkout Vehicles')}
+                value={checkedOutWoQueue.length}
+                subtitle={checkedOutWoQueue.length > 0
+                  ? t('realDvic.metrics.checkoutSubtitleFmt', { count: checkedOutWoQueue.length, defaultValue: `${checkedOutWoQueue.length} currently at shops` })
+                  : t('realDvic.metrics.checkoutEmpty', 'Shop custody count')}
+                color={checkedOutWoQueue.length > 0 ? 'accent-blue' : 'accent-green'}
+                delay={0.175}
               />
             </div>
 
@@ -4451,6 +4509,12 @@ export default function RealDVIC({ user }) {
             onChanged={() => setQueueRefreshTick((n) => n + 1)}
           />
         )}
+        <CheckoutVehiclesModal
+          open={showCheckoutOpen}
+          items={checkedOutWoQueue}
+          loading={false}
+          onClose={() => setShowCheckoutOpen(false)}
+        />
       </AnimatePresence>
     </div>
   );
