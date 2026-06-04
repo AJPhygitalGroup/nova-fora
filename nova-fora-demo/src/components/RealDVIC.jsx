@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { Shield, ShieldCheck, AlertTriangle, Award, TrendingUp, Users, Flame, Camera, Gift, Lock, Star, Plus, Hourglass, CheckCheck, X, Clock, Wrench, CheckCircle2, Calendar, KeyRound, ChevronRight, Info, SkipForward, PlayCircle, ClipboardCheck, ChevronDown, Check, ArrowRight, Bell, LayoutGrid, Truck, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { Shield, ShieldCheck, AlertTriangle, AlertCircle, Award, TrendingUp, Users, Flame, Camera, Gift, Lock, Star, Plus, Hourglass, CheckCheck, X, Clock, Wrench, CheckCircle2, Calendar, KeyRound, ChevronRight, Info, SkipForward, PlayCircle, ClipboardCheck, ChevronDown, Check, ArrowRight, Bell, LayoutGrid, Loader2, Truck, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { daList, dspRewards, dspList, weeklyInspections, defectCategoryBreakdown, inspectionSections, workOrdersData } from '../data/mockData';
 import MetricCard from './ui/MetricCard';
 import ProgressBar from './ui/ProgressBar';
@@ -253,6 +253,217 @@ function OpenVsaDonut({ chartDonut }) {
       </div>
     </div>
   );
+}
+
+// ─────────────────────────────────────────────────────
+// VehicleStatusSearch — Jorge 2026-06-03.
+// "Type a van + part, get its current state." Quick lookup so the DSP
+// doesn't have to click through KPI tiles + modals to answer "where
+// is van CV1's brake repair right now?"
+//
+// Input parser: first whitespace-separated token = vehicle (fleet id
+// or VAN-XXXX), the rest = optional part substring (e.g. "brakes").
+// Empty after debounce → results pane hides.
+//
+// Status derivation per WO:
+//   - declined           → "Declined" (red)
+//   - cancelled          → "Cancelled" (gray)
+//   - completed          → "Completed" (green)
+//   - pending_cost > 0   → "Pending cost approval" (gold) ← DSP action
+//   - pending_review > 0 → "Pending review" (gold)        ← DSP action
+//   - returned_at set    → "Returned to lot" (purple)
+//   - picked_up_at set   → "At vendor" (blue)
+//   - in_progress        → "In repair" (blue)
+//   - scheduled_at set   → "Scheduled" (gray-blue)
+//   - accepted (default) → "Accepted by vendor" (gray)
+//   - pending            → "Awaiting vendor accept" (orange)
+// ─────────────────────────────────────────────────────
+function VehicleStatusSearch({ dspId }) {
+  const [query, setQuery] = useState('');
+  const [debounced, setDebounced] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [vehicleMatch, setVehicleMatch] = useState(null);
+  const [results, setResults] = useState([]);   // [{wo, defect, status}]
+  const [notFound, setNotFound] = useState(false);
+
+  // Debounce — 350ms is the sweet spot for keystroke-driven search.
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(query.trim()), 350);
+    return () => clearTimeout(id);
+  }, [query]);
+
+  useEffect(() => {
+    if (!debounced) {
+      setVehicleMatch(null); setResults([]); setNotFound(false);
+      return;
+    }
+    let cancelled = false;
+    setBusy(true);
+    (async () => {
+      try {
+        // Parse "VAN_ID rest of phrase" → vehicle token + part query
+        const tokens = debounced.split(/\s+/).filter(Boolean);
+        const vanToken = tokens[0];
+        const partQuery = tokens.slice(1).join(' ').toLowerCase();
+
+        // 1) Lookup the vehicle by fleet_id / van id (backend has
+        //    `search` param that hits fleet_id + plate + VIN).
+        const { vehicles: vehApi, workOrders: woApi } = await import('../api/client');
+        const vehRes = await vehApi.list({
+          search: vanToken,
+          dspId: dspId || undefined,
+          perPage: 5,
+        });
+        if (cancelled) return;
+        const vehItems = vehRes?.items || [];
+        // Prefer exact fleet_id match (case-insensitive); fall back to first.
+        const exact = vehItems.find((v) =>
+          (v.fleetId || '').toLowerCase() === vanToken.toLowerCase()
+          || (v.idStr || '').toLowerCase() === vanToken.toLowerCase()
+        );
+        const vehicle = exact || vehItems[0] || null;
+        if (!vehicle) {
+          setVehicleMatch(null); setResults([]); setNotFound(true);
+          return;
+        }
+        setVehicleMatch(vehicle); setNotFound(false);
+
+        // 2) Pull active WOs for that vehicle.
+        const woRes = await woApi.list({ vehicleId: vehicle.id, limit: 50 });
+        if (cancelled) return;
+        let wos = woRes?.items || [];
+
+        // 3) Filter by part substring if user typed one.
+        if (partQuery) {
+          wos = wos.map((wo) => {
+            const defs = (wo.defects || []).filter((d) => {
+              const haystack = `${(d.part || '').replace(/_/g, ' ')} ${(d.type || '').replace(/_/g, ' ')}`.toLowerCase();
+              return haystack.includes(partQuery);
+            });
+            return defs.length > 0 ? { ...wo, _matchingDefects: defs } : null;
+          }).filter(Boolean);
+        } else {
+          wos = wos.map((wo) => ({ ...wo, _matchingDefects: wo.defects || [] }));
+        }
+
+        // 4) Derive status per WO.
+        const withStatus = wos.map((wo) => ({
+          wo,
+          status: deriveVehicleStatus(wo),
+        }));
+        setResults(withStatus);
+      } catch {
+        if (!cancelled) {
+          setVehicleMatch(null); setResults([]); setNotFound(true);
+        }
+      } finally {
+        if (!cancelled) setBusy(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [debounced, dspId]);
+
+  return (
+    <div className="bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl p-3">
+      <div className="flex items-center gap-2">
+        <Wrench size={14} className="text-accent-blue shrink-0" />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search by van + part (e.g. CV1 brakes)"
+          className="flex-1 bg-transparent outline-none text-sm text-white placeholder:text-navy-500"
+        />
+        {busy && <Loader2 size={14} className="text-navy-400 animate-spin shrink-0" />}
+        {query && !busy && (
+          <button
+            onClick={() => setQuery('')}
+            className="text-navy-400 hover:text-white shrink-0"
+            title="Clear"
+          >
+            <X size={14} />
+          </button>
+        )}
+      </div>
+
+      {/* Results pane — only when there's a debounced query. */}
+      {debounced && (
+        <div className="mt-3 pt-3 border-t border-navy-700/40">
+          {notFound ? (
+            <div className="flex items-center gap-2 text-xs text-accent-red">
+              <AlertCircle size={12} />
+              No van matches "{debounced.split(/\s+/)[0]}" in your fleet.
+            </div>
+          ) : vehicleMatch && results.length === 0 ? (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="inline-block w-2 h-2 rounded-full bg-accent-green" />
+              <span className="font-semibold text-accent-green">No action required</span>
+              <span className="text-navy-400">
+                — Van {vehicleMatch.fleetId || vehicleMatch.idStr} has no active repairs
+                {debounced.split(/\s+/).length > 1 ? ` matching "${debounced.split(/\s+/).slice(1).join(' ')}"` : ''}.
+              </span>
+            </div>
+          ) : vehicleMatch && (
+            <div className="space-y-1.5">
+              <div className="text-[10px] uppercase tracking-wider text-navy-500 font-semibold mb-1">
+                Van {vehicleMatch.fleetId || vehicleMatch.idStr}
+                {vehicleMatch.year && ` · ${vehicleMatch.year} ${vehicleMatch.make || ''} ${vehicleMatch.model || ''}`.trim()}
+                {' · '}{results.length} matching repair{results.length === 1 ? '' : 's'}
+              </div>
+              {results.map(({ wo, status }) => (
+                <div key={wo.id} className="flex items-start gap-2 text-xs">
+                  <span className={`inline-block w-2 h-2 rounded-full bg-${status.color} shrink-0 mt-1.5`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`font-semibold text-${status.color}`}>{status.label}</span>
+                      <span className="text-navy-500 font-mono text-[10px]">{primaryRoLabel(wo)}</span>
+                      {wo.workshopName && (
+                        <span className="text-navy-400 text-[10px]">· {wo.workshopName}</span>
+                      )}
+                    </div>
+                    {(wo._matchingDefects || []).length > 0 && (
+                      <div className="text-navy-400 text-[10px] truncate">
+                        {wo._matchingDefects.slice(0, 3).map((d) => (
+                          `${(d.part || '').replace(/_/g, ' ')}${d.type ? ' — ' + d.type.replace(/_/g, ' ') : ''}`
+                        )).join(' · ')}
+                        {wo._matchingDefects.length > 3 && ` +${wo._matchingDefects.length - 3} more`}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function deriveVehicleStatus(wo) {
+  if (wo.status === 'declined')   return { label: 'Declined by vendor', color: 'accent-red' };
+  if (wo.status === 'cancelled')  return { label: 'Cancelled', color: 'text-muted' };
+  if (wo.status === 'completed')  return { label: 'Completed', color: 'accent-green' };
+  if ((wo.pendingCostCount || 0) > 0)
+    return { label: 'Pending cost approval', color: 'accent-gold' };
+  if ((wo.pendingReviewCount || 0) > 0)
+    return { label: 'Pending review', color: 'accent-gold' };
+  if (wo.returnedAt)              return { label: 'Returned to lot', color: 'accent-purple' };
+  if (wo.pickedUpAt)              return { label: 'At vendor', color: 'accent-blue' };
+  if (wo.status === 'in_progress') return { label: 'In repair', color: 'accent-blue' };
+  if (wo.scheduledAt || wo?.primaryRo?.scheduledStartAt)
+    return { label: 'Scheduled', color: 'accent-blue' };
+  if (wo.status === 'accepted')   return { label: 'Accepted by vendor', color: 'text-muted' };
+  if (wo.status === 'pending')    return { label: 'Awaiting vendor accept', color: 'accent-orange' };
+  return { label: 'Pending task', color: 'accent-orange' };
+}
+
+// Local helper — RealDVIC doesn't import lib/wo.js. Inline mirror of
+// primaryRoLabel(). When wo has no primary RO yet, fall back to the
+// WO id so the search result row still shows something useful.
+function primaryRoLabel(wo) {
+  const primary = wo?.primaryRo
+    || (Array.isArray(wo?.ros) ? wo.ros.find((r) => r.isPrimary) : null);
+  return primary?.roNumber || wo?.id || '—';
 }
 
 function ScheduledRepairItem({ item, onChanged }) {
@@ -4276,6 +4487,21 @@ export default function RealDVIC({ user }) {
               chartDaily={chartDaily}
               chartDonut={chartDonut}
               onClose={() => setAnalyticsTab(null)}
+            />
+          )}
+
+          {/* Quick van-status lookup. DSP types "CV1 brakes" → instant
+              status read on that van's matching repairs. Saves the user
+              clicking through KPI tile → modal → row to answer a one-
+              line question. Jorge 2026-06-03. */}
+          {(user?.role === 'dsp_owner' || user?.role === 'site_admin') && (
+            <VehicleStatusSearch
+              dspId={(() => {
+                const raw = user?.organizationId ?? user?.orgId;
+                if (raw == null) return null;
+                const m = String(raw).match(/(\d+)/);
+                return m ? Number(m[1]) : null;
+              })()}
             />
           )}
 
