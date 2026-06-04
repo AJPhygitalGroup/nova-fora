@@ -4606,20 +4606,10 @@ export default function RealDVIC({ user }) {
             />
           )}
 
-          {/* Quick van-status lookup. DSP types "CV1 brakes" → instant
-              status read on that van's matching repairs. Saves the user
-              clicking through KPI tile → modal → row to answer a one-
-              line question. Jorge 2026-06-03. */}
-          {(user?.role === 'dsp_owner' || user?.role === 'site_admin') && (
-            <VehicleStatusSearch
-              dspId={(() => {
-                const raw = user?.organizationId ?? user?.orgId;
-                if (raw == null) return null;
-                const m = String(raw).match(/(\d+)/);
-                return m ? Number(m[1]) : null;
-              })()}
-            />
-          )}
+          {/* Search moved below the KPI grid — Jorge 2026-06-03. The KPIs
+              are the at-a-glance state of the fleet; the search is a
+              targeted "what about this one van" tool. Reading order
+              now matches priority: scan KPIs first, then drill in. */}
 
           {/* Key metrics — 6 tiles since Checkout Vehicles landed
               2026-06-02. The new tile goes between Scheduled Repairs
@@ -4751,6 +4741,21 @@ export default function RealDVIC({ user }) {
               />
             </div>
           </div>
+
+          {/* Quick van-status lookup. DSP types "CV1 brakes" → instant
+              status read on that van's matching repairs + pending
+              defect-review queue. Moved below the KPIs per Jorge
+              2026-06-03 so the at-a-glance numbers come first. */}
+          {(user?.role === 'dsp_owner' || user?.role === 'site_admin') && (
+            <VehicleStatusSearch
+              dspId={(() => {
+                const raw = user?.organizationId ?? user?.orgId;
+                if (raw == null) return null;
+                const m = String(raw).match(/(\d+)/);
+                return m ? Number(m[1]) : null;
+              })()}
+            />
+          )}
 
           {/* Charts (Daily Approved vs Repaired + Open Defects donut)
               removed per Jorge 2026-06-03. Kept the underlying state
