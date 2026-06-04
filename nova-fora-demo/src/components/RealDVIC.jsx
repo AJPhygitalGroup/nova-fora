@@ -4482,21 +4482,20 @@ export default function RealDVIC({ user }) {
               cleaner — pure count + label. Same handler
               (setCreateWOContext) → same CreateWorkOrderModal. */}
           {/* Jorge 2026-06-03: Report Vehicle Issue chip + 3 analytics
-              tab buttons all in one flex row, siblings (no grid
-              wrapper). The banner hugs content; tabs sit right next
-              to it. Wraps to a new line on narrow screens. Each tab
-              click toggles a chart panel below with the matching
-              rolling 7-day view. */}
-          <div className="flex flex-wrap items-stretch gap-2">
+              tab buttons in a 4-column grid that spans the same width
+              as the search bar + KPI grid below. Stacks 1→2→4 cols
+              responsively. Each tab click toggles a chart panel below
+              with the matching rolling 7-day view. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 items-stretch">
             {(user?.role === 'dsp_owner' || user?.role === 'site_admin') && (
               <button
                 onClick={() => setCreateWOContext({ van: null, defect: null })}
-                className="inline-flex items-center gap-3 px-5 py-4 rounded-xl bg-navy-900/60 backdrop-blur border border-navy-700/40 hover:border-accent-blue/50 hover:bg-navy-800/60 transition-all cursor-pointer text-left"
+                className="flex items-center gap-3 px-5 py-4 rounded-xl bg-navy-900/60 backdrop-blur border border-navy-700/40 hover:border-accent-blue/50 hover:bg-navy-800/60 transition-all cursor-pointer text-left h-full"
               >
                 <div className="w-10 h-10 rounded-lg bg-accent-blue/15 border border-accent-blue/40 flex items-center justify-center shrink-0">
                   <Wrench size={18} className="text-accent-blue" />
                 </div>
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <div className="text-sm font-semibold text-white">{t('realDvic.reportIssueBanner.title', 'Report Vehicle Issue')}</div>
                   <div className="text-xs text-navy-400">{t('realDvic.reportIssueBanner.subtitle', 'Create a pre-approved repair order for a van in your fleet')}</div>
                 </div>
