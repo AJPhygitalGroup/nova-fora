@@ -4103,27 +4103,24 @@ export default function RealDVIC({ user }) {
               create-WO entry point unmissable. Tile underneath becomes
               cleaner — pure count + label. Same handler
               (setCreateWOContext) → same CreateWorkOrderModal. */}
-          {/* Jorge 2026-06-03: shrunk to ~1/4 height. Title + subtitle
-              collapse onto a single inline row; icon + arrow drop to
-              size 12. Same affordance, much less visual real estate so
-              the KPI tiles below get the focus. */}
+          {/* Jorge 2026-06-03: kept the original vertical density
+              (full icon + stacked title + subtitle) but stopped
+              stretching to full width. Now hugs the content + sits
+              left-aligned, so it reads as an action chip rather than
+              a header bar. */}
           {(user?.role === 'dsp_owner' || user?.role === 'site_admin') && (
             <button
               onClick={() => setCreateWOContext({ van: null, defect: null })}
-              className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg bg-navy-900/60 backdrop-blur border border-navy-700/40 hover:border-accent-blue/50 hover:bg-navy-800/60 transition-all cursor-pointer text-left"
+              className="inline-flex items-center gap-3 px-5 py-4 rounded-xl bg-navy-900/60 backdrop-blur border border-navy-700/40 hover:border-accent-blue/50 hover:bg-navy-800/60 transition-all cursor-pointer text-left max-w-full"
             >
-              <div className="w-6 h-6 rounded-md bg-accent-blue/15 border border-accent-blue/40 flex items-center justify-center shrink-0">
-                <Wrench size={12} className="text-accent-blue" />
+              <div className="w-10 h-10 rounded-lg bg-accent-blue/15 border border-accent-blue/40 flex items-center justify-center shrink-0">
+                <Wrench size={18} className="text-accent-blue" />
               </div>
-              <div className="flex-1 min-w-0 flex items-baseline gap-2">
-                <span className="text-xs font-semibold text-white shrink-0">
-                  {t('realDvic.reportIssueBanner.title', 'Report Vehicle Issue')}
-                </span>
-                <span className="text-[10px] text-navy-400 truncate hidden sm:inline">
-                  {t('realDvic.reportIssueBanner.subtitle', 'Create a pre-approved repair order for a van in your fleet')}
-                </span>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-white">{t('realDvic.reportIssueBanner.title', 'Report Vehicle Issue')}</div>
+                <div className="text-xs text-navy-400">{t('realDvic.reportIssueBanner.subtitle', 'Create a pre-approved repair order for a van in your fleet')}</div>
               </div>
-              <ArrowRight size={12} className="text-navy-400 shrink-0" />
+              <ArrowRight size={18} className="text-navy-400 shrink-0" />
             </button>
           )}
 
