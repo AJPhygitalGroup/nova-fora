@@ -161,6 +161,15 @@ class WorkOrderResponse(BaseModel):
     # caption?, uploaded_at }. Filtered to stage='vehicle_arrival' from
     # the work_order_photos table.
     vehicle_arrival_photos: list[dict] | None = None
+    # Return leg — mirror of picked_up_*. Set by POST /checkin. The DSP
+    # sees the van move from "At vendor" → "Returned" the moment this
+    # fires, even if completion paperwork lags.
+    returned_at: datetime | None = None
+    returned_by_id: int | None = None
+    returned_by_name: str | None = None
+    # Return photos taken by the tech at drop-off — proves what shape
+    # the van was in when returned. stage='vehicle_return'.
+    vehicle_return_photos: list[dict] | None = None
     created_by_id: int | None = None
 
     # Denormalized display fields — populated server-side via JOINs so
@@ -221,6 +230,8 @@ class WorkOrderResponse(BaseModel):
         assigned_technician_name: str | None = None,
         picked_up_by_name: str | None = None,
         vehicle_arrival_photos: list[dict] | None = None,
+        returned_by_name: str | None = None,
+        vehicle_return_photos: list[dict] | None = None,
         inspection_mileage_floor: int | None = None,
         primary_ro: dict | None = None,
         pending_cost_count: int = 0,
@@ -257,6 +268,10 @@ class WorkOrderResponse(BaseModel):
             picked_up_by_id=wo.picked_up_by_id,
             picked_up_by_name=picked_up_by_name,
             vehicle_arrival_photos=vehicle_arrival_photos,
+            returned_at=wo.returned_at,
+            returned_by_id=wo.returned_by_id,
+            returned_by_name=returned_by_name,
+            vehicle_return_photos=vehicle_return_photos,
             created_by_id=wo.created_by_id,
             dsp_name=dsp_name,
             vehicle_fleet_id=vehicle_fleet_id,
@@ -751,6 +766,38 @@ async def _resolve_display_fields(
                 }
                 for p in photo_rows
             ]
+    # 2026-06-03 — return leg. Same shape as the pickup resolve above:
+    # picker user + photo rows filtered to stage='vehicle_return'.
+    if wo.returned_by_id is not None:
+        returner = (
+            await session.execute(
+                select(User).where(User.id == wo.returned_by_id)
+            )
+        ).scalar_one_or_none()
+        if returner is not None:
+            out["returned_by_name"] = returner.full_name
+    if wo.returned_at is not None:
+        from app.models.work_orders import WorkOrderPhoto, WorkOrderPhotoStage
+        from app.storage.s3 import generate_download_url
+
+        return_photo_rows = (
+            await session.execute(
+                select(WorkOrderPhoto)
+                .where(WorkOrderPhoto.work_order_id == wo.id)
+                .where(WorkOrderPhoto.stage == WorkOrderPhotoStage.VEHICLE_RETURN.value)
+                .order_by(WorkOrderPhoto.created_at.asc())
+            )
+        ).scalars().all()
+        if return_photo_rows:
+            out["vehicle_return_photos"] = [
+                {
+                    "id": p.id_str if hasattr(p, "id_str") else p.id,
+                    "url": generate_download_url(p.storage_path),
+                    "caption": p.caption,
+                    "uploaded_at": p.created_at.isoformat() if p.created_at else None,
+                }
+                for p in return_photo_rows
+            ]
     out["inspection_mileage_floor"] = await _max_inspection_mileage_for_wo(
         session, wo
     )
@@ -958,6 +1005,14 @@ async def list_work_orders(
                     "'Checkout Vehicles' tile so vans show up the moment the tech "
                     "physically picks them up, not just when work starts.",
     ),
+    returned_within_hours: int | None = Query(
+        default=None, ge=1, le=720,
+        description="If set, only WOs whose returned_at is within the last N "
+                    "hours (the tech ran /checkin recently). Drives the 'Returned' "
+                    "section of the DSP Checkout Vehicles modal so the customer "
+                    "sees what came back recently with photos, before the "
+                    "completion paperwork closes the WO.",
+    ),
     limit: int = Query(default=100, ge=1, le=500),
     current: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
@@ -1038,20 +1093,30 @@ async def list_work_orders(
         #      wrenching — they took the van at some earlier moment).
         #   2. Post-checkout: status = 'accepted' but picked_up_at is set
         #      (tech took the van for handoff, hasn't started wrenching).
+        # 2026-06-03 — once the tech runs /checkin, returned_at is set
+        # and the van is no longer with the vendor; we explicitly exclude
+        # those so they drop out of the DSP "at shops" view immediately.
         # Excludes terminal states so completed/cancelled/declined work
-        # doesn't linger in the DSP's "currently at shops" view.
+        # doesn't linger either.
         from sqlalchemy import or_, and_
         in_progress = WorkOrder.status == WorkOrderStatus.IN_PROGRESS.value
         accepted_picked_up = and_(
             WorkOrder.status == WorkOrderStatus.ACCEPTED.value,
             WorkOrder.picked_up_at.is_not(None),
         )
+        custody_predicate = or_(in_progress, accepted_picked_up)
         if at_shop_custody:
-            stmt = stmt.where(or_(in_progress, accepted_picked_up))
+            stmt = stmt.where(custody_predicate).where(WorkOrder.returned_at.is_(None))
         else:
-            # NOT at custody — exclude both arms above. Rarely used but
-            # symmetric for completeness.
-            stmt = stmt.where(~or_(in_progress, accepted_picked_up))
+            # NOT at custody — anything that's been returned, or that
+            # was never in one of the custody states.
+            stmt = stmt.where(or_(~custody_predicate, WorkOrder.returned_at.is_not(None)))
+    if returned_within_hours is not None:
+        from datetime import timedelta
+        floor = utc_now() - timedelta(hours=returned_within_hours)
+        stmt = stmt.where(WorkOrder.returned_at.is_not(None)).where(
+            WorkOrder.returned_at >= floor
+        )
 
     # Scheduled-list callers want chronological order (earliest first); the
     # default WO list view stays newest-first.
@@ -2996,6 +3061,161 @@ async def checkout_wo(
     for sibling_wo in (p[1] for p in pairs):
         try:
             await _publish_wo_changed(sibling_wo, "checked_out")
+        except Exception:  # noqa: BLE001
+            pass
+
+    return await _build_wo_response(session, wo)
+
+
+# ─────────────────────────────────────────────────────
+# POST /work-orders/{id}/checkin — tech records return at DSP lot
+# ─────────────────────────────────────────────────────
+class _CheckinPhoto(BaseModel):
+    """Single return photo committed after a successful presigned PUT."""
+
+    storage_key: str = Field(..., min_length=1, max_length=500)
+    content_type: str = Field(..., min_length=1, max_length=80)
+    size_bytes: int | None = Field(default=None, ge=1)
+    caption: str | None = Field(default=None, max_length=200)
+
+
+class CheckinBody(BaseModel):
+    """Tech body for the return leg: notes + photos already uploaded
+    to MinIO via /uploads/presigned then committed here. Same shape as
+    CheckoutBody — kept distinct so future schema drift between the
+    two legs (different validation rules, required photo counts) can
+    happen without coupling."""
+
+    photos: list[_CheckinPhoto] = Field(default_factory=list, max_length=10)
+    notes: str | None = Field(default=None, max_length=500)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.post(
+    "/{wo_id}/checkin",
+    response_model=WorkOrderResponse,
+    summary="Vendor/tech records vehicle return at the DSP lot — vehicle-scoped fan-out",
+    responses={
+        409: {"description": "WO must be picked up; cannot check in twice."},
+    },
+)
+async def checkin_wo(
+    body: CheckinBody,
+    request: Request,
+    wo_id: str = Path(..., examples=["WO-00001"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> WorkOrderResponse:
+    """Tech (or SW) records "I dropped the vehicle back at the DSP" —
+    return-leg counterpart to /checkout.
+
+    Vehicle-scoped fan-out: writes returned_at=now() + returned_by_id
+    to every sibling WO on the vehicle that was previously picked up
+    AND not yet returned. One return trip = one event for every job on
+    the van (matches the checkout fan-out shape).
+
+    Photos: stored only on the TARGET WO via WorkOrderPhoto with
+    stage='vehicle_return'. Customer-side DSP modal joins vehicle-wide
+    so a single capture surfaces under every sibling row.
+
+    Status NOT changed. The WO stays in whatever lifecycle state it
+    was in (typically 'in_progress' or 'accepted'). Completion + final
+    paperwork still flows through POST /complete. Decoupling lets the
+    DSP see "van is back at my lot" instantly without waiting for the
+    vendor's invoice settlement.
+
+    Auth: site_admin / vendor_admin / service_writer / technician of
+    the workshop that owns the WO. Cross-tenant returns 403 via
+    `_ensure_can_act`.
+    """
+    lang = get_request_language(request)
+
+    wo = await _load_wo_or_404(session, _parse_wo_id(wo_id), lang)
+    await _ensure_can_act(
+        session,
+        wo=wo,
+        user=current,
+        allowed_roles=(
+            UserRole.SITE_ADMIN, UserRole.VENDOR_ADMIN,
+            UserRole.SERVICE_WRITER, UserRole.TECHNICIAN,
+        ),
+        lang=lang,
+    )
+    if wo.picked_up_at is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "WO has not been picked up yet — there is nothing to check back in",
+        )
+    if wo.returned_at is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"WO already returned at {wo.returned_at.isoformat()}",
+        )
+
+    # Sibling discovery: anything on the same vehicle that's been picked
+    # up but not yet returned. Status filter is intentionally permissive
+    # here — a sibling might already be in_progress or accepted, both are
+    # valid return targets.
+    sibling_rows = (
+        await session.execute(
+            select(WorkOrder)
+            .where(WorkOrder.vehicle_id == wo.vehicle_id)
+            .where(WorkOrder.picked_up_at.is_not(None))
+            .where(WorkOrder.returned_at.is_(None))
+        )
+    ).scalars().all()
+    siblings = list(sibling_rows)
+    if not siblings:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "no sibling WO on this vehicle is eligible for check-in "
+            "(none picked up, or all already returned)",
+        )
+
+    now = utc_now()
+    updated_wo_ids: list[int] = []
+    for sibling_wo in siblings:
+        sibling_wo.returned_at = now
+        sibling_wo.returned_by_id = current.id
+        session.add(sibling_wo)
+        updated_wo_ids.append(sibling_wo.id)
+        await log_event(
+            session,
+            entity_type=WoActivityLogEntityType.WORK_ORDER,
+            entity_id=sibling_wo.id,
+            action="checked_in",
+            actor_id=current.id,
+            details={
+                "vehicle_id": wo.vehicle_id,
+                "triggering_work_order_id": wo.id,
+                "sibling_count": len(siblings) - 1,
+                "photo_count": len(body.photos),
+            },
+        )
+
+    # Photos — only on the TARGET WO; siblings stay un-photographed.
+    if body.photos:
+        from app.models.work_orders import WorkOrderPhoto, WorkOrderPhotoStage
+        for p in body.photos:
+            row = WorkOrderPhoto(
+                work_order_id=wo.id,
+                stage=WorkOrderPhotoStage.VEHICLE_RETURN,
+                storage_path=p.storage_key,
+                caption=(
+                    (body.notes or "").strip() if (body.notes and not p.caption)
+                    else p.caption
+                ),
+                created_by_id=current.id,
+            )
+            session.add(row)
+
+    await session.commit()
+    await session.refresh(wo)
+
+    for sibling_wo in siblings:
+        try:
+            await _publish_wo_changed(sibling_wo, "checked_in")
         except Exception:  # noqa: BLE001
             pass
 

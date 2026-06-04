@@ -59,23 +59,35 @@ function fleetLabel(wo) {
 // Component
 // ─────────────────────────────────────────────────────
 export default function VendorCheckoutModal({ workshopId, onClose, onChanged }) {
-  const [rows, setRows] = useState([]);
+  const [acceptedRows, setAcceptedRows] = useState([]);
+  const [inProgressRows, setInProgressRows] = useState([]);
+  const [returnedRows, setReturnedRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
-  const [openCheckout, setOpenCheckout] = useState(null); // wo currently being checked out
+  // Active capture modal — { wo, mode: 'checkout'|'checkin' } or null.
+  const [openCapture, setOpenCapture] = useState(null);
 
   const load = useCallback(() => {
     if (!workshopId) return;
     setLoading(true);
     setErr(null);
-    // Pull all accepted WOs for the workshop. We need both scheduled +
-    // unscheduled so the modal can show both groups (the
-    // has_confirmed_pickup filter would only show one half).
-    woApi
-      .list({ status: 'accepted', vendorWorkshopId: workshopId, limit: 200 })
-      .then((res) => {
-        const items = Array.isArray(res) ? res : (res?.items || []);
-        setRows(items);
+    // Three list calls — the API doesn't have a single "all custody-
+    // adjacent WOs" filter, and each role/status combination has its
+    // own backend predicate. Run in parallel so the modal opens fast.
+    //
+    //   accepted     → not yet picked up + unscheduled/scheduled buckets
+    //   in_progress  → at the shop (catches both legacy in_progress and
+    //                  accepted+pickedUp via at_shop_custody=true)
+    //   returned     → checked back in within last 24h
+    Promise.all([
+      woApi.list({ status: 'accepted', vendorWorkshopId: workshopId, limit: 200 }),
+      woApi.list({ atShopCustody: true, vendorWorkshopId: workshopId, limit: 200 }),
+      woApi.list({ returnedWithinHours: 24, vendorWorkshopId: workshopId, limit: 200 }),
+    ])
+      .then(([accRes, progRes, retRes]) => {
+        setAcceptedRows(Array.isArray(accRes) ? accRes : (accRes?.items || []));
+        setInProgressRows(Array.isArray(progRes) ? progRes : (progRes?.items || []));
+        setReturnedRows(Array.isArray(retRes) ? retRes : (retRes?.items || []));
       })
       .catch((e) => setErr(e.detail || e.message || 'Failed to load'))
       .finally(() => setLoading(false));
@@ -83,33 +95,52 @@ export default function VendorCheckoutModal({ workshopId, onClose, onChanged }) 
 
   useEffect(() => { load(); }, [load]);
 
-  // Dedupe by vehicle_id — checkout fan-outs across siblings anyway.
-  // Pick the WO with the most ROs/defects so the row label is most useful.
-  const { scheduled, unscheduled, completed } = useMemo(() => {
+  // Dedupe each section by vehicle — fan-outs across siblings mean the
+  // same van shows up N times. Pick the WO most useful to render
+  // (photos > most defects). See CheckoutVehiclesModal for the same
+  // pattern on the DSP side.
+  const dedupe = (list) => {
     const byVehicle = new Map();
-    for (const wo of rows) {
+    for (const wo of (list || [])) {
       const key = wo.vehicleId || wo.vehicleIdStr || wo.id;
       const cur = byVehicle.get(key);
       if (!cur) { byVehicle.set(key, wo); continue; }
-      // Keep the WO with the bigger defect count (better summary). If
-      // tied, keep the older one (consistent ordering).
-      const score = (w) => (w.defectCount ?? w.defects?.length ?? 0);
+      const score = (w) => (
+        ((Array.isArray(w?.vehicleArrivalPhotos) && w.vehicleArrivalPhotos.length) ? 1000 : 0)
+        + (w?.defectCount ?? w?.defects?.length ?? 0)
+      );
       if (score(wo) > score(cur)) byVehicle.set(key, wo);
     }
-    const all = Array.from(byVehicle.values());
-    const sortKey = (w) => new Date(
-      w?.primaryRo?.scheduledStartAt || w?.scheduledStartAt || w?.updatedAt || 0,
-    ).getTime();
-    return {
-      completed: all.filter((w) => w.pickedUpAt).sort((a, b) => sortKey(b) - sortKey(a)),
-      scheduled: all.filter((w) => !w.pickedUpAt && (w?.primaryRo?.scheduledStartAt))
-        .sort((a, b) => sortKey(a) - sortKey(b)),
-      unscheduled: all.filter((w) => !w.pickedUpAt && !(w?.primaryRo?.scheduledStartAt))
-        .sort((a, b) => sortKey(b) - sortKey(a)),
-    };
-  }, [rows]);
+    return Array.from(byVehicle.values());
+  };
 
-  const totalActionable = scheduled.length + unscheduled.length;
+  const { scheduled, unscheduled, atShop, returned } = useMemo(() => {
+    // accepted WOs split by whether DSP confirmed schedule. Exclude
+    // any already picked up (those slid into the in_progress bucket).
+    const acceptedDeduped = dedupe(acceptedRows.filter((w) => !w.pickedUpAt));
+    const sortAsc = (a, b) => (
+      new Date(a?.primaryRo?.scheduledStartAt || a?.scheduledStartAt || 0).getTime()
+      - new Date(b?.primaryRo?.scheduledStartAt || b?.scheduledStartAt || 0).getTime()
+    );
+    const sortDesc = (a, b) => (
+      new Date(b?.pickedUpAt || b?.updatedAt || 0).getTime()
+      - new Date(a?.pickedUpAt || a?.updatedAt || 0).getTime()
+    );
+    // atShop = picked up + not returned. The at_shop_custody filter
+    // already excludes returned ones, but belt-and-suspenders here.
+    const atShopDeduped = dedupe(inProgressRows.filter((w) => w.pickedUpAt && !w.returnedAt));
+    const returnedDeduped = dedupe(returnedRows);
+    return {
+      scheduled: acceptedDeduped.filter((w) => w?.primaryRo?.scheduledStartAt).sort(sortAsc),
+      unscheduled: acceptedDeduped.filter((w) => !w?.primaryRo?.scheduledStartAt).sort(sortDesc),
+      atShop: atShopDeduped.sort(sortDesc),
+      returned: returnedDeduped.sort((a, b) => (
+        new Date(b?.returnedAt || 0).getTime() - new Date(a?.returnedAt || 0).getTime()
+      )),
+    };
+  }, [acceptedRows, inProgressRows, returnedRows]);
+
+  const totalActionable = scheduled.length + unscheduled.length + atShop.length;
 
   return (
     <motion.div
@@ -159,7 +190,7 @@ export default function VendorCheckoutModal({ workshopId, onClose, onChanged }) 
             </div>
           )}
 
-          {loading && rows.length === 0 ? (
+          {loading && acceptedRows.length === 0 && inProgressRows.length === 0 ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 size={20} className="text-accent-blue animate-spin" />
             </div>
@@ -170,26 +201,40 @@ export default function VendorCheckoutModal({ workshopId, onClose, onChanged }) 
                 accent="accent-green"
                 items={scheduled}
                 ctaLabel="Check out"
-                ctaStyle="solid"
+                ctaStyle="solid-green"
+                ctaMode="checkout"
                 emptyHint="No DSP-confirmed pickups waiting."
-                onCta={(wo) => setOpenCheckout(wo)}
+                onCta={(wo) => setOpenCapture({ wo, mode: 'checkout' })}
               />
               <Section
                 title="No schedule yet · ad-hoc / drop-in"
                 accent="accent-blue"
                 items={unscheduled}
                 ctaLabel="Check out anyway"
-                ctaStyle="outline"
+                ctaStyle="outline-blue"
+                ctaMode="checkout"
                 emptyHint="No accepted WOs without a schedule."
-                onCta={(wo) => setOpenCheckout(wo)}
+                onCta={(wo) => setOpenCapture({ wo, mode: 'checkout' })}
               />
               <Section
-                title="Already picked up · custody log"
-                accent="text-muted"
-                items={completed}
-                ctaLabel={null}
+                title="At your shop · ready to return"
+                accent="accent-orange"
+                items={atShop}
+                ctaLabel="Check in"
+                ctaStyle="solid-purple"
+                ctaMode="checkin"
                 emptyHint="No vans currently in your custody."
                 showPhotos
+                onCta={(wo) => setOpenCapture({ wo, mode: 'checkin' })}
+              />
+              <Section
+                title="Returned today · drop-off log"
+                accent="text-muted"
+                items={returned}
+                ctaLabel={null}
+                emptyHint="No vans returned today."
+                showPhotos
+                showReturnPhotos
               />
             </>
           )}
@@ -207,13 +252,16 @@ export default function VendorCheckoutModal({ workshopId, onClose, onChanged }) 
       </motion.div>
 
       {/* Capture modal — opens on top of this one. On success: reload
-          the list so the row jumps to "Already picked up". */}
-      {openCheckout && (
+          the list so the row jumps section. Mode-aware:
+            checkout → tech took the van (writes picked_up_at)
+            checkin  → tech returned the van (writes returned_at) */}
+      {openCapture && (
         <CheckoutModal
-          wo={openCheckout}
-          onClose={() => setOpenCheckout(null)}
+          wo={openCapture.wo}
+          mode={openCapture.mode}
+          onClose={() => setOpenCapture(null)}
           onSuccess={() => {
-            setOpenCheckout(null);
+            setOpenCapture(null);
             load();
             onChanged?.();
           }}
@@ -227,12 +275,15 @@ export default function VendorCheckoutModal({ workshopId, onClose, onChanged }) 
 // Section — one bucket of rows with a header + per-row CTA.
 // ─────────────────────────────────────────────────────
 function Section({
-  title, accent, items, ctaLabel, ctaStyle = 'solid', emptyHint,
-  onCta, showPhotos = false,
+  title, accent, items, ctaLabel, ctaStyle = 'solid-green', emptyHint,
+  ctaMode = 'checkout', onCta, showPhotos = false, showReturnPhotos = false,
 }) {
-  const ctaClasses = ctaStyle === 'solid'
-    ? 'bg-accent-green text-white hover:bg-accent-green/90'
-    : 'border border-accent-blue/50 text-accent-blue hover:bg-accent-blue/10';
+  const CTA_STYLES = {
+    'solid-green':   'bg-accent-green text-white hover:bg-accent-green/90',
+    'outline-blue':  'border border-accent-blue/50 text-accent-blue hover:bg-accent-blue/10',
+    'solid-purple':  'bg-accent-purple text-white hover:bg-accent-purple/90',
+  };
+  const ctaClasses = CTA_STYLES[ctaStyle] || CTA_STYLES['solid-green'];
   return (
     <section>
       <div className="flex items-center gap-2 mb-2">
@@ -288,7 +339,18 @@ function Section({
                 </div>
                 <div className="flex items-center gap-1.5 sm:col-span-2 min-w-0">
                   <Clock size={11} className="text-text-muted/70 shrink-0" />
-                  {wo.pickedUpAt ? (
+                  {wo.returnedAt ? (
+                    <>
+                      <span className="text-text-muted/70">Returned:</span>
+                      <span className="text-text-strong">{relativeTime(wo.returnedAt)}</span>
+                      <span className="text-text-muted/70 ml-1">
+                        ({new Date(wo.returnedAt).toLocaleString(undefined, {
+                          month: 'short', day: 'numeric',
+                          hour: '2-digit', minute: '2-digit',
+                        })})
+                      </span>
+                    </>
+                  ) : wo.pickedUpAt ? (
                     <>
                       <span className="text-text-muted/70">Picked up:</span>
                       <span className="text-text-strong">{relativeTime(wo.pickedUpAt)}</span>
@@ -315,9 +377,7 @@ function Section({
                 </div>
               </div>
 
-              {/* Photo grid only on the "completed" rows — mirrors the
-                  DSP customer-side view so the SW can confirm what the
-                  customer is seeing. */}
+              {/* Pickup photos — visible on "at shop" + "returned" rows */}
               {showPhotos && Array.isArray(wo.vehicleArrivalPhotos) && wo.vehicleArrivalPhotos.length > 0 && (
                 <div className="mt-2 pt-2 border-t border-navy-700/40">
                   <div className="flex items-center gap-1.5 mb-1.5">
@@ -348,12 +408,50 @@ function Section({
                 </div>
               )}
 
-              {/* "Picked up" badge on read-only rows so the eye lands
-                  on the completion state without re-reading the row. */}
-              {showPhotos && (
-                <div className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-accent-green/15 border border-accent-green/40 text-accent-green text-[10px] font-semibold">
-                  <Check size={10} /> Picked up
+              {/* Return photos — only on rows that have been checked
+                  back in. Different accent (purple) so the eye separates
+                  the two galleries when both render under the same row. */}
+              {showReturnPhotos && Array.isArray(wo.vehicleReturnPhotos) && wo.vehicleReturnPhotos.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-navy-700/40">
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <Camera size={11} className="text-accent-purple" />
+                    <span className="text-[10px] uppercase tracking-wide font-semibold text-text-muted">
+                      Return photos · {wo.vehicleReturnPhotos.length}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
+                    {wo.vehicleReturnPhotos.map((ph) => (
+                      <a
+                        key={ph.id}
+                        href={ph.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="aspect-square rounded-md overflow-hidden border border-navy-700 hover:border-accent-purple/60 transition-colors"
+                        title={ph.caption || 'Return photo'}
+                      >
+                        <img
+                          src={ph.url}
+                          alt={ph.caption || 'Return'}
+                          className="w-full h-full object-cover"
+                          loading="lazy"
+                        />
+                      </a>
+                    ))}
+                  </div>
                 </div>
+              )}
+
+              {/* Status badge — color depends on current custody state */}
+              {(showPhotos || showReturnPhotos) && (
+                wo.returnedAt ? (
+                  <div className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-accent-purple/15 border border-accent-purple/40 text-accent-purple text-[10px] font-semibold">
+                    <Check size={10} /> Returned · {wo.returnedByName || 'Tech'}
+                  </div>
+                ) : wo.pickedUpAt ? (
+                  <div className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-accent-orange/15 border border-accent-orange/40 text-accent-orange text-[10px] font-semibold">
+                    <Check size={10} /> At your shop · {wo.pickedUpByName || 'Tech'}
+                  </div>
+                ) : null
               )}
             </li>
           ))}

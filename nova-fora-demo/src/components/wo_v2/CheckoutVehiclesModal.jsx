@@ -54,36 +54,25 @@ function relativeTime(iso) {
 // ─────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────
-export default function CheckoutVehiclesModal({ open, items, loading, onClose }) {
-  const sorted = useMemo(() => {
-    // Jorge 2026-06-03: dedupe by vehicle. The /checkout endpoint
-    // fan-outs picked_up_at to every accepted sibling WO on the
-    // vehicle, so a van with 3 WOs would otherwise render 3 times.
-    // From the customer's perspective the unit is "the van" — they
-    // want one row that summarises "Dulles Midas has my Van 12 since
-    // 6m ago", not three rows of the same van.
-    //
-    // Pick a canonical WO per vehicle: prefer one with photos (so
-    // the gallery renders for at least one of them), then highest
-    // defectCount (richer row), then oldest pickup (sticks around).
-    const byVehicle = new Map();
-    for (const wo of (items || [])) {
-      const key = wo?.vehicleId || wo?.vehicleIdStr || wo?.id;
-      const cur = byVehicle.get(key);
-      if (!cur) { byVehicle.set(key, wo); continue; }
-      const score = (w) => (
-        ((Array.isArray(w?.vehicleArrivalPhotos) && w.vehicleArrivalPhotos.length) ? 1000 : 0)
-        + (w?.defectCount ?? w?.defects?.length ?? 0)
-      );
-      if (score(wo) > score(cur)) byVehicle.set(key, wo);
-    }
-    // Most-recently picked up first.
-    return Array.from(byVehicle.values()).sort((a, b) => {
-      const ta = new Date(a?.pickedUpAt || a?.primaryRo?.scheduledStartAt || a?.scheduledStartAt || a?.updatedAt || 0).getTime();
-      const tb = new Date(b?.pickedUpAt || b?.primaryRo?.scheduledStartAt || b?.scheduledStartAt || b?.updatedAt || 0).getTime();
+export default function CheckoutVehiclesModal({ open, items, returnedItems = [], loading, onClose }) {
+  // RealDVIC already dedupes by vehicle before passing in. Just sort:
+  // most-recent first for each group.
+  const sortedAtShop = useMemo(() => {
+    return [...(items || [])].sort((a, b) => {
+      const ta = new Date(a?.pickedUpAt || a?.primaryRo?.scheduledStartAt || 0).getTime();
+      const tb = new Date(b?.pickedUpAt || b?.primaryRo?.scheduledStartAt || 0).getTime();
       return tb - ta;
     });
   }, [items]);
+  const sortedReturned = useMemo(() => {
+    return [...(returnedItems || [])].sort((a, b) => {
+      const ta = new Date(a?.returnedAt || 0).getTime();
+      const tb = new Date(b?.returnedAt || 0).getTime();
+      return tb - ta;
+    });
+  }, [returnedItems]);
+
+  const totalCount = sortedAtShop.length + sortedReturned.length;
 
   if (!open) return null;
 
@@ -108,9 +97,9 @@ export default function CheckoutVehiclesModal({ open, items, loading, onClose })
               <Truck size={16} className="text-accent-blue" />
             </div>
             <div>
-              <h3 className="text-base font-semibold text-white">Vans currently at shops</h3>
+              <h3 className="text-base font-semibold text-white">Vehicle custody log</h3>
               <p className="text-xs text-navy-400">
-                Every vehicle from your fleet that a vendor has picked up for repair, with the assigned tech + pickup time.
+                Every van in motion right now — currently at a vendor shop, or returned within the last 24h with handoff photos from each leg.
               </p>
             </div>
           </div>
@@ -123,110 +112,69 @@ export default function CheckoutVehiclesModal({ open, items, loading, onClose })
           </button>
         </div>
 
-        {/* Phase B note (2026-06-02): photos now flow from the
-            vendor/tech checkout workflow. The placeholder banner shipped
-            in Phase A is gone — rows that have photos render the grid
-            inline; rows without (older WOs that pre-date the checkout
-            feature) just don't show the section. */}
-
-        {/* List */}
-        <div className="px-5 py-4 max-h-[60vh] overflow-y-auto space-y-2">
-          {loading && sorted.length === 0 ? (
+        {/* Sectioned body — "Checked out" (vendor has the van) and
+            "Checked in" (returned within 24h). Both render the same row
+            shape via DspCheckoutRow so the customer scans by van first,
+            state second. */}
+        <div className="px-5 py-4 max-h-[60vh] overflow-y-auto space-y-4">
+          {loading && totalCount === 0 ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 size={20} className="text-accent-blue animate-spin" />
             </div>
-          ) : sorted.length === 0 ? (
+          ) : totalCount === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <AlertCircle size={20} className="text-navy-500 mb-2" />
-              <p className="text-sm text-navy-300">No vans currently at shops.</p>
+              <p className="text-sm text-navy-300">No vans in vendor custody right now.</p>
               <p className="text-[11px] text-navy-500 mt-1">
                 When a vendor's tech picks up one of your vehicles for repair, it will appear here.
               </p>
             </div>
           ) : (
-            sorted.map((wo) => {
-              const ro = wo?.primaryRo || (Array.isArray(wo?.ros) ? wo.ros.find((r) => r.isPrimary) : null);
-              const pickedUpAt = ro?.scheduledStartAt || wo?.scheduledStartAt || wo?.inProgressAt;
-              const status = deriveCustomerStatus(wo);
-              return (
-                <div
-                  key={wo.id}
-                  className="rounded-lg border border-navy-700 bg-navy-800/40 p-3"
-                >
-                  <div className="flex items-start justify-between gap-3 mb-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Truck size={14} className="text-accent-blue shrink-0" />
-                      <span className="font-semibold text-white truncate">
-                        Van {wo.vehicleFleetId || wo.vehicleIdStr || wo.vehicleId || '—'}
-                      </span>
-                      <span className="text-[10px] text-navy-500 font-mono shrink-0">
-                        {primaryRoLabel(wo)}
-                      </span>
-                    </div>
-                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-${status.color}/15 text-${status.color} border border-${status.color}/40 shrink-0`}>
-                      {status.label}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1.5 text-[11px] text-navy-300">
-                    <div className="flex items-center gap-1.5">
-                      <MapPin size={11} className="text-navy-500 shrink-0" />
-                      <span className="text-navy-500">Shop:</span>
-                      <span className="text-white truncate">{wo.workshopName || '—'}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <Wrench size={11} className="text-navy-500 shrink-0" />
-                      <span className="text-navy-500">Tech:</span>
-                      <span className="text-white truncate">
-                        {wo.pickedUpByName || wo.assignedTechnicianName || '—'}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1.5 sm:col-span-2">
-                      <Clock size={11} className="text-navy-500 shrink-0" />
-                      <span className="text-navy-500">Picked up:</span>
-                      <span className="text-white">{relativeTime(wo.pickedUpAt || pickedUpAt)}</span>
-                      {(wo.pickedUpAt || pickedUpAt) && (
-                        <span className="text-navy-500 ml-1">
-                          ({new Date(wo.pickedUpAt || pickedUpAt).toLocaleString(undefined, {
-                            month: 'short', day: 'numeric',
-                            hour: '2-digit', minute: '2-digit',
-                          })})
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Vehicle arrival photos — present only if the
-                      vendor/tech captured them at checkout (Phase B,
-                      commit 2026-06-02). Clicking a thumb opens the
-                      full-size in a new tab. */}
-                  {Array.isArray(wo.vehicleArrivalPhotos) && wo.vehicleArrivalPhotos.length > 0 && (
-                    <div className="mt-2 pt-2 border-t border-navy-700/40">
-                      <div className="flex items-center gap-1.5 mb-1.5">
-                        <Camera size={11} className="text-accent-blue" />
-                        <span className="text-[10px] uppercase tracking-wide font-semibold text-navy-400">
-                          Pickup photos · {wo.vehicleArrivalPhotos.length}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
-                        {wo.vehicleArrivalPhotos.map((ph) => (
-                          <a
-                            key={ph.id}
-                            href={ph.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="aspect-square rounded-md overflow-hidden border border-navy-700 hover:border-accent-blue/60 transition-colors"
-                            title={ph.caption || 'Pickup photo'}
-                          >
-                            <img src={ph.url} alt={ph.caption || 'Pickup'} className="w-full h-full object-cover" loading="lazy" />
-                          </a>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+            <>
+              {/* AT VENDOR — checked out, still at shop */}
+              <section>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="w-2 h-2 rounded-full bg-accent-blue"></span>
+                  <h4 className="text-[11px] font-semibold uppercase tracking-wider text-navy-400">
+                    Checked out · at vendor shop
+                  </h4>
+                  <span className="text-[11px] text-navy-500">· {sortedAtShop.length}</span>
                 </div>
-              );
-            })
+                {sortedAtShop.length === 0 ? (
+                  <p className="text-[11px] text-navy-500 italic px-2 py-1.5">
+                    No vans currently with vendors.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {sortedAtShop.map((wo) => (
+                      <DspCheckoutRow key={wo.id} wo={wo} state="checkedOut" />
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              {/* RETURNED — checked in within 24h */}
+              <section>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="w-2 h-2 rounded-full bg-accent-purple"></span>
+                  <h4 className="text-[11px] font-semibold uppercase tracking-wider text-navy-400">
+                    Checked in · returned today
+                  </h4>
+                  <span className="text-[11px] text-navy-500">· {sortedReturned.length}</span>
+                </div>
+                {sortedReturned.length === 0 ? (
+                  <p className="text-[11px] text-navy-500 italic px-2 py-1.5">
+                    No vans returned within the last 24 hours.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {sortedReturned.map((wo) => (
+                      <DspCheckoutRow key={wo.id} wo={wo} state="returned" />
+                    ))}
+                  </div>
+                )}
+              </section>
+            </>
           )}
         </div>
 
@@ -241,5 +189,110 @@ export default function CheckoutVehiclesModal({ open, items, loading, onClose })
         </div>
       </motion.div>
     </motion.div>
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// DspCheckoutRow — single row used in both sections.
+// state='checkedOut'  → blue accent, "At vendor" badge, pickup photos
+// state='returned'    → purple accent, "Returned" badge, both galleries
+//                       (pickup so the DSP can compare condition).
+// ─────────────────────────────────────────────────────
+function DspCheckoutRow({ wo, state }) {
+  const isReturned = state === 'returned';
+  const accent = isReturned ? 'accent-purple' : 'accent-blue';
+  const stamp = isReturned
+    ? { label: 'Returned', at: wo.returnedAt, by: wo.returnedByName || wo.assignedTechnicianName }
+    : { label: 'Picked up', at: wo.pickedUpAt, by: wo.pickedUpByName || wo.assignedTechnicianName };
+
+  return (
+    <div className="rounded-lg border border-navy-700 bg-navy-800/40 p-3">
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <Truck size={14} className={`text-${accent} shrink-0`} />
+          <span className="font-semibold text-white truncate">
+            Van {wo.vehicleFleetId || wo.vehicleIdStr || wo.vehicleId || '—'}
+          </span>
+          <span className="text-[10px] text-navy-500 font-mono shrink-0">
+            {primaryRoLabel(wo)}
+          </span>
+        </div>
+        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-${accent}/15 text-${accent} border border-${accent}/40 shrink-0`}>
+          {isReturned ? 'Returned' : 'At vendor'}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1.5 text-[11px] text-navy-300">
+        <div className="flex items-center gap-1.5">
+          <MapPin size={11} className="text-navy-500 shrink-0" />
+          <span className="text-navy-500">Shop:</span>
+          <span className="text-white truncate">{wo.workshopName || '—'}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Wrench size={11} className="text-navy-500 shrink-0" />
+          <span className="text-navy-500">Tech:</span>
+          <span className="text-white truncate">{stamp.by || '—'}</span>
+        </div>
+        <div className="flex items-center gap-1.5 sm:col-span-2">
+          <Clock size={11} className="text-navy-500 shrink-0" />
+          <span className="text-navy-500">{stamp.label}:</span>
+          <span className="text-white">{relativeTime(stamp.at)}</span>
+          {stamp.at && (
+            <span className="text-navy-500 ml-1">
+              ({new Date(stamp.at).toLocaleString(undefined, {
+                month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+              })})
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* PICKUP photo gallery — visible on both states so the DSP can
+          compare condition at handoff vs return. */}
+      {Array.isArray(wo.vehicleArrivalPhotos) && wo.vehicleArrivalPhotos.length > 0 && (
+        <PhotoGallery
+          photos={wo.vehicleArrivalPhotos}
+          label="Pickup photos"
+          accent="accent-blue"
+        />
+      )}
+
+      {/* RETURN photo gallery — only when checked back in. Different
+          accent so the eye separates them. */}
+      {isReturned && Array.isArray(wo.vehicleReturnPhotos) && wo.vehicleReturnPhotos.length > 0 && (
+        <PhotoGallery
+          photos={wo.vehicleReturnPhotos}
+          label="Return photos"
+          accent="accent-purple"
+        />
+      )}
+    </div>
+  );
+}
+
+function PhotoGallery({ photos, label, accent }) {
+  return (
+    <div className="mt-2 pt-2 border-t border-navy-700/40">
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <Camera size={11} className={`text-${accent}`} />
+        <span className="text-[10px] uppercase tracking-wide font-semibold text-navy-400">
+          {label} · {photos.length}
+        </span>
+      </div>
+      <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
+        {photos.map((ph) => (
+          <a
+            key={ph.id}
+            href={ph.url}
+            target="_blank"
+            rel="noreferrer"
+            className={`aspect-square rounded-md overflow-hidden border border-navy-700 hover:border-${accent}/60 transition-colors`}
+            title={ph.caption || label}
+          >
+            <img src={ph.url} alt={ph.caption || label} className="w-full h-full object-cover" loading="lazy" />
+          </a>
+        ))}
+      </div>
+    </div>
   );
 }

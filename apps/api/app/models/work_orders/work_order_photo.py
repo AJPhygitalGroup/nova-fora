@@ -31,6 +31,7 @@ class WorkOrderPhotoStage(str, Enum):
     COMPLETION = "completion"
     REJECTION = "rejection"
     VEHICLE_ARRIVAL = "vehicle_arrival"
+    VEHICLE_RETURN = "vehicle_return"
     KEY_PLACEMENT = "key_placement"
     PARKING_SPOT = "parking_spot"
     GENERAL = "general"

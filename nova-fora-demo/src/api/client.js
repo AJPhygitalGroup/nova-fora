@@ -1064,6 +1064,7 @@ export const workOrders = {
       scheduledWithinHours: 'scheduled_within_hours',
       hasConfirmedPickup: 'has_confirmed_pickup',
       atShopCustody: 'at_shop_custody',
+      returnedWithinHours: 'returned_within_hours',
     };
     for (const [k, v] of Object.entries(params)) {
       if (v === undefined || v === null || v === '') continue;
@@ -1138,6 +1139,20 @@ export const workOrders = {
    */
   checkout(id, body = {}) {
     return apiFetch(`/work-orders/${encodeURIComponent(id)}/checkout`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /**
+   * POST /work-orders/{id}/checkin — vendor returns van to DSP lot.
+   * body: { photos:[{ storageKey, contentType, sizeBytes?, caption? }], notes? }
+   * Symmetric to checkout. Sets returned_at + returned_by_id with the
+   * same vehicle-scoped fan-out shape. Photos stored as
+   * stage='vehicle_return'.
+   */
+  checkin(id, body = {}) {
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/checkin`, {
       method: 'POST',
       body: JSON.stringify(camelToSnake(body)),
     });

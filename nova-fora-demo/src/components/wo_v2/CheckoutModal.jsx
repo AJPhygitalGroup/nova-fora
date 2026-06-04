@@ -34,7 +34,13 @@ import { primaryRoLabel } from '../../lib/wo';
 
 const MAX_PHOTOS = 8;
 
-export default function CheckoutModal({ wo, onClose, onSuccess }) {
+export default function CheckoutModal({ wo, mode = 'checkout', onClose, onSuccess }) {
+  // mode = 'checkout' → tech picked up van at DSP lot
+  // mode = 'checkin'  → tech returned van to DSP lot (post-2026-06-03)
+  // Both legs share the photo-capture UX; only the copy + the backend
+  // call swap so the tech sees a consistent "snap → confirm" flow.
+  const isCheckin = mode === 'checkin';
+
   // Each photo: { tempId, file?, previewUrl, storageKey?, contentType?,
   // sizeBytes?, status: 'pending'|'uploading'|'done'|'error', error? }
   const [photos, setPhotos] = useState([]);
@@ -46,6 +52,34 @@ export default function CheckoutModal({ wo, onClose, onSuccess }) {
   const fleetLabel = wo?.vehicleFleetId || wo?.vehicleIdStr || wo?.vehicleId || '—';
   const allDone = photos.length > 0 && photos.every((p) => p.status === 'done');
   const canSubmit = allDone && !busy;
+
+  // Copy that differs between legs — kept inline so the file stays
+  // self-contained.
+  const COPY = isCheckin ? {
+    title: `Check in Van ${fleetLabel}`,
+    subtitle: 'Record that you have returned the vehicle to the DSP lot',
+    accent: 'accent-purple',
+    iconBg: 'bg-accent-purple/15 border-accent-purple/40',
+    iconColor: 'text-accent-purple',
+    photosLabel: 'Return photos',
+    photosHint: 'At least one photo is required so the DSP sees the vehicle\'s condition at drop-off.',
+    notesPlaceholder: 'Any new scratches, completed work notes, parking spot, etc.',
+    submitLabel: 'Confirm Return',
+    submitBg: 'bg-accent-purple hover:bg-accent-purple/90',
+    failedMsg: 'Check-in failed',
+  } : {
+    title: `Check out Van ${fleetLabel}`,
+    subtitle: 'Record that you\'ve physically picked up the vehicle',
+    accent: 'accent-green',
+    iconBg: 'bg-accent-green/15 border-accent-green/40',
+    iconColor: 'text-accent-green',
+    photosLabel: 'Pickup photos',
+    photosHint: 'At least one photo is required so the DSP sees the vehicle\'s condition at handoff.',
+    notesPlaceholder: 'Any visible damage, missing items, parking notes, etc.',
+    submitLabel: 'Confirm Pickup',
+    submitBg: 'bg-accent-green hover:bg-accent-green/90',
+    failedMsg: 'Checkout failed',
+  };
 
   // ── Add one photo: compress → presign → PUT → mark done ─────────
   const uploadOne = async (file) => {
@@ -102,12 +136,12 @@ export default function CheckoutModal({ wo, onClose, onSuccess }) {
     setPhotos((cur) => cur.filter((p) => p.tempId !== tempId));
   };
 
-  // ── Submit ──────────────────────────────────────────────
+  // ── Submit — calls /checkout or /checkin based on mode ─────
   const submit = async () => {
     setBusy(true);
     setSubmitError(null);
     try {
-      const updated = await woApi.checkout(wo.id, {
+      const body = {
         photos: photos
           .filter((p) => p.status === 'done' && p.storageKey)
           .map((p) => ({
@@ -116,11 +150,14 @@ export default function CheckoutModal({ wo, onClose, onSuccess }) {
             sizeBytes: p.sizeBytes,
           })),
         notes: notes.trim() || undefined,
-      });
+      };
+      const updated = isCheckin
+        ? await woApi.checkin(wo.id, body)
+        : await woApi.checkout(wo.id, body);
       onSuccess?.(updated);
       onClose();
     } catch (err) {
-      const msg = err instanceof APIError ? (err.detail || err.message) : (err?.message || 'Checkout failed');
+      const msg = err instanceof APIError ? (err.detail || err.message) : (err?.message || COPY.failedMsg);
       setSubmitError(msg);
     } finally {
       setBusy(false);
@@ -144,15 +181,13 @@ export default function CheckoutModal({ wo, onClose, onSuccess }) {
         {/* Header */}
         <div className="flex items-start justify-between px-5 py-4 border-b border-navy-700">
           <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-lg bg-accent-green/15 border border-accent-green/40 flex items-center justify-center">
-              <Truck size={16} className="text-accent-green" />
+            <div className={`w-9 h-9 rounded-lg border flex items-center justify-center ${COPY.iconBg}`}>
+              <Truck size={16} className={COPY.iconColor} />
             </div>
             <div>
-              <h3 className="text-base font-semibold text-white">
-                Check out Van {fleetLabel}
-              </h3>
+              <h3 className="text-base font-semibold text-white">{COPY.title}</h3>
               <p className="text-[11px] text-text-muted">
-                {primaryRoLabel(wo)} · Record that you've physically picked up the vehicle
+                {primaryRoLabel(wo)} · {COPY.subtitle}
               </p>
             </div>
           </div>
@@ -167,7 +202,7 @@ export default function CheckoutModal({ wo, onClose, onSuccess }) {
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs font-semibold text-text-strong flex items-center gap-1.5">
                 <Camera size={12} className="text-accent-blue" />
-                Pickup photos
+                {COPY.photosLabel}
               </label>
               <span className="text-[10px] text-text-muted">{photos.length} / {MAX_PHOTOS}</span>
             </div>
@@ -230,7 +265,7 @@ export default function CheckoutModal({ wo, onClose, onSuccess }) {
               id="checkout-notes"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Any visible damage, missing items, parking notes, etc."
+              placeholder={COPY.notesPlaceholder}
               rows={3}
               maxLength={500}
               className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white placeholder:text-text-muted outline-none focus:border-accent-blue resize-none"
@@ -245,9 +280,7 @@ export default function CheckoutModal({ wo, onClose, onSuccess }) {
           )}
 
           {photos.length === 0 && (
-            <p className="text-[11px] text-text-muted text-center">
-              At least one photo is required so the DSP sees the vehicle's condition at handoff.
-            </p>
+            <p className="text-[11px] text-text-muted text-center">{COPY.photosHint}</p>
           )}
         </div>
 
@@ -263,10 +296,10 @@ export default function CheckoutModal({ wo, onClose, onSuccess }) {
           <button
             onClick={submit}
             disabled={!canSubmit}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-accent-green text-white hover:bg-accent-green/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer ${COPY.submitBg}`}
           >
             {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-            Confirm Pickup
+            {COPY.submitLabel}
           </button>
         </div>
       </motion.div>

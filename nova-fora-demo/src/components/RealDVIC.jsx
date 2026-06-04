@@ -3871,6 +3871,10 @@ export default function RealDVIC({ user }) {
   // 'pickup_handoff'). Modal renders a "photos coming in next round"
   // placeholder until then.
   const [checkedOutWoQueue, setCheckedOutWoQueue] = useState([]);
+  // Vans the tech checked back in within the last 24h. Same modal
+  // surfaces them under a "Returned today" section so the DSP sees both
+  // states in one place. Jorge 2026-06-03.
+  const [returnedTodayWoQueue, setReturnedTodayWoQueue] = useState([]);
   const [showCheckoutOpen, setShowCheckoutOpen] = useState(false);
   // SSE subscriptions — instant fan-out from the backend so vendor-side
   // and DSP-side state changes flow into the home cards within the
@@ -3932,30 +3936,37 @@ export default function RealDVIC({ user }) {
     // picked_up_at is set (vendor took the van but hasn't started
     // wrenching yet). The DSP wants visibility on physical custody,
     // not work-status.
+    // Dedup helper — same scoring rule for both at-shop + returned lists.
+    const dedupeByVehicle = (items, photoField) => {
+      const byVehicle = new Map();
+      for (const wo of (items || [])) {
+        const key = wo?.vehicleId || wo?.vehicleIdStr || wo?.id;
+        const cur = byVehicle.get(key);
+        if (!cur) { byVehicle.set(key, wo); continue; }
+        const score = (w) => (
+          ((Array.isArray(w?.[photoField]) && w[photoField].length) ? 1000 : 0)
+          + (w?.defectCount ?? w?.defects?.length ?? 0)
+        );
+        if (score(wo) > score(cur)) byVehicle.set(key, wo);
+      }
+      return Array.from(byVehicle.values());
+    };
     workOrdersApi
       .list({ atShopCustody: true, limit: 100 })
       .then((res) => {
         if (cancelled) return;
-        // Jorge 2026-06-03: dedupe by vehicle. The /checkout endpoint
-        // fan-outs picked_up_at to every accepted sibling WO on the
-        // vehicle, so a van with 3 WOs shows up 3x without this. Keep
-        // the WO that's most useful for the row render (has photos →
-        // most defects → first one).
-        const items = res.items || [];
-        const byVehicle = new Map();
-        for (const wo of items) {
-          const key = wo?.vehicleId || wo?.vehicleIdStr || wo?.id;
-          const cur = byVehicle.get(key);
-          if (!cur) { byVehicle.set(key, wo); continue; }
-          const score = (w) => (
-            ((Array.isArray(w?.vehicleArrivalPhotos) && w.vehicleArrivalPhotos.length) ? 1000 : 0)
-            + (w?.defectCount ?? w?.defects?.length ?? 0)
-          );
-          if (score(wo) > score(cur)) byVehicle.set(key, wo);
-        }
-        setCheckedOutWoQueue(Array.from(byVehicle.values()));
+        setCheckedOutWoQueue(dedupeByVehicle(res.items || [], 'vehicleArrivalPhotos'));
       })
       .catch((err) => console.warn('checked-out vans queue failed', err));
+    // Returned within the last 24h — drives the "Returned today" section
+    // on the same modal. Backend filter `returned_within_hours=24`.
+    workOrdersApi
+      .list({ returnedWithinHours: 24, limit: 100 })
+      .then((res) => {
+        if (cancelled) return;
+        setReturnedTodayWoQueue(dedupeByVehicle(res.items || [], 'vehicleReturnPhotos'));
+      })
+      .catch((err) => console.warn('returned-today queue failed', err));
     return () => { cancelled = true; };
     // Refetch triggers:
     //   - new defect lands via SSE (totalDefectsToday changes)
@@ -4537,6 +4548,7 @@ export default function RealDVIC({ user }) {
         <CheckoutVehiclesModal
           open={showCheckoutOpen}
           items={checkedOutWoQueue}
+          returnedItems={returnedTodayWoQueue}
           loading={false}
           onClose={() => setShowCheckoutOpen(false)}
         />

@@ -154,6 +154,27 @@ class WorkOrder(SQLModel, table=True):
             nullable=True,
         ),
     )
+    # Vehicle returned to the DSP lot. Set by POST /work-orders/{id}/checkin.
+    # Mirror of picked_up_at + picked_up_by_id but for the return leg.
+    # Decoupled from completed_at (work-done + paperwork) so a van can be
+    # back at the DSP lot before the invoice is finalised. Vehicle-scoped
+    # fan-out writes the same returned_at to every sibling WO that had
+    # picked_up_at set. Alembic 20260603_1200.
+    returned_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(
+            "returned_at", sa.DateTime(timezone=True),
+            nullable=True, index=True,
+        ),
+    )
+    returned_by_id: int | None = Field(
+        default=None,
+        sa_column=Column(
+            "returned_by_id", sa.Integer,
+            sa.ForeignKey("users.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+    )
     completed_at: datetime | None = Field(
         default=None,
         sa_column=Column("completed_at", sa.DateTime(timezone=True), nullable=True),
