@@ -35,6 +35,7 @@ import {
 } from '../api/client';
 import { canInspect } from '../lib/permissions';
 import AdHocDefectsModal from './wo_v2/AdHocDefectsModal';
+import VendorCheckoutModal from './wo_v2/VendorCheckoutModal';
 import CreateInspectionWizard, { hasSavedWizardState } from './CreateInspectionWizard';
 
 export default function VendorHome({ user }) {
@@ -45,6 +46,11 @@ export default function VendorHome({ user }) {
   const [counterErr, setCounterErr] = useState(null);
   const [loading, setLoading] = useState(true);
   const [adHocOpen, setAdHocOpen] = useState(false);
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  // Local count of accepted WOs eligible for checkout (not on the
+  // backend counter — we derive it from a lightweight list call). Used
+  // for the tile badge so the SW knows how many vans are waiting.
+  const [checkoutCount, setCheckoutCount] = useState(null);
 
   // ── Start Inspection banner state ──
   // Vendor techs + vendor_admins can run post-repair inspections (see
@@ -87,6 +93,40 @@ export default function VendorHome({ user }) {
   }, [workshopId, dspFilter]);
 
   useEffect(() => { loadCounters(); }, [loadCounters]);
+
+  // Refresh the eligible-checkout count whenever the workshop / dsp
+  // filter changes, and on demand after a successful checkout from the
+  // modal. Deliberately cheap (just a list call w/ limit) — not worth
+  // a new endpoint until the modal becomes hot.
+  const loadCheckoutCount = useCallback(() => {
+    if (!workshopId) { setCheckoutCount(null); return; }
+    import('../api/client').then(({ workOrders }) => {
+      workOrders.list({
+        status: 'accepted',
+        vendorWorkshopId: workshopId,
+        limit: 200,
+        ...(dspFilter ? { dspId: Number(dspFilter) } : {}),
+      })
+        .then((res) => {
+          const items = Array.isArray(res) ? res : (res?.items || []);
+          // Count unique vans NOT yet picked up (matches the modal's
+          // sectioning so the badge agrees with what the user sees).
+          const seen = new Set();
+          let n = 0;
+          for (const wo of items) {
+            if (wo.pickedUpAt) continue;
+            const k = wo.vehicleId || wo.vehicleIdStr || wo.id;
+            if (seen.has(k)) continue;
+            seen.add(k);
+            n++;
+          }
+          setCheckoutCount(n);
+        })
+        .catch(() => setCheckoutCount(null));
+    });
+  }, [workshopId, dspFilter]);
+
+  useEffect(() => { loadCheckoutCount(); }, [loadCheckoutCount]);
 
   // Available DSPs derived from the workshop's WOs is server-driven —
   // for iter-1 we hand-pull the list from the workshop's served set
@@ -204,7 +244,7 @@ export default function VendorHome({ user }) {
           "X pending feedback" inner badge on KpiTileRepaired routes
           to Vendor Scorecard tab (different destination from the
           outer tile, hence stopPropagation in the subchip handler). */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 mb-6">
         <KpiTileAdHoc
           loading={loading}
           count={counters?.adHocDefects24h ?? 0}
@@ -238,6 +278,17 @@ export default function VendorHome({ user }) {
             new CustomEvent('nf:navigate', { detail: { tab: 'work_orders', chip: 'awaitingCustomer' } }),
           )}
         />
+        {/* Jorge 2026-06-03 — Vehicle Check-Out tile, same KPI style
+            as siblings. Click opens VendorCheckoutModal with scheduled +
+            ad-hoc + completed sections; each row has a "Check out" CTA
+            that fires the photo capture flow. The DSP-side "Checkout
+            Vehicles" tile on RealDVIC is read-only — this is the
+            actionable mirror. */}
+        <KpiTileCheckout
+          loading={checkoutCount === null}
+          count={checkoutCount ?? 0}
+          onClick={() => setCheckoutOpen(true)}
+        />
         <KpiTileRepaired
           loading={loading}
           count={counters?.defectsRepairedWeek ?? 0}
@@ -267,6 +318,18 @@ export default function VendorHome({ user }) {
           workshopId={workshopId}
           dspId={dspFilter ? Number(dspFilter) : null}
           onClose={() => setAdHocOpen(false)}
+        />
+      )}
+
+      {/* ── Vehicle Check-Out modal (Phase B, Jorge 2026-06-03) ── */}
+      {checkoutOpen && workshopId && (
+        <VendorCheckoutModal
+          workshopId={workshopId}
+          onClose={() => setCheckoutOpen(false)}
+          onChanged={() => {
+            loadCheckoutCount();
+            loadCounters();
+          }}
         />
       )}
 
@@ -597,6 +660,29 @@ function KpiTilePendingFmc({ loading, pending, total, onClick }) {
       </div>
       <div className="text-[10px] text-text-muted mt-1">
         Defects Pending FMC Approval
+      </div>
+    </KpiTileShell>
+  );
+}
+
+function KpiTileCheckout({ loading, count, onClick }) {
+  // Tech / SW entry to the vehicle pickup flow. Visually parallel to
+  // the DSP-side "Checkout Vehicles" tile (same Truck icon + blue
+  // accent) so the SW recognises the surface immediately. Action lives
+  // here; the DSP tile is read-only.
+  return (
+    <KpiTileShell border="border-accent-blue/40" bg="bg-accent-blue/5" onClick={onClick}>
+      <div className="flex items-start justify-between mb-1">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+          Vehicle Check-Out
+        </span>
+        <Truck className={`w-3.5 h-3.5 ${count > 0 ? 'text-accent-blue' : 'text-text-muted'}`} />
+      </div>
+      <div className="text-3xl font-bold text-accent-blue">
+        {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : count}
+      </div>
+      <div className="text-[10px] text-text-muted mt-1">
+        {count > 0 ? 'Vans ready to pick up' : 'Nothing waiting'}
       </div>
     </KpiTileShell>
   );
