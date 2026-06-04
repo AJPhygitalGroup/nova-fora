@@ -301,25 +301,42 @@ function VehicleStatusSearch({ dspId }) {
     setBusy(true);
     (async () => {
       try {
-        // Parse "VAN_ID rest of phrase" → vehicle token + part query
-        const tokens = debounced.split(/\s+/).filter(Boolean);
+        // Parse "VAN_ID rest of phrase" → vehicle token + part query.
+        // Strip leading "van" / "vehicle" / "veh" so users typing
+        // "Van 11 brakes" still get the right vehicle token.
+        const stripped = debounced.replace(/^\s*(van|vehicle|veh)\s+/i, '');
+        const tokens = stripped.split(/\s+/).filter(Boolean);
         const vanToken = tokens[0];
         const partQuery = tokens.slice(1).join(' ').toLowerCase();
 
-        // 1) Lookup the vehicle by fleet_id / van id (backend has
-        //    `search` param that hits fleet_id + plate + VIN).
+        // 1) Lookup the vehicle. Two-pass:
+        //    - first try the parsed `vanToken` (typical: "11", "CV1")
+        //    - if 0 results, try the full debounced phrase (handles
+        //      multi-word fleet_ids like "TJ55 339811")
+        // Backend `search` hits fleet_id / vin / plate via ILIKE %x%,
+        // and scopes to current.dsp_id for dsp_owners (so the dspId
+        // param is belt-and-suspenders).
         const { vehicles: vehApi, workOrders: woApi } = await import('../api/client');
-        const vehRes = await vehApi.list({
+        let vehRes = await vehApi.list({
           search: vanToken,
           dspId: dspId || undefined,
           perPage: 5,
         });
         if (cancelled) return;
-        const vehItems = vehRes?.items || [];
+        let vehItems = vehRes?.items || [];
+        if (vehItems.length === 0 && tokens.length > 1) {
+          vehRes = await vehApi.list({
+            search: stripped,
+            dspId: dspId || undefined,
+            perPage: 5,
+          });
+          if (cancelled) return;
+          vehItems = vehRes?.items || [];
+        }
         // Prefer exact fleet_id match (case-insensitive); fall back to first.
         const exact = vehItems.find((v) =>
           (v.fleetId || '').toLowerCase() === vanToken.toLowerCase()
-          || (v.idStr || '').toLowerCase() === vanToken.toLowerCase()
+          || (v.id || '').toLowerCase() === vanToken.toLowerCase()
         );
         const vehicle = exact || vehItems[0] || null;
         if (!vehicle) {
@@ -389,9 +406,14 @@ function VehicleStatusSearch({ dspId }) {
       {debounced && (
         <div className="mt-3 pt-3 border-t border-navy-700/40">
           {notFound ? (
-            <div className="flex items-center gap-2 text-xs text-accent-red">
-              <AlertCircle size={12} />
-              No van matches "{debounced.split(/\s+/)[0]}" in your fleet.
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-xs text-accent-red">
+                <AlertCircle size={12} />
+                No vehicle in your fleet matches "{debounced}".
+              </div>
+              <div className="text-[10px] text-navy-500 pl-5">
+                Check the <span className="text-navy-300 font-semibold">Vehicles</span> tab to confirm the fleet ID. Common formats: <span className="text-navy-300 font-mono">11</span>, <span className="text-navy-300 font-mono">CV1</span>, <span className="text-navy-300 font-mono">RE12</span>.
+              </div>
             </div>
           ) : vehicleMatch && results.length === 0 ? (
             <div className="flex items-center gap-2 text-xs">
