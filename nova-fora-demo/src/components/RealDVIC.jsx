@@ -278,7 +278,41 @@ function OpenVsaDonut({ chartDonut }) {
 //   - accepted (default) → "Accepted by vendor" (gray)
 //   - pending            → "Awaiting vendor accept" (orange)
 // ─────────────────────────────────────────────────────
-function VehicleStatusSearch({ dspId }) {
+// Maps each result-row status to the KPI card it belongs to, so the
+// parent can light up the right tile when the search surfaces work.
+// Kept outside the component so the same logic also runs from the
+// onHighlightsChange callback without a re-render dance.
+//
+// Card keys (must match RealDVIC's tileFor*) :
+//   reported  → DSP-reported defects today
+//   inspected → Vans Inspected
+//   immediate → Defects for approval   ← DSP scope/cost approval lives here
+//   scheduled → Scheduled Repairs
+//   checkout  → Checkout Vehicles
+//   feedback  → Pending Feedback
+function cardKeyForStatus(label) {
+  switch (label) {
+    case 'Pending defect approval':
+    case 'Pending cost approval':
+    case 'Pending review':
+    case 'Declined by vendor':
+      return 'immediate';
+    case 'Scheduled':
+    case 'Awaiting vendor accept':
+    case 'Accepted by vendor':
+      return 'scheduled';
+    case 'At vendor':
+    case 'In repair':
+    case 'Returned to lot':
+      return 'checkout';
+    case 'Completed':
+      return 'feedback';
+    default:
+      return null;
+  }
+}
+
+function VehicleStatusSearch({ dspId, onHighlightsChange }) {
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
   const [busy, setBusy] = useState(false);
@@ -295,6 +329,7 @@ function VehicleStatusSearch({ dspId }) {
   useEffect(() => {
     if (!debounced) {
       setVehicleMatch(null); setResults([]); setNotFound(false);
+      onHighlightsChange?.({});
       return;
     }
     let cancelled = false;
@@ -343,6 +378,7 @@ function VehicleStatusSearch({ dspId }) {
         const vehicle = exact || vehItems[0] || null;
         if (!vehicle) {
           setVehicleMatch(null); setResults([]); setNotFound(true);
+          onHighlightsChange?.({});
           return;
         }
         setVehicleMatch(vehicle); setNotFound(false);
@@ -417,7 +453,24 @@ function VehicleStatusSearch({ dspId }) {
           wo,
           status: deriveVehicleStatus(wo),
         }));
-        setResults([...pendingRows, ...woRows]);
+        const merged = [...pendingRows, ...woRows];
+        setResults(merged);
+
+        // Compose the highlights map for the parent. 'orange' wins over
+        // 'green' for the same card — if any row mapping to that tile
+        // needs DSP action, the tile pulses orange regardless of how
+        // many informational rows also point at it.
+        const highlights = {};
+        for (const row of merged) {
+          const card = cardKeyForStatus(row.status?.label);
+          if (!card) continue;
+          if (row.status?.actionRequired) {
+            highlights[card] = 'orange';
+          } else if (highlights[card] !== 'orange') {
+            highlights[card] = 'green';
+          }
+        }
+        onHighlightsChange?.(highlights);
       } catch (err) {
         // Surface the failure mode in the console so a real bug doesn't
         // silently degrade to "not found" — the empty-results path and
@@ -426,6 +479,7 @@ function VehicleStatusSearch({ dspId }) {
         console.warn('VehicleStatusSearch lookup failed:', err);
         if (!cancelled) {
           setVehicleMatch(null); setResults([]); setNotFound(true);
+          onHighlightsChange?.({});
         }
       } finally {
         if (!cancelled) setBusy(false);
@@ -4478,6 +4532,18 @@ export default function RealDVIC({ user }) {
   // and "real upcoming inspection". `nextQcDvic` being non-null IS the
   // signal to render.
   const [nextQcDvic, setNextQcDvic] = useState(null);
+  // Highlights driven by the VehicleStatusSearch row → KPI tile mapping.
+  // Shape: { immediate?: 'orange'|'green', scheduled?: ..., checkout?: ...,
+  // feedback?: ... }. Empty when no query is active. Cards apply
+  // nf-card-heartbeat (orange pulse) or nf-card-calm (green static) based
+  // on their key. Jorge 2026-06-03.
+  const [searchHighlights, setSearchHighlights] = useState({});
+  const cardHighlightClass = (key) => {
+    const tone = searchHighlights[key];
+    if (tone === 'orange') return 'nf-card-heartbeat';
+    if (tone === 'green') return 'nf-card-calm';
+    return '';
+  };
   useEffect(() => {
     if (!isDspRole(user) && user?.role !== 'site_admin') return;
     const dspIdInt = (() => {
@@ -4680,7 +4746,7 @@ export default function RealDVIC({ user }) {
               </div>
             </motion.div>
 
-            <div onClick={() => setOpenCard('immediate')} className="cursor-pointer h-full">
+            <div onClick={() => setOpenCard('immediate')} className={`cursor-pointer h-full ${cardHighlightClass('immediate')}`}>
               <MetricCard
                 icon={pendingApprovalCount > 0 ? AlertTriangle : undefined}
                 label={t('realDvic.metrics.defectsForApproval', 'Defects for approval')}
@@ -4690,7 +4756,7 @@ export default function RealDVIC({ user }) {
               />
             </div>
 
-            <div onClick={() => setOpenCard('scheduled')} className="cursor-pointer h-full">
+            <div onClick={() => setOpenCard('scheduled')} className={`cursor-pointer h-full ${cardHighlightClass('scheduled')}`}>
               <MetricCard
                 icon={AlertTriangle}
                 label={t('realDvic.metrics.scheduledRepairs', 'Scheduled Repairs')}
@@ -4705,7 +4771,7 @@ export default function RealDVIC({ user }) {
                 a modal listing each van + tech + scheduled pickup time
                 + workshop + status. Photos at handoff land in Phase B
                 (vendor-side capture workflow). */}
-            <div onClick={() => setShowCheckoutOpen(true)} className="cursor-pointer h-full">
+            <div onClick={() => setShowCheckoutOpen(true)} className={`cursor-pointer h-full ${cardHighlightClass('checkout')}`}>
               <MetricCard
                 icon={Camera}
                 label={t('realDvic.metrics.checkoutVehicles', 'Checkout Vehicles')}
@@ -4718,7 +4784,7 @@ export default function RealDVIC({ user }) {
               />
             </div>
 
-            <div onClick={() => setShowRepairHistory(true)} className="cursor-pointer h-full">
+            <div onClick={() => setShowRepairHistory(true)} className={`cursor-pointer h-full ${cardHighlightClass('feedback')}`}>
               {/* Tile is ALWAYS labeled "Pending Feedback" so the customer
                   sees one consistent metric — the count of completed WOs
                   that still need their rating — which always matches what's
@@ -4754,6 +4820,7 @@ export default function RealDVIC({ user }) {
                 const m = String(raw).match(/(\d+)/);
                 return m ? Number(m[1]) : null;
               })()}
+              onHighlightsChange={setSearchHighlights}
             />
           )}
 

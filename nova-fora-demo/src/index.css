@@ -99,3 +99,28 @@ button {
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--color-navy-900); }
 ::-webkit-scrollbar-thumb { background: var(--color-navy-600); border-radius: 3px; }
+
+/* Search-driven KPI card highlight — Jorge 2026-06-03.
+   When the DSP types a van+part query and a row needs action, the
+   matching KPI tile glows orange with a heartbeat pulse (two quick
+   beats + pause, repeat) to draw the eye exactly where the work is.
+   Informational rows tint the tile green without animation. */
+@keyframes nf-heartbeat {
+  0%   { box-shadow: 0 0 0 0 rgba(255, 153, 0, 0.55); }
+  20%  { box-shadow: 0 0 0 6px rgba(255, 153, 0, 0.30); }
+  40%  { box-shadow: 0 0 0 0 rgba(255, 153, 0, 0.55); }
+  60%  { box-shadow: 0 0 0 6px rgba(255, 153, 0, 0.30); }
+  80%  { box-shadow: 0 0 0 0 rgba(255, 153, 0, 0.00); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 153, 0, 0.00); }
+}
+.nf-card-heartbeat {
+  position: relative;
+  border-radius: 0.75rem; /* matches rounded-xl */
+  box-shadow: 0 0 0 2px rgba(255, 153, 0, 0.85);
+  animation: nf-heartbeat 1.4s ease-in-out infinite;
+}
+.nf-card-calm {
+  position: relative;
+  border-radius: 0.75rem;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.65);
+}
