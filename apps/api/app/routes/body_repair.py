@@ -30,9 +30,12 @@ from sqlmodel import select
 from app.auth.dependencies import get_current_user
 from app.db import get_session
 from app.models.body_repair import (
+    BodyRepairPaveReport,
     BodyRepairRequest,
     BodyRepairRequestStatus,
     BodyRepairSubmissionMode,
+    PaveParseStatus,
+    PavePhase,
 )
 from app.models.organization import Organization, OrgType
 from app.models.user import User, UserRole
@@ -331,3 +334,235 @@ async def get_request(
             raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
 
     return await _build_response(session, req)
+
+
+# ─────────────────────────────────────────────────────
+# POST /body-repair/requests/{id}/pave — Phase 1
+#
+# Attaches a parsed PAVE PDF to a request. The frontend uploads the PDF
+# via the regular /uploads/presigned flow (kind='body_repair_pave'),
+# then POSTs the resulting storage_key here. We download the PDF from
+# MinIO into a temp file, run pave_parser, and store the structured
+# data + metadata in body_repair_pave_reports.
+# ─────────────────────────────────────────────────────
+class AttachPaveBody(BaseModel):
+    storage_key: str = Field(..., min_length=1, max_length=500)
+    file_size_bytes: int | None = Field(default=None, ge=1)
+    phase: PavePhase = Field(default=PavePhase.PRE)
+    source: str | None = Field(default="upload", max_length=20)
+    source_url: str | None = Field(default=None, max_length=1000)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class PaveReportResponse(BaseModel):
+    id: str
+    request_id: str
+    phase: str
+    storage_path: str
+    file_size_bytes: int | None
+    parse_status: str
+    vin: str | None
+    year: int | None
+    make: str | None
+    model: str | None
+    inspection_date_utc: datetime | None
+    total_score: int | None
+    damage_count: int
+    parsed_warnings: list[str] | None = None
+    source: str | None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+def _parse_req_id(raw: str) -> int | None:
+    raw = str(raw).strip()
+    if raw.upper().startswith("BRR-"):
+        tail = raw[4:]
+        return int(tail) if tail.isdigit() else None
+    return int(raw) if raw.isdigit() else None
+
+
+async def _require_request_scope(
+    req: BodyRepairRequest, current: User, session: AsyncSession
+) -> None:
+    """Shared tenancy gate for PAVE endpoints. Same rules as
+    get_request — cross-tenant returns 404 (no existence leak)."""
+    if current.role == UserRole.DSP_OWNER and req.dsp_id != current.organization_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    if current.role in (UserRole.VENDOR_ADMIN, UserRole.SERVICE_WRITER):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not a body repair surface")
+    if current.role not in (UserRole.DSP_OWNER, UserRole.SITE_ADMIN):
+        org = (
+            await session.execute(
+                select(Organization).where(Organization.id == current.organization_id)
+            )
+        ).scalar_one_or_none()
+        if org is None or org.org_type != OrgType.BODY_REPAIR_VENDOR:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "not a body repair vendor")
+        if (
+            req.assigned_vendor_id != current.organization_id
+            and req.status != BodyRepairRequestStatus.PENDING_QUOTES
+        ):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+
+
+def _pave_response(r: BodyRepairPaveReport, req: BodyRepairRequest) -> "PaveReportResponse":
+    warnings = ((r.parsed_json or {}).get("parse_warnings") or None)
+    return PaveReportResponse(
+        id=r.id_str,
+        request_id=req.id_str,
+        phase=r.phase.value if hasattr(r.phase, "value") else r.phase,
+        storage_path=r.storage_path,
+        file_size_bytes=r.file_size_bytes,
+        parse_status=r.parse_status.value if hasattr(r.parse_status, "value") else r.parse_status,
+        vin=r.vin,
+        year=r.year,
+        make=r.make,
+        model=r.model,
+        inspection_date_utc=r.inspection_date_utc,
+        total_score=r.total_score,
+        damage_count=r.damage_count,
+        parsed_warnings=warnings,
+        source=r.source,
+        created_at=r.created_at,
+    )
+
+
+@router.post(
+    "/requests/{req_id}/pave",
+    response_model=PaveReportResponse,
+    summary="Attach + parse a PAVE PDF for a body repair request",
+    responses={
+        404: {"description": "Request not found, or cross-tenant."},
+        409: {"description": "Could not download PDF from storage (bad storage_key)."},
+    },
+)
+async def attach_pave(
+    body: AttachPaveBody,
+    req_id: str = Path(..., examples=["BRR-00001"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> PaveReportResponse:
+    """Parse a PAVE PDF and link it to a body repair request.
+
+    Flow:
+      1. Resolve request + tenancy.
+      2. Download PDF bytes from MinIO via the internal S3 client.
+      3. Write to a temp file (`pave_parser` takes a path).
+      4. Run `parse_pave_report` — returns dict, never raises. On
+         failure parse_status='failed' and the row still lands so the
+         SW can review manually.
+      5. Insert body_repair_pave_reports row + return the shape.
+    """
+    int_id = _parse_req_id(req_id)
+    if int_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    req = (
+        await session.execute(select(BodyRepairRequest).where(BodyRepairRequest.id == int_id))
+    ).scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    await _require_request_scope(req, current, session)
+
+    import os
+    import tempfile
+
+    from app.services.pave_parser import parse_pave_report
+    from app.settings import get_settings
+    from app.storage.s3 import _internal_client
+
+    s = get_settings()
+    cli = _internal_client()
+    try:
+        obj = cli.get_object(Bucket=s.s3_bucket, Key=body.storage_key)
+        pdf_bytes = obj["Body"].read()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"could not fetch PDF from storage: {e}",
+        )
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+    try:
+        tmp.write(pdf_bytes)
+        tmp.flush()
+        tmp.close()
+        parsed: dict = parse_pave_report(tmp.name)
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+
+    status_str = parsed.get("parse_status", "failed")
+    inspection_date = parsed.get("inspection_date_utc")
+    inspection_dt: datetime | None = None
+    if inspection_date:
+        try:
+            inspection_dt = datetime.fromisoformat(str(inspection_date).replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            inspection_dt = None
+    scores = parsed.get("scores", {}) or {}
+    total_score = scores.get("total") or scores.get("overall")
+    damages = parsed.get("damages") or []
+    new_damages = parsed.get("new_damage") or []
+    damage_count = len(damages) if damages else len(new_damages)
+
+    row = BodyRepairPaveReport(
+        request_id=req.id,
+        phase=body.phase,
+        storage_path=body.storage_key,
+        file_size_bytes=body.file_size_bytes,
+        parse_status=(
+            PaveParseStatus.OK if status_str == "ok" else PaveParseStatus.FAILED
+        ),
+        vin=parsed.get("vin"),
+        year=parsed.get("year"),
+        make=parsed.get("make"),
+        model=parsed.get("model"),
+        inspection_date_utc=inspection_dt,
+        total_score=int(total_score) if isinstance(total_score, (int, float)) else None,
+        damage_count=damage_count,
+        parsed_json=parsed,
+        source=body.source,
+        source_url=body.source_url,
+        uploaded_by_id=current.id,
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return _pave_response(row, req)
+
+
+@router.get(
+    "/requests/{req_id}/pave",
+    response_model=list[PaveReportResponse],
+    summary="List PAVE reports attached to a body repair request",
+)
+async def list_pave(
+    req_id: str = Path(..., examples=["BRR-00001"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[PaveReportResponse]:
+    int_id = _parse_req_id(req_id)
+    if int_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    req = (
+        await session.execute(select(BodyRepairRequest).where(BodyRepairRequest.id == int_id))
+    ).scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    await _require_request_scope(req, current, session)
+
+    rows = list(
+        (
+            await session.execute(
+                select(BodyRepairPaveReport)
+                .where(BodyRepairPaveReport.request_id == req.id)
+                .order_by(BodyRepairPaveReport.created_at.asc())
+            )
+        ).scalars().all()
+    )
+    return [_pave_response(r, req) for r in rows]

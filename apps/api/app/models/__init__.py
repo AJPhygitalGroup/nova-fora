@@ -12,9 +12,12 @@ WO V2.0 note (branch `wo-v2-rebuild`):
 from app.models.auth_audit_log import AuthAuditEvent, AuthAuditLog
 from app.models.base import timestamp_column, utc_now
 from app.models.body_repair import (
+    BodyRepairPaveReport,
     BodyRepairRequest,
     BodyRepairRequestStatus,
     BodyRepairSubmissionMode,
+    PaveParseStatus,
+    PavePhase,
 )
 from app.models.defect import Defect, DefectSource
 from app.models.defect_catalog import (

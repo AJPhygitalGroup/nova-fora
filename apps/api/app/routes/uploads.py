@@ -131,6 +131,53 @@ async def _check_parent_access(
         await _require_wo_scope(wo, current, session)
         return ("work_orders", wo.id)
 
+    if kind == UploadKind.BODY_REPAIR_PAVE:
+        # 2026-06-03 Jorge — body repair PAVE PDF upload. parent_id is
+        # the BRR-NNNNN id (or bare int) of the owning request. Scoping:
+        # DSP owners can only upload to their own DSP's requests; site
+        # admins can upload anywhere; body repair vendors can upload
+        # post-repair PAVE to requests assigned to their org. We do the
+        # ownership check inline rather than via a helper since the
+        # ruleset is small + body-repair-specific.
+        from app.models.body_repair import BodyRepairRequest, BodyRepairRequestStatus
+        from app.models.organization import Organization, OrgType
+        raw = str(parent_id).strip()
+        int_id = None
+        if raw.upper().startswith("BRR-"):
+            tail = raw[4:]
+            if tail.isdigit():
+                int_id = int(tail)
+        elif raw.isdigit():
+            int_id = int(raw)
+        if int_id is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+        req = (
+            await session.execute(
+                select(BodyRepairRequest).where(BodyRepairRequest.id == int_id)
+            )
+        ).scalar_one_or_none()
+        if req is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+        if current.role == UserRole.DSP_OWNER:
+            if req.dsp_id != current.organization_id:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+        elif current.role == UserRole.SITE_ADMIN:
+            pass
+        else:
+            org = (
+                await session.execute(
+                    select(Organization).where(Organization.id == current.organization_id)
+                )
+            ).scalar_one_or_none()
+            if org is None or org.org_type != OrgType.BODY_REPAIR_VENDOR:
+                raise HTTPException(status.HTTP_403_FORBIDDEN, "not a body repair surface")
+            if (
+                req.assigned_vendor_id != current.organization_id
+                and req.status != BodyRepairRequestStatus.PENDING_QUOTES
+            ):
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+        return ("body_repair_requests", req.id)
+
     raise HTTPException(status.HTTP_400_BAD_REQUEST, f"unknown kind: {kind}")
 
 

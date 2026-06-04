@@ -42,3 +42,6 @@ logs/
 
 # Backups
 /backups/
+
+# Reference copies of external demo code (e.g. NOVABODY/core/nova/utils/pave_parser.py)
+_vendor_demo/

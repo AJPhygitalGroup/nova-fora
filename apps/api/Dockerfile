@@ -38,9 +38,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH"
 
-# curl for healthcheck
+# curl for healthcheck.
+# poppler-utils gives us `pdftotext` — required by the PAVE PDF parser
+# (app/services/pave_parser.py). Adds ~25MB to the image; non-negotiable
+# for body-repair since PAVE reports are PDF-only in v0.1.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

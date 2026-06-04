@@ -14,11 +14,14 @@ _MAX_PHOTO_BYTES = get_settings().max_photo_bytes
 # Presigned upload flow
 # ─────────────────────────────────────────────────────
 class UploadKind(str, Enum):
-    """Which entity the photo will be attached to."""
+    """Which entity the photo / file will be attached to."""
 
     INSPECTION = "inspection"
     DEFECT = "defect"
     WORK_ORDER = "work_order"
+    # 2026-06-03 Jorge — body repair PAVE PDF upload. Path scoped to
+    # body_repair_requests/<id>/pave/<bag>.pdf in MinIO.
+    BODY_REPAIR_PAVE = "body_repair_pave"
 
 
 class PresignedUploadRequest(BaseModel):
