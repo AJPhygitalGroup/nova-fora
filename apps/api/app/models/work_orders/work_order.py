@@ -133,6 +133,27 @@ class WorkOrder(SQLModel, table=True):
         default=None,
         sa_column=Column("in_progress_at", sa.DateTime(timezone=True), nullable=True),
     )
+    # Physical vehicle custody — set when the tech (or SW) records the
+    # pickup at the DSP lot via POST /work-orders/{id}/checkout. Distinct
+    # from `in_progress_at` (which marks when work actually starts) so a
+    # van can be "with the vendor but not yet being worked on". Vehicle-
+    # scoped fan-out writes the same picked_up_at to every accepted
+    # sibling WO on the vehicle. Alembic 20260602_1900.
+    picked_up_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(
+            "picked_up_at", sa.DateTime(timezone=True),
+            nullable=True, index=True,
+        ),
+    )
+    picked_up_by_id: int | None = Field(
+        default=None,
+        sa_column=Column(
+            "picked_up_by_id", sa.Integer,
+            sa.ForeignKey("users.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+    )
     completed_at: datetime | None = Field(
         default=None,
         sa_column=Column("completed_at", sa.DateTime(timezone=True), nullable=True),

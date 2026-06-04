@@ -24,7 +24,9 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Loader2, AlertCircle, FileText, Wrench, Plus, X, ChevronDown, ChevronUp,
   UserPlus, AlertTriangle, DollarSign, Check, MessageSquare, Megaphone,
+  Truck, Camera,
 } from 'lucide-react';
+import CheckoutModal from './CheckoutModal';
 import {
   workOrders as woApi,
   repairRequests as rrApi,
@@ -42,6 +44,11 @@ export default function SwWoActions({
   const woId = row.workOrderIdStr || row.workOrderId;
   return (
     <div className="mt-3 pt-3 border-t border-navy-800 space-y-3">
+      {/* Vehicle pickup / checkout — only shown when relevant. The
+          panel self-loads the WO detail to decide whether to render
+          (need pickedUpAt + primaryRo.scheduledStartAt fields not
+          carried on the WoSummaryRo row). */}
+      <CheckoutPanel woId={woId} onChanged={onChanged} />
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <AssignTechPanel woId={woId} currentTechName={row.assignedTechnicianName} workshopOrgId={workshopOrgId} onChanged={onChanged} />
         <MidFindPanel rrIdHint={row.repairRequestId} woId={woId} vehicleClass={vehicleClass} onChanged={onChanged} />
@@ -51,6 +58,76 @@ export default function SwWoActions({
       <CustomerNotesPanel woId={woId} />
       <DeferDefectsPanel row={row} onChanged={onChanged} />
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// CheckoutPanel — Jorge 2026-06-02 Phase B.
+// Shows ONE of three states based on the live WO detail:
+//   - hidden       — WO not yet eligible (status !== accepted, or DSP
+//                    hasn't confirmed pickup yet)
+//   - actionable   — "Check out vehicle" button (opens CheckoutModal)
+//   - completed    — "Picked up Xh ago by <name>" status line
+// ─────────────────────────────────────────────────────
+function CheckoutPanel({ woId, onChanged }) {
+  const [wo, setWo] = useState(null);
+  const [open, setOpen] = useState(false);
+
+  const load = useCallback(() => {
+    woApi.get(woId).then(setWo).catch(() => setWo(null));
+  }, [woId]);
+  useEffect(() => { load(); }, [load]);
+
+  if (!wo) return null;
+
+  const isAccepted = wo.status === 'accepted';
+  const primary = wo.primaryRo || (Array.isArray(wo.ros) ? wo.ros.find((r) => r.isPrimary) : null);
+  const dspConfirmed = !!(primary?.scheduledStartAt);
+  const picked = wo.pickedUpAt;
+
+  // Don't render at all if WO isn't in the pickup-eligible band.
+  if (!isAccepted && !picked) return null;
+  if (isAccepted && !dspConfirmed && !picked) return null;
+
+  return (
+    <>
+      <div className="rounded-lg border border-navy-700 bg-navy-800/40 p-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className={`w-8 h-8 rounded-md flex items-center justify-center shrink-0 ${
+              picked ? 'bg-accent-green/15 border border-accent-green/40' : 'bg-accent-blue/15 border border-accent-blue/40'
+            }`}>
+              {picked ? <Check size={14} className="text-accent-green" /> : <Truck size={14} className="text-accent-blue" />}
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-semibold text-text-strong">
+                {picked ? 'Vehicle picked up' : 'Ready to check out'}
+              </div>
+              <div className="text-[11px] text-text-muted truncate">
+                {picked
+                  ? `${wo.pickedUpByName || 'Tech'} · ${new Date(picked).toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })}`
+                  : 'DSP has confirmed pickup. Snap photos + record handoff to advance.'}
+              </div>
+            </div>
+          </div>
+          {!picked && (
+            <button
+              onClick={() => setOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-accent-blue text-white hover:bg-accent-blue/90 cursor-pointer shrink-0"
+            >
+              <Camera size={12} /> Check out
+            </button>
+          )}
+        </div>
+      </div>
+      {open && (
+        <CheckoutModal
+          wo={wo}
+          onClose={() => setOpen(false)}
+          onSuccess={() => { load(); onChanged?.(); }}
+        />
+      )}
+    </>
   );
 }
 

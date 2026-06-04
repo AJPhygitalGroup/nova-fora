@@ -149,6 +149,18 @@ class WorkOrderResponse(BaseModel):
     cancelled_at: datetime | None = None
     declined_at: datetime | None = None
     marked_stale_at: datetime | None = None
+    # Physical vehicle custody — set by POST /work-orders/{id}/checkout.
+    # Distinct from in_progress_at: vendor has the van but tech might not
+    # be working on it yet. Vehicle-scoped fan-out (same picked_up_at
+    # written to every accepted sibling WO on the vehicle).
+    picked_up_at: datetime | None = None
+    picked_up_by_id: int | None = None
+    picked_up_by_name: str | None = None
+    # Pickup photos taken by the tech at handoff — surfaced on the DSP
+    # customer home (CheckoutVehiclesModal). Each entry: { id, url,
+    # caption?, uploaded_at }. Filtered to stage='vehicle_arrival' from
+    # the work_order_photos table.
+    vehicle_arrival_photos: list[dict] | None = None
     created_by_id: int | None = None
 
     # Denormalized display fields — populated server-side via JOINs so
@@ -207,6 +219,8 @@ class WorkOrderResponse(BaseModel):
         vehicle_model: str | None = None,
         workshop_name: str | None = None,
         assigned_technician_name: str | None = None,
+        picked_up_by_name: str | None = None,
+        vehicle_arrival_photos: list[dict] | None = None,
         inspection_mileage_floor: int | None = None,
         primary_ro: dict | None = None,
         pending_cost_count: int = 0,
@@ -239,6 +253,10 @@ class WorkOrderResponse(BaseModel):
             cancelled_at=wo.cancelled_at,
             declined_at=wo.declined_at,
             marked_stale_at=wo.marked_stale_at,
+            picked_up_at=wo.picked_up_at,
+            picked_up_by_id=wo.picked_up_by_id,
+            picked_up_by_name=picked_up_by_name,
+            vehicle_arrival_photos=vehicle_arrival_photos,
             created_by_id=wo.created_by_id,
             dsp_name=dsp_name,
             vehicle_fleet_id=vehicle_fleet_id,
@@ -697,6 +715,42 @@ async def _resolve_display_fields(
         ).scalar_one_or_none()
         if tech is not None:
             out["assigned_technician_name"] = tech.full_name
+    # 2026-06-02 Phase B — resolve the user who performed the pickup
+    # (may differ from assigned_technician_id: a SW can checkout for a
+    # tech, or one tech can run a courtesy pickup for another).
+    if wo.picked_up_by_id is not None:
+        picker = (
+            await session.execute(
+                select(User).where(User.id == wo.picked_up_by_id)
+            )
+        ).scalar_one_or_none()
+        if picker is not None:
+            out["picked_up_by_name"] = picker.full_name
+    # vehicle_arrival photos — only loaded when there are any.
+    # Storage_path → presigned download URL via generate_download_url
+    # (1h TTL). Filtered to non-deleted + stage='vehicle_arrival'.
+    if wo.picked_up_at is not None:
+        from app.models.work_orders import WorkOrderPhoto, WorkOrderPhotoStage
+        from app.storage.s3 import generate_download_url
+
+        photo_rows = (
+            await session.execute(
+                select(WorkOrderPhoto)
+                .where(WorkOrderPhoto.work_order_id == wo.id)
+                .where(WorkOrderPhoto.stage == WorkOrderPhotoStage.VEHICLE_ARRIVAL.value)
+                .order_by(WorkOrderPhoto.created_at.asc())
+            )
+        ).scalars().all()
+        if photo_rows:
+            out["vehicle_arrival_photos"] = [
+                {
+                    "id": p.id_str if hasattr(p, "id_str") else p.id,
+                    "url": generate_download_url(p.storage_path),
+                    "caption": p.caption,
+                    "uploaded_at": p.created_at.isoformat() if p.created_at else None,
+                }
+                for p in photo_rows
+            ]
     out["inspection_mileage_floor"] = await _max_inspection_mileage_for_wo(
         session, wo
     )
@@ -2527,12 +2581,22 @@ async def _ready_primary_ros_for_vehicle(
     *,
     vehicle_id: int,
     require_pickup_requested: bool = False,
+    require_scheduled_start: bool = False,
+    require_not_picked_up: bool = False,
 ) -> list[tuple[WorkOrderRo, WorkOrder]]:
     """Return (ro, wo) pairs for every PRIMARY RO whose WO is accepted on
-    this vehicle (and, optionally, already has pickup_requested_at set).
+    this vehicle, optionally narrowed by pickup-stage filters.
 
-    Used by both pickup endpoints to fan out the same write to every
-    sibling RO on the same vehicle in one query (the spec invariant).
+    Used by all pickup-stage endpoints to fan out the same write to
+    every sibling RO on the same vehicle in one query (the spec
+    invariant). Filters compose — pass any combo:
+
+      require_pickup_requested → SW already sent the pickup request
+                                  (ro.pickup_requested_at IS NOT NULL)
+      require_scheduled_start  → DSP already confirmed pickup details
+                                  (ro.scheduled_start_at IS NOT NULL)
+      require_not_picked_up    → tech hasn't checked out yet
+                                  (wo.picked_up_at IS NULL)
     """
     q = (
         select(WorkOrderRo, WorkOrder)
@@ -2543,6 +2607,10 @@ async def _ready_primary_ros_for_vehicle(
     )
     if require_pickup_requested:
         q = q.where(WorkOrderRo.pickup_requested_at.is_not(None))
+    if require_scheduled_start:
+        q = q.where(WorkOrderRo.scheduled_start_at.is_not(None))
+    if require_not_picked_up:
+        q = q.where(WorkOrder.picked_up_at.is_(None))
     rows = (await session.execute(q)).all()
     return [(row[0], row[1]) for row in rows]
 
@@ -2746,6 +2814,156 @@ async def confirm_pickup(
         # → in_progress transition is now ONLY through /start.
         in_progress_work_order_ids=[],
     )
+
+
+# ─────────────────────────────────────────────────────
+# POST /work-orders/{id}/checkout — tech records pickup at DSP lot
+# ─────────────────────────────────────────────────────
+class _CheckoutPhoto(BaseModel):
+    """Single photo committed after a successful presigned PUT."""
+
+    storage_key: str = Field(..., min_length=1, max_length=500)
+    content_type: str = Field(..., min_length=1, max_length=80)
+    size_bytes: int | None = Field(default=None, ge=1)
+    caption: str | None = Field(default=None, max_length=200)
+
+
+class CheckoutBody(BaseModel):
+    """Tech body: notes + photos (already uploaded to MinIO via
+    /uploads/presigned then committed here). At least one photo
+    recommended but not enforced — sometimes the tech can't snap one
+    (e.g. weather, customer rush)."""
+
+    photos: list[_CheckoutPhoto] = Field(default_factory=list, max_length=10)
+    notes: str | None = Field(default=None, max_length=500)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.post(
+    "/{wo_id}/checkout",
+    response_model=WorkOrderResponse,
+    summary="Vendor/tech records pickup at the DSP lot — vehicle-scoped fan-out",
+    responses={
+        409: {"description": "WO must be accepted with scheduled_start_at; cannot checkout twice."},
+    },
+)
+async def checkout_wo(
+    body: CheckoutBody,
+    request: Request,
+    wo_id: str = Path(..., examples=["WO-00001"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> WorkOrderResponse:
+    """Tech (or SW) records "I have the vehicle" at the DSP lot.
+
+    Vehicle-scoped fan-out: writes `picked_up_at=now()` + `picked_up_by_id=
+    current.id` to EVERY accepted sibling WO on the vehicle that already
+    has `scheduled_start_at` (DSP confirmed pickup) AND is not yet
+    picked up. One truck trip = one event for every job on that van.
+
+    Photos: only the TARGET WO gets the WorkOrderPhoto rows (stage
+    'vehicle_arrival'). The frontend on the DSP customer home queries
+    by vehicle; if any sibling has photos, those photos surface on
+    every sibling row at render time.
+
+    Status NOT changed. WO stays `accepted` (with picked_up_at set).
+    The canonical accepted → in_progress transition is still POST
+    /work-orders/{id}/start. Decoupling lets the dashboard show "tech
+    has the van" distinctly from "tech is wrenching".
+
+    Auth: site_admin / vendor_admin / service_writer / technician of
+    the workshop that owns the WO. Cross-tenant returns 403 via
+    `_ensure_can_act`.
+    """
+    lang = get_request_language(request)
+
+    wo = await _load_wo_or_404(session, _parse_wo_id(wo_id), lang)
+    await _ensure_can_act(
+        session,
+        wo=wo,
+        user=current,
+        allowed_roles=(
+            UserRole.SITE_ADMIN, UserRole.VENDOR_ADMIN,
+            UserRole.SERVICE_WRITER, UserRole.TECHNICIAN,
+        ),
+        lang=lang,
+    )
+    if wo.status != WorkOrderStatus.ACCEPTED:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"WO is {wo.status.value if hasattr(wo.status, 'value') else wo.status}; "
+            f"only accepted WOs can be checked out",
+        )
+    if wo.picked_up_at is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"WO already picked up at {wo.picked_up_at.isoformat()}",
+        )
+
+    pairs = await _ready_primary_ros_for_vehicle(
+        session,
+        vehicle_id=wo.vehicle_id,
+        require_scheduled_start=True,
+        require_not_picked_up=True,
+    )
+    if not pairs:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "no accepted WO on this vehicle has a confirmed pickup window "
+            "(scheduled_start_at must be set by the DSP first)",
+        )
+
+    now = utc_now()
+    updated_wo_ids: list[int] = []
+    for _ro, sibling_wo in pairs:
+        sibling_wo.picked_up_at = now
+        sibling_wo.picked_up_by_id = current.id
+        session.add(sibling_wo)
+        updated_wo_ids.append(sibling_wo.id)
+        await log_event(
+            session,
+            entity_type=WoActivityLogEntityType.WORK_ORDER,
+            entity_id=sibling_wo.id,
+            action="checked_out",
+            actor_id=current.id,
+            details={
+                "vehicle_id": wo.vehicle_id,
+                "triggering_work_order_id": wo.id,
+                "sibling_count": len(pairs) - 1,
+                "photo_count": len(body.photos),
+            },
+        )
+
+    # Photos — only on the TARGET WO. Siblings stay un-photographed at
+    # the DB level; the frontend joins vehicle-wide at render time so
+    # all rows for the same van display the same images.
+    if body.photos:
+        from app.models.work_orders import WorkOrderPhoto, WorkOrderPhotoStage
+        for p in body.photos:
+            row = WorkOrderPhoto(
+                work_order_id=wo.id,
+                stage=WorkOrderPhotoStage.VEHICLE_ARRIVAL,
+                storage_path=p.storage_key,
+                caption=(
+                    (body.notes or "").strip() if (body.notes and not p.caption)
+                    else p.caption
+                ),
+                created_by_id=current.id,
+            )
+            session.add(row)
+
+    await session.commit()
+    await session.refresh(wo)
+
+    for sibling_wo in (p[1] for p in pairs):
+        try:
+            await _publish_wo_changed(sibling_wo, "checked_out")
+        except Exception:  # noqa: BLE001
+            pass
+
+    return await _build_wo_response(session, wo)
+
 
 
 # ═════════════════════════════════════════════════════

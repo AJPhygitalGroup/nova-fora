@@ -102,15 +102,11 @@ export default function CheckoutVehiclesModal({ open, items, loading, onClose })
           </button>
         </div>
 
-        {/* Phase A photos placeholder banner */}
-        <div className="mx-5 mt-4 mb-2 flex items-start gap-2 px-3 py-2 rounded-md bg-accent-blue/5 border border-accent-blue/30 text-[11px] text-navy-300">
-          <Camera size={12} className="text-accent-blue mt-0.5 shrink-0" />
-          <span>
-            <strong className="text-accent-blue">Photos at handoff coming next round.</strong>{' '}
-            Vendor and tech will capture pickup photos when they grab the van;
-            those will appear here for each row.
-          </span>
-        </div>
+        {/* Phase B note (2026-06-02): photos now flow from the
+            vendor/tech checkout workflow. The placeholder banner shipped
+            in Phase A is gone — rows that have photos render the grid
+            inline; rows without (older WOs that pre-date the checkout
+            feature) just don't show the section. */}
 
         {/* List */}
         <div className="px-5 py-4 max-h-[60vh] overflow-y-auto space-y-2">
@@ -160,15 +156,17 @@ export default function CheckoutVehiclesModal({ open, items, loading, onClose })
                     <div className="flex items-center gap-1.5">
                       <Wrench size={11} className="text-navy-500 shrink-0" />
                       <span className="text-navy-500">Tech:</span>
-                      <span className="text-white truncate">{wo.assignedTechnicianName || '—'}</span>
+                      <span className="text-white truncate">
+                        {wo.pickedUpByName || wo.assignedTechnicianName || '—'}
+                      </span>
                     </div>
                     <div className="flex items-center gap-1.5 sm:col-span-2">
                       <Clock size={11} className="text-navy-500 shrink-0" />
                       <span className="text-navy-500">Picked up:</span>
-                      <span className="text-white">{relativeTime(pickedUpAt)}</span>
-                      {pickedUpAt && (
+                      <span className="text-white">{relativeTime(wo.pickedUpAt || pickedUpAt)}</span>
+                      {(wo.pickedUpAt || pickedUpAt) && (
                         <span className="text-navy-500 ml-1">
-                          ({new Date(pickedUpAt).toLocaleString(undefined, {
+                          ({new Date(wo.pickedUpAt || pickedUpAt).toLocaleString(undefined, {
                             month: 'short', day: 'numeric',
                             hour: '2-digit', minute: '2-digit',
                           })})
@@ -176,6 +174,35 @@ export default function CheckoutVehiclesModal({ open, items, loading, onClose })
                       )}
                     </div>
                   </div>
+
+                  {/* Vehicle arrival photos — present only if the
+                      vendor/tech captured them at checkout (Phase B,
+                      commit 2026-06-02). Clicking a thumb opens the
+                      full-size in a new tab. */}
+                  {Array.isArray(wo.vehicleArrivalPhotos) && wo.vehicleArrivalPhotos.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-navy-700/40">
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <Camera size={11} className="text-accent-blue" />
+                        <span className="text-[10px] uppercase tracking-wide font-semibold text-navy-400">
+                          Pickup photos · {wo.vehicleArrivalPhotos.length}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
+                        {wo.vehicleArrivalPhotos.map((ph) => (
+                          <a
+                            key={ph.id}
+                            href={ph.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="aspect-square rounded-md overflow-hidden border border-navy-700 hover:border-accent-blue/60 transition-colors"
+                            title={ph.caption || 'Pickup photo'}
+                          >
+                            <img src={ph.url} alt={ph.caption || 'Pickup'} className="w-full h-full object-cover" loading="lazy" />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })

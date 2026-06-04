@@ -1115,6 +1115,29 @@ export const workOrders = {
     });
   },
 
+  /**
+   * POST /work-orders/{id}/checkout — vendor/tech records pickup at DSP
+   * lot. Vehicle-scoped fan-out: writes picked_up_at + picked_up_by_id
+   * to every accepted sibling WO on the van. Does NOT flip status —
+   * `accepted → in_progress` still goes through /start.
+   *
+   * body shape:
+   *   {
+   *     photos: [{ storageKey, contentType, sizeBytes?, caption? }],
+   *     notes?: string
+   *   }
+   *
+   * Caller flow: presign each photo via uploads.presigned({ kind:
+   * 'work_order', parentId: woId, ... }), PUT to MinIO via uploads.
+   * putToPresigned, then send the storage_keys here.
+   */
+  checkout(id, body = {}) {
+    return apiFetch(`/work-orders/${encodeURIComponent(id)}/checkout`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
   /** POST /work-orders/{id}/complete — body: { lastMileage? } */
   complete(id, body = {}) {
     return apiFetch(`/work-orders/${encodeURIComponent(id)}/complete`, {
