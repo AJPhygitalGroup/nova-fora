@@ -317,9 +317,12 @@ function VehicleStatusSearch({ dspId }) {
         // and scopes to current.dsp_id for dsp_owners (so the dspId
         // param is belt-and-suspenders).
         const { vehicles: vehApi, workOrders: woApi } = await import('../api/client');
+        // dspId only matters for site_admin (they can scope to any DSP).
+        // For DSP_OWNER the backend already filters to current.org_id and
+        // overrides the param, so passing it is redundant. Drop it to
+        // avoid masking unrelated bugs.
         let vehRes = await vehApi.list({
           search: vanToken,
-          dspId: dspId || undefined,
           perPage: 5,
         });
         if (cancelled) return;
@@ -327,7 +330,6 @@ function VehicleStatusSearch({ dspId }) {
         if (vehItems.length === 0 && tokens.length > 1) {
           vehRes = await vehApi.list({
             search: stripped,
-            dspId: dspId || undefined,
             perPage: 5,
           });
           if (cancelled) return;
@@ -369,7 +371,12 @@ function VehicleStatusSearch({ dspId }) {
           status: deriveVehicleStatus(wo),
         }));
         setResults(withStatus);
-      } catch {
+      } catch (err) {
+        // Surface the failure mode in the console so a real bug doesn't
+        // silently degrade to "not found" — the empty-results path and
+        // the network-error path looked identical before.
+        // eslint-disable-next-line no-console
+        console.warn('VehicleStatusSearch lookup failed:', err);
         if (!cancelled) {
           setVehicleMatch(null); setResults([]); setNotFound(true);
         }
