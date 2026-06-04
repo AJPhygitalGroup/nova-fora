@@ -4247,92 +4247,12 @@ export default function RealDVIC({ user }) {
             </div>
           </div>
 
-          {/* Charts */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
-              className="bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl p-5"
-            >
-              <h3 className="text-sm font-semibold text-white mb-4">{t('realDvic.charts.approvedVsRepaired', 'Daily Approved vs Repaired Defects')}</h3>
-              <div className="h-[200px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  {/* Real backend data when available, fall back to the
-                      mock shape so the chart still renders pre-fetch. */}
-                  <BarChart data={
-                    chartDaily
-                      ? chartDaily.map((p) => ({
-                          day: new Date(p.date).toLocaleDateString(undefined, { weekday: 'short' }),
-                          approved: p.approved,
-                          repaired: p.repaired,
-                        }))
-                      : weeklyInspections
-                  }>
-                    <XAxis dataKey="day" tick={{ fill: '#829ab1', fontSize: 12 }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fill: '#829ab1', fontSize: 11 }} axisLine={false} tickLine={false} />
-                    <Tooltip contentStyle={{ background: '#102a43', border: '1px solid #334e68', borderRadius: 8, fontSize: 12 }} />
-                    <Legend wrapperStyle={{ fontSize: 11, color: '#829ab1' }} />
-                    <Bar dataKey="approved" name={t('realDvic.charts.approvedSeries', 'Approved Defects')} fill="#22c55e" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="repaired" name={t('realDvic.charts.repairedSeries', 'Repaired')} fill="#627d98" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </motion.div>
-
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}
-              className="bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl p-5"
-            >
-              <h3 className="text-sm font-semibold text-white mb-4">{t('realDvic.charts.openDefects', 'Open Defects')}</h3>
-              <div className="h-[200px] flex items-center">
-                {(() => {
-                  // Real data when available; fall back to mock shape.
-                  // Key → palette color. The DSP customer donut returns
-                  // {vsa, other} (collapsed per Michael's note 2026-05-26
-                  // — see dashboards.dsp_open_defects_breakdown). The
-                  // legacy per-source keys are kept so the vendor home /
-                  // older payload shapes still resolve a color.
-                  const PALETTE = {
-                    vsa: '#3b82f6',                  // primary blue — most defects
-                    other: '#94a3b8',                // muted slate — catch-all
-                    inspection: '#3b82f6',           // legacy alias for VSA
-                    shop_finding: '#f97316',
-                    maintenance_request: '#a855f7',
-                    customer_report: '#a855f7',
-                    driver_report: '#eab308',
-                  };
-                  const live = chartDonut && chartDonut.length > 0
-                    ? (() => {
-                        const total = chartDonut.reduce((s, sl) => s + (sl.count || 0), 0) || 1;
-                        return chartDonut.map((sl) => ({
-                          name: sl.label,
-                          value: Math.round((sl.count / total) * 100),
-                          color: PALETTE[sl.key] || '#94a3b8',
-                        }));
-                      })()
-                    : defectCategoryBreakdown;
-                  return (
-                    <>
-                      <ResponsiveContainer width="50%" height="100%">
-                        <PieChart>
-                          <Pie data={live} cx="50%" cy="50%" innerRadius={45} outerRadius={70} dataKey="value" stroke="none">
-                            {live.map((entry, i) => <Cell key={i} fill={entry.color} />)}
-                          </Pie>
-                          <Tooltip contentStyle={{ background: '#102a43', border: '1px solid #334e68', borderRadius: 8, fontSize: 12 }} formatter={(v) => [`${v}%`]} />
-                        </PieChart>
-                      </ResponsiveContainer>
-                      <div className="flex flex-col gap-1.5 text-xs">
-                        {live.map((cat) => (
-                          <div key={cat.name} className="flex items-center gap-2">
-                            <span className="w-2.5 h-2.5 rounded-full" style={{ background: cat.color }} />
-                            <span className="text-navy-300">{cat.name}</span>
-                            <span className="text-white font-semibold">{cat.value}%</span>
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  );
-                })()}
-              </div>
-            </motion.div>
-          </div>
+          {/* Charts (Daily Approved vs Repaired + Open Defects donut)
+              removed per Jorge 2026-06-03. Kept the underlying state
+              (chartDaily, chartDonut) and its fetch effect untouched —
+              the data is still computed each tick so reactivating is a
+              one-block restore. The two API calls under it are cheap
+              (cached, ~1 query each); leave them on. */}
 
           {/* DA Reward Tiers cards removed from Home — they live on the dedicated Rewards page */}
           {/* Today's Defects table moved to its own top-level 'Defects' page */}

@@ -306,11 +306,12 @@ export default function VendorHome({ user }) {
         />
       </div>
 
-      {/* ── Two-column: bar chart + donut ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-6">
-        <DailyDefectsChart workshopId={workshopId} dspId={dspFilter} />
-        <OpenDefectsDonut workshopId={workshopId} dspId={dspFilter} />
-      </div>
+      {/* Charts (Daily Approved vs Repaired + Open Defects donut) removed
+          per Jorge 2026-06-03. The components themselves stay in the file
+          (DailyDefectsChart + OpenDefectsDonut) so future reactivation is
+          a one-line restore — and so the backend endpoints they consume
+          (dashboards.dailyDefects, dashboards.openDefectsBreakdown) stay
+          covered by frontend code grep. */}
 
       {/* ── Ad-hoc Defects modal ─────────────────────── */}
       {adHocOpen && workshopId && (
