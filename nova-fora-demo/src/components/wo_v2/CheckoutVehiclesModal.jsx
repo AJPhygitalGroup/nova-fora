@@ -56,10 +56,31 @@ function relativeTime(iso) {
 // ─────────────────────────────────────────────────────
 export default function CheckoutVehiclesModal({ open, items, loading, onClose }) {
   const sorted = useMemo(() => {
-    // Most-recently picked up first (scheduledStartAt desc).
-    return [...(items || [])].sort((a, b) => {
-      const ta = new Date(a?.primaryRo?.scheduledStartAt || a?.scheduledStartAt || a?.updatedAt || 0).getTime();
-      const tb = new Date(b?.primaryRo?.scheduledStartAt || b?.scheduledStartAt || b?.updatedAt || 0).getTime();
+    // Jorge 2026-06-03: dedupe by vehicle. The /checkout endpoint
+    // fan-outs picked_up_at to every accepted sibling WO on the
+    // vehicle, so a van with 3 WOs would otherwise render 3 times.
+    // From the customer's perspective the unit is "the van" — they
+    // want one row that summarises "Dulles Midas has my Van 12 since
+    // 6m ago", not three rows of the same van.
+    //
+    // Pick a canonical WO per vehicle: prefer one with photos (so
+    // the gallery renders for at least one of them), then highest
+    // defectCount (richer row), then oldest pickup (sticks around).
+    const byVehicle = new Map();
+    for (const wo of (items || [])) {
+      const key = wo?.vehicleId || wo?.vehicleIdStr || wo?.id;
+      const cur = byVehicle.get(key);
+      if (!cur) { byVehicle.set(key, wo); continue; }
+      const score = (w) => (
+        ((Array.isArray(w?.vehicleArrivalPhotos) && w.vehicleArrivalPhotos.length) ? 1000 : 0)
+        + (w?.defectCount ?? w?.defects?.length ?? 0)
+      );
+      if (score(wo) > score(cur)) byVehicle.set(key, wo);
+    }
+    // Most-recently picked up first.
+    return Array.from(byVehicle.values()).sort((a, b) => {
+      const ta = new Date(a?.pickedUpAt || a?.primaryRo?.scheduledStartAt || a?.scheduledStartAt || a?.updatedAt || 0).getTime();
+      const tb = new Date(b?.pickedUpAt || b?.primaryRo?.scheduledStartAt || b?.scheduledStartAt || b?.updatedAt || 0).getTime();
       return tb - ta;
     });
   }, [items]);

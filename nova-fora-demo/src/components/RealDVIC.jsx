@@ -3936,7 +3936,24 @@ export default function RealDVIC({ user }) {
       .list({ atShopCustody: true, limit: 100 })
       .then((res) => {
         if (cancelled) return;
-        setCheckedOutWoQueue(res.items || []);
+        // Jorge 2026-06-03: dedupe by vehicle. The /checkout endpoint
+        // fan-outs picked_up_at to every accepted sibling WO on the
+        // vehicle, so a van with 3 WOs shows up 3x without this. Keep
+        // the WO that's most useful for the row render (has photos →
+        // most defects → first one).
+        const items = res.items || [];
+        const byVehicle = new Map();
+        for (const wo of items) {
+          const key = wo?.vehicleId || wo?.vehicleIdStr || wo?.id;
+          const cur = byVehicle.get(key);
+          if (!cur) { byVehicle.set(key, wo); continue; }
+          const score = (w) => (
+            ((Array.isArray(w?.vehicleArrivalPhotos) && w.vehicleArrivalPhotos.length) ? 1000 : 0)
+            + (w?.defectCount ?? w?.defects?.length ?? 0)
+          );
+          if (score(wo) > score(cur)) byVehicle.set(key, wo);
+        }
+        setCheckedOutWoQueue(Array.from(byVehicle.values()));
       })
       .catch((err) => console.warn('checked-out vans queue failed', err));
     return () => { cancelled = true; };
