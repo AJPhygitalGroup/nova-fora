@@ -18,8 +18,8 @@ field and weren't required to have it. The frontend treats
 `pickedUpAt == null` as "not yet checked out", which is correct for
 the historical set.
 
-Revision ID: 20260602_1900_work_orders_picked_up_cols
-Revises: 20260531_1700_auth_audit_log_table
+Revision ID: 20260602_1900
+Revises: 20260531_1700
 """
 from __future__ import annotations
 
@@ -27,9 +27,12 @@ from alembic import op
 import sqlalchemy as sa
 
 
-# revision identifiers, used by Alembic.
-revision = "20260602_1900_work_orders_picked_up_cols"
-down_revision = "20260531_1700_auth_audit_log_table"
+# revision identifiers, used by Alembic. Short YYYYMMDD_HHMM ids match
+# the convention used by every sibling migration in this folder — the
+# auth_audit_log_table migration is `20260531_1700`, NOT the long
+# descriptive form.
+revision = "20260602_1900"
+down_revision = "20260531_1700"
 branch_labels = None
 depends_on = None
 
