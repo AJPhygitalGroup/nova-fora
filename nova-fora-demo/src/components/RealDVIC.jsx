@@ -136,6 +136,125 @@ const cardDetails = {
 const DSP_RESPONSE_OPTIONS = ['Confirmed', 'Vehicle not available', 'Cancel'];
 const KEY_LOCATION_OPTIONS = ['Cup holder', 'Fuel compartment', 'Other'];
 
+// ─────────────────────────────────────────────────────
+// Analytics tab buttons + expanding chart panel — Jorge 2026-06-03.
+// Replaces the static two-column chart block. User picks which slice
+// to look at via three buttons; the matching chart renders in a
+// collapsible panel below. Rolling 7 days for all three.
+// ─────────────────────────────────────────────────────
+function AnalyticsTabButton({ label, active, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex flex-col items-center justify-center gap-1 px-3 py-3 rounded-xl border text-sm font-semibold transition-all cursor-pointer ${
+        active
+          ? 'bg-accent-blue/15 border-accent-blue text-white shadow-lg shadow-accent-blue/10'
+          : 'bg-navy-900/60 backdrop-blur border-navy-700/40 text-navy-300 hover:border-accent-blue/50 hover:text-white'
+      }`}
+    >
+      <span className="text-center leading-tight">{label}</span>
+      <span className={`text-[10px] font-normal ${active ? 'text-accent-blue' : 'text-navy-500'}`}>
+        Rolling 7 days
+      </span>
+    </button>
+  );
+}
+
+function AnalyticsChartPanel({ tab, chartDaily, chartDonut, onClose }) {
+  const TAB_META = {
+    reported: { title: 'Total Defects Reported · last 7 days', barKey: 'approved', barName: 'Reported', barColor: '#3b82f6' },
+    repaired: { title: 'Total Defects Repaired · last 7 days', barKey: 'repaired', barName: 'Repaired', barColor: '#22c55e' },
+    openVsa:  { title: 'Open VSA Defects · current snapshot' },
+  };
+  const meta = TAB_META[tab];
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -8, height: 0 }}
+      animate={{ opacity: 1, y: 0, height: 'auto' }}
+      exit={{ opacity: 0, y: -8, height: 0 }}
+      transition={{ duration: 0.2 }}
+      className="bg-navy-900/60 backdrop-blur border border-accent-blue/30 rounded-xl p-5"
+    >
+      <div className="flex items-start justify-between mb-3">
+        <h3 className="text-sm font-semibold text-white">{meta.title}</h3>
+        <button
+          onClick={onClose}
+          className="text-navy-400 hover:text-white p-1 -mr-1 -mt-1"
+          title="Close"
+        >
+          <X size={16} />
+        </button>
+      </div>
+      <div className="h-[220px]">
+        {tab === 'openVsa' ? (
+          <OpenVsaDonut chartDonut={chartDonut} />
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={
+              (chartDaily || []).map((p) => ({
+                day: new Date(p.date).toLocaleDateString(undefined, { weekday: 'short' }),
+                value: p[meta.barKey] || 0,
+              }))
+            }>
+              <XAxis dataKey="day" tick={{ fill: '#829ab1', fontSize: 12 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: '#829ab1', fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
+              <Tooltip contentStyle={{ background: '#102a43', border: '1px solid #334e68', borderRadius: 8, fontSize: 12 }} />
+              <Bar dataKey="value" name={meta.barName} fill={meta.barColor} radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+function OpenVsaDonut({ chartDonut }) {
+  // VSA = inspection-sourced defects (the primary driver of the donut);
+  // Other = everything else (shop_finding / maintenance_request / etc).
+  const PALETTE = {
+    vsa: '#3b82f6', other: '#94a3b8',
+    inspection: '#3b82f6', shop_finding: '#f97316',
+    maintenance_request: '#a855f7', customer_report: '#a855f7',
+    driver_report: '#eab308',
+  };
+  if (!chartDonut || chartDonut.length === 0) {
+    return (
+      <div className="h-full flex items-center justify-center text-xs text-navy-400 italic">
+        No open defects to break down right now.
+      </div>
+    );
+  }
+  const total = chartDonut.reduce((s, sl) => s + (sl.count || 0), 0) || 1;
+  const live = chartDonut.map((sl) => ({
+    name: sl.label,
+    value: Math.round((sl.count / total) * 100),
+    color: PALETTE[sl.key] || '#94a3b8',
+  }));
+  return (
+    <div className="h-full flex items-center">
+      <ResponsiveContainer width="50%" height="100%">
+        <PieChart>
+          <Pie data={live} cx="50%" cy="50%" innerRadius={50} outerRadius={75} dataKey="value" stroke="none">
+            {live.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+          </Pie>
+          <Tooltip contentStyle={{ background: '#102a43', border: '1px solid #334e68', borderRadius: 8, fontSize: 12 }} formatter={(v) => [`${v}%`]} />
+        </PieChart>
+      </ResponsiveContainer>
+      <div className="flex flex-col gap-1.5 text-xs">
+        {live.map((cat) => (
+          <div key={cat.name} className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full" style={{ background: cat.color }} />
+            <span className="text-navy-300">{cat.name}</span>
+            <span className="text-white font-semibold">{cat.value}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ScheduledRepairItem({ item, onChanged }) {
   const { t } = useTranslation('dashboard');
   // Persisted state lives on the WO row. Local copies let the UI update
@@ -3605,6 +3724,12 @@ export default function RealDVIC({ user }) {
   // with backend-derived data scoped to this DSP.
   const [chartDaily, setChartDaily] = useState(null);     // [{date, approved, repaired}]
   const [chartDonut, setChartDonut] = useState(null);     // [{key,label,count}]
+  // Jorge 2026-06-03: the chart block was removed from the static
+  // render. Now the three analytics tiles next to the Report Vehicle
+  // Issue banner open a tab panel below them showing the chart for the
+  // selected metric. null = no tab open (default). Click an active tab
+  // again to close.
+  const [analyticsTab, setAnalyticsTab] = useState(null);  // 'reported' | 'openVsa' | 'repaired' | null
   useEffect(() => {
     const dspIdInt = (() => {
       const raw = user?.organizationId ?? user?.orgId;
@@ -4103,25 +4228,60 @@ export default function RealDVIC({ user }) {
               create-WO entry point unmissable. Tile underneath becomes
               cleaner — pure count + label. Same handler
               (setCreateWOContext) → same CreateWorkOrderModal. */}
-          {/* Jorge 2026-06-03: kept the original vertical density
-              (full icon + stacked title + subtitle) but stopped
-              stretching to full width. Now hugs the content + sits
-              left-aligned, so it reads as an action chip rather than
-              a header bar. */}
-          {(user?.role === 'dsp_owner' || user?.role === 'site_admin') && (
-            <button
-              onClick={() => setCreateWOContext({ van: null, defect: null })}
-              className="inline-flex items-center gap-3 px-5 py-4 rounded-xl bg-navy-900/60 backdrop-blur border border-navy-700/40 hover:border-accent-blue/50 hover:bg-navy-800/60 transition-all cursor-pointer text-left max-w-full"
-            >
-              <div className="w-10 h-10 rounded-lg bg-accent-blue/15 border border-accent-blue/40 flex items-center justify-center shrink-0">
-                <Wrench size={18} className="text-accent-blue" />
-              </div>
-              <div className="min-w-0">
-                <div className="text-sm font-semibold text-white">{t('realDvic.reportIssueBanner.title', 'Report Vehicle Issue')}</div>
-                <div className="text-xs text-navy-400">{t('realDvic.reportIssueBanner.subtitle', 'Create a pre-approved repair order for a van in your fleet')}</div>
-              </div>
-              <ArrowRight size={18} className="text-navy-400 shrink-0" />
-            </button>
+          {/* Jorge 2026-06-03: top row — Report Vehicle Issue chip on
+              the left (hugs content), 3 analytics tab buttons on the
+              right (rolling 7-day windows). Each tab click toggles a
+              panel below with the corresponding chart. */}
+          <div className="flex flex-col sm:flex-row gap-3 items-stretch">
+            {(user?.role === 'dsp_owner' || user?.role === 'site_admin') && (
+              <button
+                onClick={() => setCreateWOContext({ van: null, defect: null })}
+                className="inline-flex items-center gap-3 px-5 py-4 rounded-xl bg-navy-900/60 backdrop-blur border border-navy-700/40 hover:border-accent-blue/50 hover:bg-navy-800/60 transition-all cursor-pointer text-left max-w-full"
+              >
+                <div className="w-10 h-10 rounded-lg bg-accent-blue/15 border border-accent-blue/40 flex items-center justify-center shrink-0">
+                  <Wrench size={18} className="text-accent-blue" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-white">{t('realDvic.reportIssueBanner.title', 'Report Vehicle Issue')}</div>
+                  <div className="text-xs text-navy-400">{t('realDvic.reportIssueBanner.subtitle', 'Create a pre-approved repair order for a van in your fleet')}</div>
+                </div>
+                <ArrowRight size={18} className="text-navy-400 shrink-0" />
+              </button>
+            )}
+
+            {/* Analytics tab buttons — each toggles a chart panel below.
+                Rolling 7-day window for all three. Active tab gets a
+                filled-blue treatment; others stay outline. Click an
+                active tab to close the panel. */}
+            <div className="grid grid-cols-3 gap-2 flex-1">
+              <AnalyticsTabButton
+                label="Total Defects Reported"
+                active={analyticsTab === 'reported'}
+                onClick={() => setAnalyticsTab((cur) => cur === 'reported' ? null : 'reported')}
+              />
+              <AnalyticsTabButton
+                label="Open VSA Defects"
+                active={analyticsTab === 'openVsa'}
+                onClick={() => setAnalyticsTab((cur) => cur === 'openVsa' ? null : 'openVsa')}
+              />
+              <AnalyticsTabButton
+                label="Total Defects Repaired"
+                active={analyticsTab === 'repaired'}
+                onClick={() => setAnalyticsTab((cur) => cur === 'repaired' ? null : 'repaired')}
+              />
+            </div>
+          </div>
+
+          {/* Expanding chart panel — only renders when a tab is active.
+              Header echoes the tab label + "Rolling 7 days" badge so
+              users always know the scope. */}
+          {analyticsTab && (
+            <AnalyticsChartPanel
+              tab={analyticsTab}
+              chartDaily={chartDaily}
+              chartDonut={chartDonut}
+              onClose={() => setAnalyticsTab(null)}
+            />
           )}
 
           {/* Key metrics — 6 tiles since Checkout Vehicles landed
