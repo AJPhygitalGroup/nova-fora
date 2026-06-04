@@ -2845,7 +2845,7 @@ class CheckoutBody(BaseModel):
     response_model=WorkOrderResponse,
     summary="Vendor/tech records pickup at the DSP lot — vehicle-scoped fan-out",
     responses={
-        409: {"description": "WO must be accepted with scheduled_start_at; cannot checkout twice."},
+        409: {"description": "WO must be accepted; cannot checkout twice."},
     },
 )
 async def checkout_wo(
@@ -2858,9 +2858,16 @@ async def checkout_wo(
     """Tech (or SW) records "I have the vehicle" at the DSP lot.
 
     Vehicle-scoped fan-out: writes `picked_up_at=now()` + `picked_up_by_id=
-    current.id` to EVERY accepted sibling WO on the vehicle that already
-    has `scheduled_start_at` (DSP confirmed pickup) AND is not yet
-    picked up. One truck trip = one event for every job on that van.
+    current.id` to EVERY accepted sibling WO on the vehicle that hasn't
+    been picked up yet. One truck trip = one event for every job on
+    that van.
+
+    Per Jorge 2026-06-03: scheduled_start_at is NOT required. The happy
+    path is still SW → request pickup → DSP confirms → tech checks out,
+    but field reality is that a tech can show up at the DSP lot before
+    the schedule dance finishes (or for a one-off pickup that skipped
+    schedule entirely). The endpoint accepts both — the DSP-side modal
+    surfaces the photos either way.
 
     Photos: only the TARGET WO gets the WorkOrderPhoto rows (stage
     'vehicle_arrival'). The frontend on the DSP customer home queries
@@ -2904,14 +2911,13 @@ async def checkout_wo(
     pairs = await _ready_primary_ros_for_vehicle(
         session,
         vehicle_id=wo.vehicle_id,
-        require_scheduled_start=True,
         require_not_picked_up=True,
     )
     if not pairs:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            "no accepted WO on this vehicle has a confirmed pickup window "
-            "(scheduled_start_at must be set by the DSP first)",
+            "no accepted WO on this vehicle is eligible for checkout "
+            "(all siblings either declined or already picked up)",
         )
 
     now = utc_now()

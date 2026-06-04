@@ -62,12 +62,23 @@ export default function SwWoActions({
 }
 
 // ─────────────────────────────────────────────────────
-// CheckoutPanel — Jorge 2026-06-02 Phase B.
-// Shows ONE of three states based on the live WO detail:
-//   - hidden       — WO not yet eligible (status !== accepted, or DSP
-//                    hasn't confirmed pickup yet)
-//   - actionable   — "Check out vehicle" button (opens CheckoutModal)
-//   - completed    — "Picked up Xh ago by <name>" status line
+// CheckoutPanel — Jorge 2026-06-02 Phase B (relaxed 2026-06-03).
+//
+// Always visible whenever a WO is in the pickup band. Three states:
+//
+//   - completed    — picked_up_at set → green pill "Picked up Xh ago"
+//   - scheduled    — DSP confirmed pickup (primaryRo.scheduledStartAt
+//                    set) → prominent green "Check out" CTA, this is
+//                    the happy path
+//   - unscheduled  — accepted but no schedule yet → secondary outlined
+//                    "Check out anyway" CTA, with a hint that the DSP
+//                    didn't confirm a pickup window. Field reality:
+//                    tech sometimes shows up at the lot before the
+//                    schedule dance finishes (per Jorge 2026-06-03).
+//
+// The panel only hides for WOs that aren't `accepted` (declined,
+// pending, etc.) AND have never been picked up — there's nothing
+// useful to render for those.
 // ─────────────────────────────────────────────────────
 function CheckoutPanel({ woId, onChanged }) {
   const [wo, setWo] = useState(null);
@@ -85,37 +96,63 @@ function CheckoutPanel({ woId, onChanged }) {
   const dspConfirmed = !!(primary?.scheduledStartAt);
   const picked = wo.pickedUpAt;
 
-  // Don't render at all if WO isn't in the pickup-eligible band.
+  // Only hide for WOs that have no checkout context at all (e.g. declined,
+  // pending, never picked up). Everything else gets a panel.
   if (!isAccepted && !picked) return null;
-  if (isAccepted && !dspConfirmed && !picked) return null;
+
+  // Visual treatment by state.
+  const state = picked ? 'completed' : (dspConfirmed ? 'scheduled' : 'unscheduled');
+  const iconBox = {
+    completed:   'bg-accent-green/15 border-accent-green/40',
+    scheduled:   'bg-accent-blue/15 border-accent-blue/40',
+    unscheduled: 'bg-navy-700/40 border-navy-600',
+  }[state];
+  const Icon = state === 'completed' ? Check : Truck;
+  const iconColor = {
+    completed:   'text-accent-green',
+    scheduled:   'text-accent-blue',
+    unscheduled: 'text-text-muted',
+  }[state];
+  const heading = {
+    completed:   'Vehicle picked up',
+    scheduled:   'Ready to check out',
+    unscheduled: 'Check out vehicle',
+  }[state];
+  const subline = {
+    completed: `${wo.pickedUpByName || 'Tech'} · ${picked ? new Date(picked).toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : ''}`,
+    scheduled: 'DSP confirmed pickup. Snap photos + record handoff to advance.',
+    unscheduled: 'No DSP-confirmed schedule yet — use this only for ad-hoc / drop-in pickups.',
+  }[state];
 
   return (
     <>
       <div className="rounded-lg border border-navy-700 bg-navy-800/40 p-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 min-w-0">
-            <div className={`w-8 h-8 rounded-md flex items-center justify-center shrink-0 ${
-              picked ? 'bg-accent-green/15 border border-accent-green/40' : 'bg-accent-blue/15 border border-accent-blue/40'
-            }`}>
-              {picked ? <Check size={14} className="text-accent-green" /> : <Truck size={14} className="text-accent-blue" />}
+            <div className={`w-8 h-8 rounded-md border flex items-center justify-center shrink-0 ${iconBox}`}>
+              <Icon size={14} className={iconColor} />
             </div>
             <div className="min-w-0">
-              <div className="text-xs font-semibold text-text-strong">
-                {picked ? 'Vehicle picked up' : 'Ready to check out'}
-              </div>
-              <div className="text-[11px] text-text-muted truncate">
-                {picked
-                  ? `${wo.pickedUpByName || 'Tech'} · ${new Date(picked).toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })}`
-                  : 'DSP has confirmed pickup. Snap photos + record handoff to advance.'}
-              </div>
+              <div className="text-xs font-semibold text-text-strong">{heading}</div>
+              <div className="text-[11px] text-text-muted truncate">{subline}</div>
             </div>
           </div>
-          {!picked && (
+          {state === 'scheduled' && (
             <button
               onClick={() => setOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-accent-blue text-white hover:bg-accent-blue/90 cursor-pointer shrink-0"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-accent-green text-white hover:bg-accent-green/90 cursor-pointer shrink-0"
+              title="Record vehicle pickup at DSP lot"
             >
               <Camera size={12} /> Check out
+            </button>
+          )}
+          {state === 'unscheduled' && (
+            <button
+              onClick={() => setOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border border-accent-blue/50 text-accent-blue hover:bg-accent-blue/10 cursor-pointer shrink-0"
+              title="Force checkout without a DSP-confirmed schedule (ad-hoc pickup)"
+            >
+              <Camera size={12} /> Check out anyway
             </button>
           )}
         </div>
