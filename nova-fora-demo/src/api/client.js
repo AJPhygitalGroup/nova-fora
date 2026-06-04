@@ -2164,6 +2164,26 @@ export const bodyRepair = {
       body: JSON.stringify(camelToSnake(body)),
     });
   },
+
+  /**
+   * POST /body-repair/requests/{id}/pave
+   * body: { storageKey, fileSizeBytes?, phase='pre', source='upload', sourceUrl? }
+   * The PDF must already be uploaded to MinIO via uploads.presigned
+   * with kind='body_repair_pave'. Backend downloads it, runs the PAVE
+   * parser (pdftotext), stores the parsed dict + metadata.
+   * Returns the row with VIN / score / damage_count / parse_status.
+   */
+  attachPave(id, body) {
+    return apiFetch(`/body-repair/requests/${encodeURIComponent(id)}/pave`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /** GET /body-repair/requests/{id}/pave — list attached PAVE rows */
+  listPave(id) {
+    return apiFetch(`/body-repair/requests/${encodeURIComponent(id)}/pave`);
+  },
 };
 
 export { APIError };

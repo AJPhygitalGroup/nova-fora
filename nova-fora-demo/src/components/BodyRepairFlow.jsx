@@ -25,13 +25,18 @@
  *   - Click row → detail panel inline (Phase 1 will swap for a real
  *     detail route with the full lifecycle UI from the demo).
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
   Wrench, Plus, X, Loader2, AlertTriangle, Truck, Calendar, FileText,
-  CheckCircle2, ArrowRight,
+  CheckCircle2, ArrowRight, Upload, FileBadge,
 } from 'lucide-react';
-import { bodyRepair as bodyRepairApi, vehicles as vehiclesApi, APIError } from '../api/client';
+import {
+  bodyRepair as bodyRepairApi,
+  vehicles as vehiclesApi,
+  uploads as uploadsApi,
+  APIError,
+} from '../api/client';
 
 // ─────────────────────────────────────────────────────
 // Status → pill style. Per-role labels for the same status (sw vs
@@ -162,6 +167,22 @@ export default function BodyRepairFlow({ user }) {
 // ─────────────────────────────────────────────────────
 function RequestRow({ req, expanded, onToggle }) {
   const s = STATUS_STYLE[req.status] || { label: req.status, color: 'accent-blue' };
+  // PAVE rows are lazy-loaded on expand. Caches so re-collapsing +
+  // re-expanding doesn't refetch every time.
+  const [paveRows, setPaveRows] = useState(null);
+  const [paveErr, setPaveErr] = useState(null);
+  useEffect(() => {
+    if (!expanded || paveRows !== null) return;
+    let cancelled = false;
+    bodyRepairApi
+      .listPave(req.id)
+      .then((rows) => { if (!cancelled) setPaveRows(Array.isArray(rows) ? rows : []); })
+      .catch((e) => { if (!cancelled) setPaveErr(e?.detail || e?.message || 'failed'); });
+    return () => { cancelled = true; };
+  }, [expanded, req.id, paveRows]);
+
+  const paveCount = Array.isArray(paveRows) ? paveRows.length : 0;
+
   return (
     <div className="rounded-xl border border-navy-700 bg-navy-900/60 overflow-hidden">
       <button
@@ -181,6 +202,12 @@ function RequestRow({ req, expanded, onToggle }) {
               {req.vendorName && (
                 <span className="text-[10px] text-navy-400">· {req.vendorName}</span>
               )}
+              {paveCount > 0 && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-accent-purple/15 text-accent-purple border border-accent-purple/40">
+                  <FileBadge size={9} />
+                  PAVE
+                </span>
+              )}
             </div>
             <div className="text-[11px] text-navy-400 truncate">
               {req.dspName}
@@ -194,7 +221,7 @@ function RequestRow({ req, expanded, onToggle }) {
         </span>
       </button>
       {expanded && (
-        <div className="px-4 py-3 border-t border-navy-700/60 bg-navy-900/40 text-sm space-y-2">
+        <div className="px-4 py-3 border-t border-navy-700/60 bg-navy-900/40 text-sm space-y-3">
           {req.textDescription ? (
             <div>
               <div className="text-[10px] uppercase tracking-wider text-navy-500 font-semibold mb-1 flex items-center gap-1">
@@ -205,9 +232,86 @@ function RequestRow({ req, expanded, onToggle }) {
           ) : (
             <p className="text-navy-400 italic">No text description provided.</p>
           )}
+
+          {/* PAVE report panel — shows VIN, score, damage count, parse
+              status. Renders only if reports exist. The full damage
+              list (from parsed_json) will surface in Phase 2 when the
+              UI gets the parts-picker + damage tree visualisation. */}
+          {Array.isArray(paveRows) && paveRows.length > 0 && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-navy-500 font-semibold mb-1.5 flex items-center gap-1">
+                <FileBadge size={10} /> PAVE reports ({paveRows.length})
+              </div>
+              <div className="space-y-1.5">
+                {paveRows.map((p) => <PaveSummary key={p.id} pave={p} />)}
+              </div>
+            </div>
+          )}
+          {paveErr && (
+            <div className="text-[10px] text-accent-red">PAVE list error: {String(paveErr)}</div>
+          )}
+
           <div className="text-[11px] text-navy-400">
-            Phase 1 will add the PAVE report, quotes, scheduling and the full lifecycle UI here.
+            Phase 2 adds the vendor quote queue + parts picker + target-grade selector here.
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Compact PAVE summary chip. Surfaces parse status + the three most
+// useful fields (VIN, score, damage count) plus phase. The full
+// parsed_json (per-side damage list, scores breakdown) lives on the
+// row already; this is the "at a glance" version.
+function PaveSummary({ pave }) {
+  const failed = pave.parseStatus === 'failed';
+  return (
+    <div className={`rounded-lg border px-3 py-2 text-xs ${
+      failed
+        ? 'bg-accent-red/5 border-accent-red/40'
+        : 'bg-navy-800/50 border-navy-700'
+    }`}>
+      <div className="flex items-center gap-2 flex-wrap mb-1">
+        <span className="text-[9px] uppercase tracking-wider font-semibold text-navy-400">
+          {pave.phase}
+        </span>
+        {failed ? (
+          <span className="inline-flex items-center gap-1 text-[10px] text-accent-red">
+            <AlertTriangle size={10} /> Parse failed — manual review
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 text-[10px] text-accent-green">
+            <CheckCircle2 size={10} /> Parsed
+          </span>
+        )}
+        {pave.vin && (
+          <span className="text-navy-300 font-mono text-[10px]">VIN {pave.vin}</span>
+        )}
+      </div>
+      {!failed && (
+        <div className="flex items-center gap-3 text-[11px] text-navy-300 flex-wrap">
+          {pave.year && (
+            <span>{pave.year} {pave.make} {pave.model}</span>
+          )}
+          {pave.totalScore != null && (
+            <span className="inline-flex items-center gap-1">
+              <span className="text-navy-500">Score:</span>
+              <span className="font-semibold text-white">{pave.totalScore}</span>
+            </span>
+          )}
+          {pave.damageCount > 0 && (
+            <span className="inline-flex items-center gap-1">
+              <span className="text-navy-500">Damages:</span>
+              <span className="font-semibold text-white">{pave.damageCount}</span>
+            </span>
+          )}
+        </div>
+      )}
+      {Array.isArray(pave.parsedWarnings) && pave.parsedWarnings.length > 0 && (
+        <div className="text-[9px] text-accent-orange mt-1">
+          {pave.parsedWarnings[0]}
+          {pave.parsedWarnings.length > 1 && ` (+${pave.parsedWarnings.length - 1} more)`}
         </div>
       )}
     </div>
@@ -250,15 +354,38 @@ function CreateRequestModal({ user, onClose, onCreated }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  // PAVE PDF state — null until the user picks a file. The actual
+  // upload + parse happens AFTER the request is created (the parent_id
+  // for the presigned URL is the new BRR-NNNNN).
+  const [paveFile, setPaveFile] = useState(null);
+  // Submission stage: 'idle' | 'creating' | 'uploading_pave' | 'parsing_pave' | 'done'
+  // Surfaced as inline progress text + spinner labels so the user
+  // knows what's happening when they wait 2-3 seconds for parse.
+  const [stage, setStage] = useState('idle');
+  const fileInputRef = useRef(null);
 
-  // Load my vehicles (or any if site_admin). 50 is enough for v0; the
-  // search field below narrows further if the DSP has more.
   useEffect(() => {
     vehiclesApi
       .list({ perPage: 100, search: vehicleSearch || undefined })
       .then((res) => setVehicleOptions(res?.items || []))
       .catch(() => setVehicleOptions([]));
   }, [vehicleSearch]);
+
+  const onPickFile = (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    if (!/\.pdf$/i.test(f.name) && f.type !== 'application/pdf') {
+      setErr('PAVE attachment must be a PDF.');
+      return;
+    }
+    if (f.size > 25 * 1024 * 1024) {
+      setErr('PAVE PDF is too large (max 25MB).');
+      return;
+    }
+    setErr(null);
+    setPaveFile(f);
+  };
 
   const submit = async () => {
     setErr(null);
@@ -271,8 +398,9 @@ function CreateRequestModal({ user, onClose, onCreated }) {
       return;
     }
     setBusy(true);
+    setStage('creating');
+    let createdRequest = null;
     try {
-      // Backend expects int vehicle_id — convert from prefixed "VAN-0131".
       const intId = (() => {
         if (typeof vehicleId === 'number') return vehicleId;
         const m = String(vehicleId).match(/(\d+)/);
@@ -281,20 +409,65 @@ function CreateRequestModal({ user, onClose, onCreated }) {
       if (!intId) {
         setErr('Could not resolve vehicle id.');
         setBusy(false);
+        setStage('idle');
         return;
       }
-      await bodyRepairApi.create({
+      // 1. Create the request (mode='text').
+      createdRequest = await bodyRepairApi.create({
         vehicleId: intId,
         mode: 'text',
         textDescription: text.trim(),
       });
+
+      // 2. If a PAVE PDF was picked, upload + parse it now.
+      if (paveFile && createdRequest?.id) {
+        setStage('uploading_pave');
+        const { uploadUrl, storageKey } = await uploadsApi.presigned({
+          kind: 'body_repair_pave',
+          parentId: createdRequest.id,
+          filename: paveFile.name,
+          contentType: paveFile.type || 'application/pdf',
+          sizeBytes: paveFile.size,
+        });
+        await uploadsApi.putToPresigned(uploadUrl, paveFile, 'application/pdf');
+
+        setStage('parsing_pave');
+        // The /pave endpoint downloads from MinIO + runs pdftotext +
+        // stores the parsed dict. Typical PAVE parses in well under
+        // a second; allow it to surface its own errors.
+        await bodyRepairApi.attachPave(createdRequest.id, {
+          storageKey,
+          fileSizeBytes: paveFile.size,
+          phase: 'pre',
+          source: 'upload',
+        });
+      }
+
+      setStage('done');
       onCreated?.();
     } catch (e) {
-      setErr(e instanceof APIError ? (e.detail || e.message) : (e?.message || 'Failed to submit'));
+      // Distinguish create-failure from upload-failure for the message.
+      const baseMsg = e instanceof APIError ? (e.detail || e.message) : (e?.message || 'Failed to submit');
+      if (stage === 'uploading_pave' || stage === 'parsing_pave') {
+        setErr(
+          createdRequest
+            ? `Request ${createdRequest.id} was created, but PAVE attach failed: ${baseMsg}. You can retry from the detail view.`
+            : baseMsg,
+        );
+      } else {
+        setErr(baseMsg);
+      }
     } finally {
       setBusy(false);
     }
   };
+
+  const submitLabel = (() => {
+    if (!busy) return 'Submit request';
+    if (stage === 'uploading_pave') return 'Uploading PAVE…';
+    if (stage === 'parsing_pave') return 'Parsing PAVE…';
+    return 'Creating request…';
+  })();
 
   return (
     <motion.div
@@ -369,6 +542,58 @@ function CreateRequestModal({ user, onClose, onCreated }) {
             <div className="text-[10px] text-navy-500 mt-1 text-right">{text.length} / 2000</div>
           </div>
 
+          {/* PAVE PDF — optional but recommended. Backend parses it
+              right after upload with pdftotext (poppler-utils).
+              Extracted: VIN, year/make/model, inspection date, scores,
+              full damage list. The DSP doesn't see the parse output in
+              the modal — it's surfaced in the detail row after the
+              request lands. */}
+          <div>
+            <label className="text-xs font-semibold text-text-strong block mb-1.5 flex items-center gap-1.5">
+              <FileBadge size={12} className="text-accent-purple" />
+              PAVE report (optional)
+            </label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/pdf,.pdf"
+              onChange={onPickFile}
+              className="hidden"
+            />
+            {!paveFile ? (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={busy}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border-2 border-dashed border-navy-700 hover:border-accent-purple/50 hover:bg-navy-800/40 transition-all text-sm text-navy-300 cursor-pointer disabled:opacity-50"
+              >
+                <Upload size={14} className="text-navy-400" />
+                Click to attach PAVE PDF
+              </button>
+            ) : (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-accent-purple/10 border border-accent-purple/40">
+                <FileText size={14} className="text-accent-purple shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-text-strong truncate">{paveFile.name}</div>
+                  <div className="text-[10px] text-navy-400">{Math.round(paveFile.size / 1024)} KB</div>
+                </div>
+                {!busy && (
+                  <button
+                    type="button"
+                    onClick={() => setPaveFile(null)}
+                    className="text-navy-400 hover:text-accent-red p-1 cursor-pointer"
+                    title="Remove"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            )}
+            <div className="text-[10px] text-navy-500 mt-1">
+              PDF only · max 25 MB · parsed automatically (VIN, scores, damage list)
+            </div>
+          </div>
+
           {err && (
             <div className="px-3 py-2 rounded-md bg-accent-red/10 border border-accent-red/40 text-xs text-accent-red flex items-center gap-2">
               <AlertTriangle size={12} />
@@ -379,7 +604,7 @@ function CreateRequestModal({ user, onClose, onCreated }) {
           <div className="px-3 py-2 rounded-md bg-accent-blue/5 border border-accent-blue/20 text-[11px] text-navy-300 flex items-start gap-2">
             <ArrowRight size={12} className="text-accent-blue shrink-0 mt-0.5" />
             <span>
-              Phase 0 only supports a free-text description. PAVE PDF upload, parts picker, and target-grade selector ship in the next iteration along with the vendor quote queue.
+              Phase 1 ships text-mode + PAVE PDF upload &amp; parsing. Parts picker, target-grade selector, and the vendor quote queue come in Phase 2.
             </span>
           </div>
         </div>
@@ -398,7 +623,7 @@ function CreateRequestModal({ user, onClose, onCreated }) {
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-accent-purple text-white hover:bg-accent-purple/85 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
           >
             {busy ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
-            Submit request
+            {submitLabel}
           </button>
         </div>
       </motion.div>
