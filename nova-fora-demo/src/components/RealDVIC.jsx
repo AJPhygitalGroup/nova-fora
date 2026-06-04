@@ -316,7 +316,7 @@ function VehicleStatusSearch({ dspId }) {
         // Backend `search` hits fleet_id / vin / plate via ILIKE %x%,
         // and scopes to current.dsp_id for dsp_owners (so the dspId
         // param is belt-and-suspenders).
-        const { vehicles: vehApi, workOrders: woApi } = await import('../api/client');
+        const { vehicles: vehApi, workOrders: woApi, defectReviews: drApi } = await import('../api/client');
         // dspId only matters for site_admin (they can scope to any DSP).
         // For DSP_OWNER the backend already filters to current.org_id and
         // overrides the param, so passing it is redundant. Drop it to
@@ -361,7 +361,16 @@ function VehicleStatusSearch({ dspId }) {
         if (vehicleIntId == null) {
           setResults([]); return;
         }
-        const woRes = await woApi.list({ vehicleId: vehicleIntId, limit: 50 });
+        // Run WO list + pending defect-review queue in parallel — the
+        // queue covers the PRE-WO state where the DSP hasn't yet
+        // approved/rejected the defect's scope. That's the bucket that
+        // shows up on the "Defects for approval" tile and is the most
+        // common reason a search for "17 wiper blade" should surface
+        // an action even though no WO exists yet.
+        const [woRes, drRes] = await Promise.all([
+          woApi.list({ vehicleId: vehicleIntId, limit: 50 }),
+          drApi.queue({ limit: 200 }).catch(() => ({ items: [] })),
+        ]);
         if (cancelled) return;
         let wos = woRes?.items || [];
 
@@ -378,12 +387,37 @@ function VehicleStatusSearch({ dspId }) {
           wos = wos.map((wo) => ({ ...wo, _matchingDefects: wo.defects || [] }));
         }
 
-        // 4) Derive status per WO.
-        const withStatus = wos.map((wo) => ({
+        // 4) Filter the pending review queue to this vehicle (by fleetId)
+        // and optionally by part substring. The queue items don't have a
+        // numeric vehicle_id surfaced, so we match on fleetId — accurate
+        // enough for the DSP's own fleet.
+        const fleetIdLower = (vehicle.fleetId || '').toLowerCase();
+        const pendingReviews = (drRes?.items || []).filter((q) => {
+          if ((q.fleetId || '').toLowerCase() !== fleetIdLower) return false;
+          if (!partQuery) return true;
+          const haystack = `${(q.part || '').replace(/_/g, ' ')} ${(q.defectType || '').replace(/_/g, ' ')}`.toLowerCase();
+          return haystack.includes(partQuery);
+        });
+
+        // 5) Build the unified result list. Pending reviews come FIRST
+        // (action required), then WOs. Each row carries
+        // status.actionRequired so the UI can paint the dot orange
+        // when the DSP needs to do something vs green for informational.
+        const pendingRows = pendingReviews.map((pr) => ({
+          kind: 'pending_review',
+          key: `pr-${pr.id}`,
+          status: { label: 'Pending defect approval', color: 'accent-orange', actionRequired: true },
+          primaryLabel: pr.fleetId ? `Van ${pr.fleetId}` : '—',
+          subLabel: `${(pr.part || '').replace(/_/g, ' ')}${pr.defectType ? ' — ' + pr.defectType.replace(/_/g, ' ') : ''}`,
+          meta: pr.hoursPending ? `${Math.round(pr.hoursPending)}h pending` : null,
+        }));
+        const woRows = wos.map((wo) => ({
+          kind: 'wo',
+          key: `wo-${wo.id}`,
           wo,
           status: deriveVehicleStatus(wo),
         }));
-        setResults(withStatus);
+        setResults([...pendingRows, ...woRows]);
       } catch (err) {
         // Surface the failure mode in the console so a real bug doesn't
         // silently degrade to "not found" — the empty-results path and
@@ -436,45 +470,82 @@ function VehicleStatusSearch({ dspId }) {
               </div>
             </div>
           ) : vehicleMatch && results.length === 0 ? (
-            <div className="flex items-center gap-2 text-xs">
+            <div className="flex items-center gap-2 text-xs px-2 py-1.5 rounded-md bg-accent-green/10 border border-accent-green/30">
               <span className="inline-block w-2 h-2 rounded-full bg-accent-green" />
               <span className="font-semibold text-accent-green">No action required</span>
               <span className="text-navy-400">
-                — Van {vehicleMatch.fleetId || vehicleMatch.idStr} has no active repairs
+                — Van {vehicleMatch.fleetId || vehicleMatch.id} has no active repairs
                 {debounced.split(/\s+/).length > 1 ? ` matching "${debounced.split(/\s+/).slice(1).join(' ')}"` : ''}.
               </span>
             </div>
-          ) : vehicleMatch && (
-            <div className="space-y-1.5">
-              <div className="text-[10px] uppercase tracking-wider text-navy-500 font-semibold mb-1">
-                Van {vehicleMatch.fleetId || vehicleMatch.idStr}
-                {vehicleMatch.year && ` · ${vehicleMatch.year} ${vehicleMatch.make || ''} ${vehicleMatch.model || ''}`.trim()}
-                {' · '}{results.length} matching repair{results.length === 1 ? '' : 's'}
-              </div>
-              {results.map(({ wo, status }) => (
-                <div key={wo.id} className="flex items-start gap-2 text-xs">
-                  <span className={`inline-block w-2 h-2 rounded-full bg-${status.color} shrink-0 mt-1.5`} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className={`font-semibold text-${status.color}`}>{status.label}</span>
-                      <span className="text-navy-500 font-mono text-[10px]">{primaryRoLabel(wo)}</span>
-                      {wo.workshopName && (
-                        <span className="text-navy-400 text-[10px]">· {wo.workshopName}</span>
-                      )}
-                    </div>
-                    {(wo._matchingDefects || []).length > 0 && (
-                      <div className="text-navy-400 text-[10px] truncate">
-                        {wo._matchingDefects.slice(0, 3).map((d) => (
-                          `${(d.part || '').replace(/_/g, ' ')}${d.type ? ' — ' + d.type.replace(/_/g, ' ') : ''}`
-                        )).join(' · ')}
-                        {wo._matchingDefects.length > 3 && ` +${wo._matchingDefects.length - 3} more`}
-                      </div>
-                    )}
-                  </div>
+          ) : vehicleMatch && (() => {
+            // Action summary at the top — orange banner if any row needs
+            // DSP action, green if all are informational. This is the
+            // headline answer to "what do I do about Van 17?"
+            const anyAction = results.some((r) => r.status?.actionRequired);
+            return (
+              <div className="space-y-1.5">
+                <div className={`flex items-center gap-2 text-xs px-2 py-1.5 rounded-md ${
+                  anyAction
+                    ? 'bg-accent-orange/10 border border-accent-orange/40'
+                    : 'bg-accent-green/10 border border-accent-green/30'
+                }`}>
+                  <span className={`inline-block w-2 h-2 rounded-full ${anyAction ? 'bg-accent-orange' : 'bg-accent-green'}`} />
+                  <span className={`font-semibold ${anyAction ? 'text-accent-orange' : 'text-accent-green'}`}>
+                    {anyAction ? 'Action required' : 'No action required'}
+                  </span>
+                  <span className="text-navy-400">
+                    — Van {vehicleMatch.fleetId || vehicleMatch.id}
+                    {vehicleMatch.year ? ` · ${vehicleMatch.year} ${vehicleMatch.make || ''} ${vehicleMatch.model || ''}`.trim() : ''}
+                    {' · '}{results.length} item{results.length === 1 ? '' : 's'}
+                  </span>
                 </div>
-              ))}
-            </div>
-          )}
+                {results.map((row) => {
+                  const { kind, key, status } = row;
+                  if (kind === 'pending_review') {
+                    return (
+                      <div key={key} className="flex items-start gap-2 text-xs">
+                        <span className={`inline-block w-2 h-2 rounded-full bg-${status.color} shrink-0 mt-1.5`} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`font-semibold text-${status.color}`}>{status.label}</span>
+                            {row.meta && <span className="text-navy-500 text-[10px]">· {row.meta}</span>}
+                          </div>
+                          <div className="text-navy-400 text-[10px] truncate">
+                            {row.subLabel}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+                  // kind === 'wo'
+                  const wo = row.wo;
+                  return (
+                    <div key={key} className="flex items-start gap-2 text-xs">
+                      <span className={`inline-block w-2 h-2 rounded-full bg-${status.color} shrink-0 mt-1.5`} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`font-semibold text-${status.color}`}>{status.label}</span>
+                          <span className="text-navy-500 font-mono text-[10px]">{primaryRoLabel(wo)}</span>
+                          {wo.workshopName && (
+                            <span className="text-navy-400 text-[10px]">· {wo.workshopName}</span>
+                          )}
+                        </div>
+                        {(wo._matchingDefects || []).length > 0 && (
+                          <div className="text-navy-400 text-[10px] truncate">
+                            {wo._matchingDefects.slice(0, 3).map((d) => (
+                              `${(d.part || '').replace(/_/g, ' ')}${d.type ? ' — ' + d.type.replace(/_/g, ' ') : ''}`
+                            )).join(' · ')}
+                            {wo._matchingDefects.length > 3 && ` +${wo._matchingDefects.length - 3} more`}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>
@@ -482,21 +553,25 @@ function VehicleStatusSearch({ dspId }) {
 }
 
 function deriveVehicleStatus(wo) {
-  if (wo.status === 'declined')   return { label: 'Declined by vendor', color: 'accent-red' };
-  if (wo.status === 'cancelled')  return { label: 'Cancelled', color: 'text-muted' };
-  if (wo.status === 'completed')  return { label: 'Completed', color: 'accent-green' };
+  // actionRequired = the DSP must do something. Drives the orange-vs-
+  // green highlight on the search result row. Vendor-side waits (e.g.
+  // "Awaiting vendor accept") are NOT DSP-actionable, so they stay
+  // green / informational.
+  if (wo.status === 'declined')   return { label: 'Declined by vendor', color: 'accent-red', actionRequired: true };
+  if (wo.status === 'cancelled')  return { label: 'Cancelled', color: 'accent-gold', actionRequired: false };
+  if (wo.status === 'completed')  return { label: 'Completed', color: 'accent-green', actionRequired: false };
   if ((wo.pendingCostCount || 0) > 0)
-    return { label: 'Pending cost approval', color: 'accent-gold' };
+    return { label: 'Pending cost approval', color: 'accent-orange', actionRequired: true };
   if ((wo.pendingReviewCount || 0) > 0)
-    return { label: 'Pending review', color: 'accent-gold' };
-  if (wo.returnedAt)              return { label: 'Returned to lot', color: 'accent-purple' };
-  if (wo.pickedUpAt)              return { label: 'At vendor', color: 'accent-blue' };
-  if (wo.status === 'in_progress') return { label: 'In repair', color: 'accent-blue' };
+    return { label: 'Pending review', color: 'accent-orange', actionRequired: true };
+  if (wo.returnedAt)              return { label: 'Returned to lot', color: 'accent-green', actionRequired: false };
+  if (wo.pickedUpAt)              return { label: 'At vendor', color: 'accent-blue', actionRequired: false };
+  if (wo.status === 'in_progress') return { label: 'In repair', color: 'accent-blue', actionRequired: false };
   if (wo.scheduledAt || wo?.primaryRo?.scheduledStartAt)
-    return { label: 'Scheduled', color: 'accent-blue' };
-  if (wo.status === 'accepted')   return { label: 'Accepted by vendor', color: 'text-muted' };
-  if (wo.status === 'pending')    return { label: 'Awaiting vendor accept', color: 'accent-orange' };
-  return { label: 'Pending task', color: 'accent-orange' };
+    return { label: 'Scheduled', color: 'accent-blue', actionRequired: false };
+  if (wo.status === 'accepted')   return { label: 'Accepted by vendor', color: 'accent-blue', actionRequired: false };
+  if (wo.status === 'pending')    return { label: 'Awaiting vendor accept', color: 'accent-blue', actionRequired: false };
+  return { label: 'Pending task', color: 'accent-blue', actionRequired: false };
 }
 
 // Local helper — RealDVIC doesn't import lib/wo.js. Inline mirror of
