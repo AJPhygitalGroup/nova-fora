@@ -24,6 +24,12 @@ class OrgType(str, Enum):
     DSP = "dsp"          # Delivery Service Provider (ej. Ribrell 21) — Amazon last-mile
     VENDOR = "vendor"    # Mechanic shop / repair vendor (ej. Dulles Midas)
     PLATFORM = "platform"  # Nova Fora itself (site admin's home org)
+    # 2026-06-03 Jorge — body repair port from web-mbk-body-repair-demo.
+    # Distinct from VENDOR because body shops have a different lifecycle
+    # (quote → schedule pickup → in-shop → pre/post PAVE diff → drop-off
+    # → payment) and different role surfaces (no SW assigning techs,
+    # quotes-first instead of accept/decline of pre-priced work).
+    BODY_REPAIR_VENDOR = "body_repair_vendor"
 
 
 class Organization(SQLModel, table=True):
@@ -65,4 +71,6 @@ class Organization(SQLModel, table=True):
             return f"DSP-{self.id:04d}"
         if self.org_type == OrgType.VENDOR:
             return f"V-{self.id:03d}"
+        if self.org_type == OrgType.BODY_REPAIR_VENDOR:
+            return f"BRV-{self.id:03d}"
         return f"NF-{self.id:03d}"

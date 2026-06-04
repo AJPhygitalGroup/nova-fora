@@ -9,6 +9,7 @@ from app.i18n_errors import translate_known_detail
 from app.i18n_helpers import get_request_language
 from app.routes import (
     auth,
+    body_repair,
     dashboards,
     defect_catalog,
     defect_reviews,
@@ -144,6 +145,8 @@ app.include_router(rewards.router)
 app.include_router(directory.router)
 app.include_router(uploads.router)
 app.include_router(dashboards.router)
+# Body Repair (port of web-mbk-body-repair-demo, Phase 0).
+app.include_router(body_repair.router)
 
 
 @app.get("/", tags=["root"])
