@@ -321,12 +321,20 @@ function VehicleStatusSearch({ dspId }) {
         // For DSP_OWNER the backend already filters to current.org_id and
         // overrides the param, so passing it is redundant. Drop it to
         // avoid masking unrelated bugs.
+        // eslint-disable-next-line no-console
+        console.log('[VehicleSearch] querying', { vanToken, partQuery, stripped });
         let vehRes = await vehApi.list({
           search: vanToken,
           perPage: 5,
         });
         if (cancelled) return;
         let vehItems = vehRes?.items || [];
+        // eslint-disable-next-line no-console
+        console.log('[VehicleSearch] pass-1 result:', {
+          total: vehRes?.total,
+          count: vehItems.length,
+          firstFleetId: vehItems[0]?.fleetId,
+        });
         if (vehItems.length === 0 && tokens.length > 1) {
           vehRes = await vehApi.list({
             search: stripped,
@@ -334,6 +342,11 @@ function VehicleStatusSearch({ dspId }) {
           });
           if (cancelled) return;
           vehItems = vehRes?.items || [];
+          // eslint-disable-next-line no-console
+          console.log('[VehicleSearch] pass-2 result:', {
+            count: vehItems.length,
+            firstFleetId: vehItems[0]?.fleetId,
+          });
         }
         // Prefer exact fleet_id match (case-insensitive); fall back to first.
         const exact = vehItems.find((v) =>
