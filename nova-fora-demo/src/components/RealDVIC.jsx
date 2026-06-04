@@ -4228,15 +4228,17 @@ export default function RealDVIC({ user }) {
               create-WO entry point unmissable. Tile underneath becomes
               cleaner — pure count + label. Same handler
               (setCreateWOContext) → same CreateWorkOrderModal. */}
-          {/* Jorge 2026-06-03: top row — Report Vehicle Issue chip on
-              the left (hugs content), 3 analytics tab buttons on the
-              right (rolling 7-day windows). Each tab click toggles a
-              panel below with the corresponding chart. */}
-          <div className="flex flex-col sm:flex-row gap-3 items-stretch">
+          {/* Jorge 2026-06-03: Report Vehicle Issue chip + 3 analytics
+              tab buttons all in one flex row, siblings (no grid
+              wrapper). The banner hugs content; tabs sit right next
+              to it. Wraps to a new line on narrow screens. Each tab
+              click toggles a chart panel below with the matching
+              rolling 7-day view. */}
+          <div className="flex flex-wrap items-stretch gap-2">
             {(user?.role === 'dsp_owner' || user?.role === 'site_admin') && (
               <button
                 onClick={() => setCreateWOContext({ van: null, defect: null })}
-                className="inline-flex items-center gap-3 px-5 py-4 rounded-xl bg-navy-900/60 backdrop-blur border border-navy-700/40 hover:border-accent-blue/50 hover:bg-navy-800/60 transition-all cursor-pointer text-left max-w-full"
+                className="inline-flex items-center gap-3 px-5 py-4 rounded-xl bg-navy-900/60 backdrop-blur border border-navy-700/40 hover:border-accent-blue/50 hover:bg-navy-800/60 transition-all cursor-pointer text-left"
               >
                 <div className="w-10 h-10 rounded-lg bg-accent-blue/15 border border-accent-blue/40 flex items-center justify-center shrink-0">
                   <Wrench size={18} className="text-accent-blue" />
@@ -4248,28 +4250,21 @@ export default function RealDVIC({ user }) {
                 <ArrowRight size={18} className="text-navy-400 shrink-0" />
               </button>
             )}
-
-            {/* Analytics tab buttons — each toggles a chart panel below.
-                Rolling 7-day window for all three. Active tab gets a
-                filled-blue treatment; others stay outline. Click an
-                active tab to close the panel. */}
-            <div className="grid grid-cols-3 gap-2 flex-1">
-              <AnalyticsTabButton
-                label="Total Defects Reported"
-                active={analyticsTab === 'reported'}
-                onClick={() => setAnalyticsTab((cur) => cur === 'reported' ? null : 'reported')}
-              />
-              <AnalyticsTabButton
-                label="Open VSA Defects"
-                active={analyticsTab === 'openVsa'}
-                onClick={() => setAnalyticsTab((cur) => cur === 'openVsa' ? null : 'openVsa')}
-              />
-              <AnalyticsTabButton
-                label="Total Defects Repaired"
-                active={analyticsTab === 'repaired'}
-                onClick={() => setAnalyticsTab((cur) => cur === 'repaired' ? null : 'repaired')}
-              />
-            </div>
+            <AnalyticsTabButton
+              label="Total Defects Reported"
+              active={analyticsTab === 'reported'}
+              onClick={() => setAnalyticsTab((cur) => cur === 'reported' ? null : 'reported')}
+            />
+            <AnalyticsTabButton
+              label="Open VSA Defects"
+              active={analyticsTab === 'openVsa'}
+              onClick={() => setAnalyticsTab((cur) => cur === 'openVsa' ? null : 'openVsa')}
+            />
+            <AnalyticsTabButton
+              label="Total Defects Repaired"
+              active={analyticsTab === 'repaired'}
+              onClick={() => setAnalyticsTab((cur) => cur === 'repaired' ? null : 'repaired')}
+            />
           </div>
 
           {/* Expanding chart panel — only renders when a tab is active.
