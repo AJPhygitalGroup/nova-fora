@@ -948,6 +948,16 @@ async def list_work_orders(
                     "but scheduled_start_at still null (i.e., the AWAITING CUSTOMER "
                     "bucket). Drives the SW dashboard 'Customer Confirmed Pickup' section.",
     ),
+    at_shop_custody: bool | None = Query(
+        default=None,
+        description="If true, only WOs where the vendor has physical custody of "
+                    "the vehicle right now — either status='in_progress' (legacy: "
+                    "tech wrenching) OR picked_up_at IS NOT NULL with the WO not "
+                    "yet completed/cancelled/declined (post-2026-06-02: tech took "
+                    "the van but hasn't started yet). Drives the DSP-side "
+                    "'Checkout Vehicles' tile so vans show up the moment the tech "
+                    "physically picks them up, not just when work starts.",
+    ),
     limit: int = Query(default=100, ge=1, le=500),
     current: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
@@ -1021,6 +1031,27 @@ async def list_work_orders(
                 .where(WorkOrderRo.scheduled_start_at.is_(None))
             )
         stmt = stmt.where(ro_subq.exists())
+    if at_shop_custody is not None:
+        # "Vendor has physical custody of this vehicle right now."
+        # Covers both paths into custody:
+        #   1. Legacy / canonical: status = 'in_progress' (tech actively
+        #      wrenching — they took the van at some earlier moment).
+        #   2. Post-checkout: status = 'accepted' but picked_up_at is set
+        #      (tech took the van for handoff, hasn't started wrenching).
+        # Excludes terminal states so completed/cancelled/declined work
+        # doesn't linger in the DSP's "currently at shops" view.
+        from sqlalchemy import or_, and_
+        in_progress = WorkOrder.status == WorkOrderStatus.IN_PROGRESS.value
+        accepted_picked_up = and_(
+            WorkOrder.status == WorkOrderStatus.ACCEPTED.value,
+            WorkOrder.picked_up_at.is_not(None),
+        )
+        if at_shop_custody:
+            stmt = stmt.where(or_(in_progress, accepted_picked_up))
+        else:
+            # NOT at custody — exclude both arms above. Rarely used but
+            # symmetric for completeness.
+            stmt = stmt.where(~or_(in_progress, accepted_picked_up))
 
     # Scheduled-list callers want chronological order (earliest first); the
     # default WO list view stays newest-first.

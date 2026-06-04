@@ -3921,11 +3921,19 @@ export default function RealDVIC({ user }) {
         setScheduledWoQueue(res.items || []);
       })
       .catch((err) => console.warn('scheduled WO queue failed', err));
-    // Currently checked-out vans (in_progress WOs) — Jorge 2026-06-02
-    // tile. Backend already scopes WOs to the caller's DSP via the
-    // dsp_owner role check on /work-orders, so no extra filter needed.
+    // Currently checked-out vans — Jorge 2026-06-02 tile. Backend
+    // already scopes WOs to the caller's DSP via the dsp_owner role
+    // check on /work-orders, so no extra filter needed.
+    //
+    // Phase B (2026-06-03): switched from status='in_progress' to the
+    // new `at_shop_custody=true` filter so vans show up the moment the
+    // tech runs /checkout, not just when work starts. Covers both
+    // arms: (a) legacy in_progress WOs and (b) accepted WOs whose
+    // picked_up_at is set (vendor took the van but hasn't started
+    // wrenching yet). The DSP wants visibility on physical custody,
+    // not work-status.
     workOrdersApi
-      .list({ status: 'in_progress', limit: 100 })
+      .list({ atShopCustody: true, limit: 100 })
       .then((res) => {
         if (cancelled) return;
         setCheckedOutWoQueue(res.items || []);

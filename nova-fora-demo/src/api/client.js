@@ -1044,11 +1044,15 @@ export const workOrders = {
   /**
    * GET /work-orders — list, role-scoped server-side.
    * params: { status?, dspId?, vendorWorkshopId?, assignedToMe?,
-   *           vehicleId?, scheduledWithinHours?, hasConfirmedPickup?, limit? }
+   *           vehicleId?, scheduledWithinHours?, hasConfirmedPickup?,
+   *           atShopCustody?, limit? }
    * hasConfirmedPickup=true filters to WOs whose primary RO has both a
    * pickup request AND a DSP confirmation (i.e., the SW "Customer
    * Confirmed Pickup" section). hasConfirmedPickup=false yields the
    * inverse (AWAITING CUSTOMER bucket).
+   * atShopCustody=true filters to WOs the vendor physically has right
+   * now — either status='in_progress' OR (status='accepted' AND
+   * picked_up_at IS NOT NULL). Drives the DSP "Checkout Vehicles" tile.
    */
   list(params = {}) {
     const q = new URLSearchParams();
@@ -1059,6 +1063,7 @@ export const workOrders = {
       vehicleId: 'vehicle_id',
       scheduledWithinHours: 'scheduled_within_hours',
       hasConfirmedPickup: 'has_confirmed_pickup',
+      atShopCustody: 'at_shop_custody',
     };
     for (const [k, v] of Object.entries(params)) {
       if (v === undefined || v === null || v === '') continue;
