@@ -8,7 +8,11 @@ import {
 } from 'lucide-react';
 import VendorScorecard from './VendorScorecard';
 import HomeRouter from './HomeRouter';
-import BodyRepairs from './BodyRepairs';
+// Body Repair Phase 0 (2026-06-03 Jorge): switched the `body` tab from
+// the old mockData-backed `BodyRepairs.jsx` (still in the tree for
+// reference) to the new `BodyRepairFlow.jsx` that wires to the real
+// /body-repair/requests endpoints. Phase 1 brings PAVE + 3 modes.
+import BodyRepairFlow from './BodyRepairFlow';
 import FleetSnapshot from './FleetSnapshot';
 import MyVehicles from './MyVehicles';
 import MyDsps from './MyDsps';
@@ -51,7 +55,7 @@ const VIEW_CATALOG = {
   // the Customer dashboard for DSPs) so the same Component works for both.
   work_orders: { id: 'work_orders', i18nKey: 'workOrders',  icon: ClipboardList,  color: 'text-accent-purple', Component: WoV2Dashboard },
   wo_status:   { id: 'wo_status',   i18nKey: 'workOrders',  icon: ClipboardList,  color: 'text-accent-purple', Component: WoV2Dashboard },
-  body:        { id: 'body',        i18nKey: 'body',        icon: Wrench,         color: 'text-accent-purple', Component: BodyRepairs },
+  body:        { id: 'body',        i18nKey: 'body',        icon: Wrench,         color: 'text-accent-purple', Component: BodyRepairFlow },
   scorecard:   { id: 'scorecard',   i18nKey: 'scorecard',   icon: BarChart3,      color: 'text-accent-blue',   Component: VendorScorecard },
   admin:       { id: 'admin',       i18nKey: 'admin',       icon: Settings,       color: 'text-accent-gold',   Component: AdminPanel },
   ghost:       { id: 'ghost',       i18nKey: 'ghost',       icon: Eye,            color: 'text-accent-red',    Component: GhostMode },

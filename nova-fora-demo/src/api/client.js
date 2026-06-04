@@ -2128,4 +2128,42 @@ export const vendorBucks = {
   },
 };
 
+/**
+ * Body Repair — port of web-mbk-body-repair-demo (Jorge 2026-06-03).
+ * Phase 0 endpoints only: text-mode submission + role-scoped list.
+ *
+ * Lifecycle states (returned in `status` field):
+ *   pending_quotes | quoted | quote_selected | pickup_proposed
+ *   pickup_confirmed | in_repair | repair_complete | pending_signoff
+ *   returned | paid | cancelled | no_eligible_vendor | halted
+ *
+ * Backend route: apps/api/app/routes/body_repair.py
+ */
+export const bodyRepair = {
+  /** GET /body-repair/requests?status=&limit= */
+  list({ status, limit = 50 } = {}) {
+    const q = new URLSearchParams();
+    if (status) q.set('status', String(status));
+    if (limit) q.set('limit', String(limit));
+    return apiFetch(`/body-repair/requests${q.toString() ? '?' + q.toString() : ''}`);
+  },
+
+  /** GET /body-repair/requests/{id} — accepts BRR-NNNNN or bare int */
+  get(id) {
+    return apiFetch(`/body-repair/requests/${encodeURIComponent(id)}`);
+  },
+
+  /**
+   * POST /body-repair/requests
+   * body: { vehicleId, mode='text', textDescription }
+   * Phase 0: only mode='text' is accepted; parts/grade come in Phase 1.
+   */
+  create(body) {
+    return apiFetch('/body-repair/requests', {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+};
+
 export { APIError };
