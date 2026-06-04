@@ -4557,6 +4557,11 @@ export default function RealDVIC({ user }) {
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
               onClick={() => setOpenCard('reported')}
               className="relative bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl p-5 hover:border-navy-600/60 transition-all cursor-pointer h-full flex flex-col">
+              {/* Jorge 2026-06-03: spacer reserves the same 40px + mb-3
+                  that MetricCard reserves for its icon row, so this
+                  card's number lines up vertically with the four
+                  MetricCard tiles to the right. */}
+              <div className="h-10 mb-3" />
               <div className="text-center">
                 <div className="text-2xl font-bold text-white mb-1">{totalDefectsToday}</div>
                 <div className="text-sm text-navy-400">{t('realDvic.metrics.reportedToday', 'DSP-reported defects today')}</div>
@@ -4574,7 +4579,10 @@ export default function RealDVIC({ user }) {
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05, duration: 0.4 }}
               onClick={() => setOpenCard('inspected')}
               className="bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl p-5 hover:border-navy-600/60 transition-all cursor-pointer h-full flex flex-col">
-              <div className="flex items-start justify-between mb-3">
+              {/* min-h-10 + items-center match MetricCard's icon row height
+                  so the number below sits at the same vertical position
+                  as siblings. */}
+              <div className="flex items-center justify-between mb-3 min-h-10">
                 {/* Left: incomplete badge (only shown if any) */}
                 {todayIncompleteCount > 0 ? (
                   <span
