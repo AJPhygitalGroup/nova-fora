@@ -1038,6 +1038,19 @@ function CreateRequestModal({ user, onClose, onCreated }) {
   const [vendorOptions, setVendorOptions] = useState([]);
   const [vendorId, setVendorId] = useState('');
 
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const fileInputRef = useRef(null);
+  // URL-paste flow: paveapi.com URL or any HTTPS PDF link.
+  const [paveUrl, setPaveUrl] = useState('');
+
+  // Step 2 is unlocked once PAVE is parsed OR the customer skips.
+  // Must be declared BEFORE any effect that depends on it — JS const
+  // bindings hit a temporal-dead-zone ReferenceError otherwise and
+  // the whole component fails to render (Jorge saw a blank screen
+  // 2026-06-05).
+  const onStep2 = paveData !== null || paveSkipped;
+
   // Load body repair vendors once we're in Step 2 (don't hit the API
   // unnecessarily while the customer is still on Step 1).
   useEffect(() => {
@@ -1047,15 +1060,6 @@ function CreateRequestModal({ user, onClose, onCreated }) {
       .then((rows) => setVendorOptions(Array.isArray(rows) ? rows : []))
       .catch(() => setVendorOptions([]));
   }, [onStep2]);
-
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
-  const fileInputRef = useRef(null);
-  // URL-paste flow: paveapi.com URL or any HTTPS PDF link.
-  const [paveUrl, setPaveUrl] = useState('');
-
-  // Step 2 is unlocked once PAVE is parsed OR the customer skips.
-  const onStep2 = paveData !== null || paveSkipped;
 
   useEffect(() => {
     vehiclesApi
