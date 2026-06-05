@@ -434,8 +434,19 @@ class ParsePavePreviewBody(BaseModel):
 
 
 class ParsePavePreviewResponse(BaseModel):
-    """The parsed summary — no DB row. Keep the storage_key so the
-    frontend can pass it to /requests/{id}/pave after submitting."""
+    """The parsed PAVE summary — no DB row. Mirrors the rich summary
+    the demo's PaveSummaryCard renders (NOVABODY/web BodyRepair.tsx
+    line 1204).
+
+    Beyond the basics (VIN / year / make / model), this carries the
+    Fleet Condition grade + per-side damage counts + priority flags
+    that give the customer a real read on the vehicle's state BEFORE
+    they submit the request.
+
+    `storage_key` is echoed back so the frontend can pass it to
+    /requests/{id}/pave after the request is created — the same PDF
+    in MinIO gets re-referenced, no re-upload.
+    """
 
     storage_key: str
     parse_status: str  # 'ok' | 'failed'
@@ -444,11 +455,75 @@ class ParsePavePreviewResponse(BaseModel):
     make: str | None
     model: str | None
     inspection_date_utc: str | None
-    total_score: int | None
-    damage_count: int
+
+    # Grade & FCS (Fleet Condition Score)
+    grade: int | None = None              # 0-5
+    grade_label: str | None = None        # 'Great' | 'Good' | 'Fair' | 'Poor'
+    grade_definition: str | None = None   # tooltip text
+
+    # Per-side breakdown (from PAVE's scores section)
+    side_counts: dict | None = None       # {front, back, left, right}
+    side_counts_total: int | None = None
+    all_damages_count: int | None = None
+    damage_count: int                     # backwards-compat with the simpler field
+    total_score: int | None = None        # alias of grade for backwards-compat
+
+    # Risk flags
+    priority_detected: bool = False
+    at_risk_of_grounding: bool = False
+
     parse_warnings: list[str] | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+def _build_pave_summary(parsed: dict) -> dict:
+    """Port of NOVABODY/web@mbk/body-repair-demo's _pave_summary
+    (web/app/api/v2/endpoints/body_repair/endpoints.py line 216).
+    Trimmed to the fields nova-fora's Phase 1 PaveSummaryCard renders;
+    the per-component grouping + priority_components_top land with
+    Phase 2c (parts picker)."""
+    from app.services.fca_scoring import (
+        grade_definition,
+        grade_for_fcs,
+        grade_label,
+    )
+
+    scores = parsed.get("scores") or {}
+    grade = scores.get("total")
+    # Mirror PAVE's auto-Poor rule: a priority defect caps the grade
+    # at Poor (2) regardless of FCS.
+    if isinstance(grade, int) and grade > 2 and scores.get("priority_detected"):
+        grade = 2
+
+    side_counts = {
+        "front": scores.get("front_damage_count"),
+        "back": scores.get("back_damage_count"),
+        "left": scores.get("left_damage_count"),
+        "right": scores.get("right_damage_count"),
+    }
+    side_total = sum(v for v in side_counts.values() if v is not None) or None
+
+    # all_damages_count from PAVE; fall back to len(damages) for older
+    # PAVE PDFs that don't print the change summary row.
+    damages = parsed.get("damages") or []
+    new_damages = parsed.get("new_damage") or []
+    fallback_count = len(damages) if damages else len(new_damages)
+    all_count = scores.get("all_damages_count") or fallback_count
+
+    return {
+        "grade": grade if isinstance(grade, int) else None,
+        "grade_label": (
+            scores.get("total_label")
+            or grade_label(grade)
+        ),
+        "grade_definition": grade_definition(grade) if isinstance(grade, int) else None,
+        "priority_detected": bool(scores.get("priority_detected")),
+        "at_risk_of_grounding": bool(scores.get("at_risk_of_grounding")),
+        "side_counts": side_counts,
+        "side_counts_total": side_total,
+        "all_damages_count": all_count,
+    }
 
 
 @router.post(
@@ -522,11 +597,7 @@ async def parse_pave_preview(
             except OSError:
                 pass
 
-        scores = parsed.get("scores", {}) or {}
-        total_score = scores.get("total") or scores.get("overall")
-        damages = parsed.get("damages") or []
-        new_damages = parsed.get("new_damage") or []
-        damage_count = len(damages) if damages else len(new_damages)
+        summary = _build_pave_summary(parsed)
         warnings = parsed.get("parse_warnings") or None
 
         return ParsePavePreviewResponse(
@@ -537,8 +608,16 @@ async def parse_pave_preview(
             make=parsed.get("make"),
             model=parsed.get("model"),
             inspection_date_utc=parsed.get("inspection_date_utc"),
-            total_score=int(total_score) if isinstance(total_score, (int, float)) else None,
-            damage_count=damage_count,
+            grade=summary["grade"],
+            grade_label=summary["grade_label"],
+            grade_definition=summary["grade_definition"],
+            side_counts=summary["side_counts"],
+            side_counts_total=summary["side_counts_total"],
+            all_damages_count=summary["all_damages_count"],
+            damage_count=summary["all_damages_count"] or 0,
+            total_score=summary["grade"],
+            priority_detected=summary["priority_detected"],
+            at_risk_of_grounding=summary["at_risk_of_grounding"],
             parse_warnings=warnings,
         )
     except HTTPException:

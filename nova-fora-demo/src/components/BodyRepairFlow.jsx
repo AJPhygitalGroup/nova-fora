@@ -1322,64 +1322,121 @@ function StepPill({ n, label, state }) {
 }
 
 // ─────────────────────────────────────────────────────
-// PaveSummaryCard — preview of the parsed PAVE shown in Step 2
-// before the customer submits. VIN drives the vehicle-match check
-// outside; we just display the data here.
+// PaveSummaryCard — rich preview matching the demo's Step 2 card
+// (NOVABODY/web BodyRepair.tsx line 1204). Renders:
+//   - vehicle header (year/make/model + VIN + inspection date)
+//   - grade badge (A/B/C/D from grade 5..2) with FCS label
+//   - priority + at-risk pills
+//   - "Score by side" 5-cell grid (Front / Back / Left / Right / Total)
+//   - parse warnings
+//
+// The panel/damage thumbnail row + "Top priority damages" table from
+// the demo land with Phase 2c (parts picker — also needs the
+// per-component grouping from pave_parser's damage list).
 // ─────────────────────────────────────────────────────
+const GRADE_COLOR_CLS = {
+  5: 'border-accent-green/60 text-accent-green',
+  4: 'border-accent-blue/60 text-accent-blue',
+  3: 'border-accent-gold/60 text-accent-gold',
+  2: 'border-accent-orange/60 text-accent-orange',
+  1: 'border-accent-red/60 text-accent-red',
+  0: 'border-accent-red/80 text-accent-red',
+};
+
 function PaveSummaryCard({ pave, onChange }) {
   const failed = pave.parseStatus === 'failed';
+  const grade = pave.grade;
+  const gradeCls = grade != null ? (GRADE_COLOR_CLS[grade] || 'border-navy-700 text-navy-200') : 'border-navy-700 text-navy-400';
+  const sides = [
+    ['Front', pave.sideCounts?.front],
+    ['Back',  pave.sideCounts?.back],
+    ['Left',  pave.sideCounts?.left],
+    ['Right', pave.sideCounts?.right],
+  ];
+  const totalDamages = pave.allDamagesCount ?? pave.sideCountsTotal ?? pave.damageCount ?? null;
+
   return (
-    <div className={`rounded-lg border px-3 py-2.5 ${
+    <div className={`rounded-lg border p-4 ${
       failed
         ? 'bg-accent-red/5 border-accent-red/40'
-        : 'bg-accent-purple/5 border-accent-purple/40'
+        : 'bg-navy-950/40 border-navy-800'
     }`}>
-      <div className="flex items-start justify-between gap-2 mb-1.5">
-        <div className="flex items-center gap-2 flex-wrap">
-          <FileBadge size={12} className="text-accent-purple" />
-          <span className="text-xs font-semibold text-white">PAVE report</span>
-          {failed ? (
-            <span className="inline-flex items-center gap-1 text-[10px] text-accent-red">
-              <AlertTriangle size={10} /> Parse failed — review or skip
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1 text-[10px] text-accent-green">
-              <CheckCircle2 size={10} /> Parsed
-            </span>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={onChange}
-          className="text-[10px] text-accent-blue hover:underline cursor-pointer shrink-0"
+      <div className="flex items-start gap-4">
+        {/* Grade badge */}
+        <div
+          className={`flex flex-col items-center justify-center w-16 h-16 rounded-xl border-2 ${gradeCls} shrink-0`}
+          title={pave.gradeDefinition || undefined}
         >
-          Change
-        </button>
-      </div>
-      {!failed && (
-        <div className="flex items-center gap-3 text-[11px] text-navy-300 flex-wrap">
-          {pave.vin && (
-            <span className="font-mono">VIN {pave.vin}</span>
-          )}
-          {pave.year && (
-            <span>{pave.year} {pave.make} {pave.model}</span>
-          )}
-          {pave.totalScore != null && (
-            <span>
-              <span className="text-navy-500">Score: </span>
-              <span className="font-semibold text-white">{pave.totalScore}</span>
-            </span>
-          )}
-          {pave.damageCount > 0 && (
-            <span>
-              <span className="text-navy-500">Damages: </span>
-              <span className="font-semibold text-white">{pave.damageCount}</span>
-            </span>
-          )}
+          <span className="text-2xl font-bold leading-none">{grade != null ? grade : '?'}</span>
+          <span className="text-[10px] mt-0.5 uppercase">{pave.gradeLabel || '—'}</span>
         </div>
+        {/* Vehicle header */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2">
+            <h4 className="font-semibold text-white truncate">
+              {pave.year ? `${pave.year} ${pave.make || ''} ${pave.model || ''}`.trim() : 'Vehicle'}
+            </h4>
+            <button
+              type="button"
+              onClick={onChange}
+              className="text-[11px] text-navy-400 hover:text-white shrink-0 cursor-pointer"
+            >
+              ← Change PAVE
+            </button>
+          </div>
+          {pave.vin && (
+            <div className="text-[11px] text-navy-400 font-mono">VIN {pave.vin}</div>
+          )}
+          {pave.inspectionDateUtc && (
+            <div className="text-[10px] text-navy-500">
+              Inspected {String(pave.inspectionDateUtc).slice(0, 10)}
+            </div>
+          )}
+          <div className="flex gap-1.5 mt-1.5 flex-wrap">
+            {failed && (
+              <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-accent-red/20 text-accent-red font-semibold">
+                <AlertTriangle size={9} /> Parse failed
+              </span>
+            )}
+            {pave.priorityDetected && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent-red/20 text-accent-red font-semibold">
+                Priority damages
+              </span>
+            )}
+            {pave.atRiskOfGrounding && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent-red/20 text-accent-red font-semibold">
+                At risk of grounding
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Score by side — only shown when parsing succeeded */}
+      {!failed && (
+        <>
+          <div className="text-[10px] uppercase tracking-wider text-navy-500 mt-4 mb-1">
+            Damages by side
+          </div>
+          <div className="grid grid-cols-5 gap-2">
+            {sides.map(([label, n]) => (
+              <div key={label} className="rounded-lg bg-navy-900/60 border border-navy-800 py-2 text-center">
+                <div className="text-lg font-semibold text-white">{n ?? '—'}</div>
+                <div className="text-[10px] text-navy-400 uppercase">{label}</div>
+              </div>
+            ))}
+            <div className="rounded-lg bg-navy-900/60 border border-accent-blue/40 py-2 text-center">
+              <div className="text-lg font-semibold text-accent-blue">
+                {totalDamages ?? '—'}
+              </div>
+              <div className="text-[10px] text-navy-400 uppercase">Total</div>
+            </div>
+          </div>
+        </>
       )}
+
       {Array.isArray(pave.parseWarnings) && pave.parseWarnings.length > 0 && (
-        <div className="text-[10px] text-accent-orange mt-1.5">
+        <div className="text-[10px] text-accent-orange mt-3">
           {pave.parseWarnings[0]}
           {pave.parseWarnings.length > 1 && ` (+${pave.parseWarnings.length - 1} more)`}
         </div>
