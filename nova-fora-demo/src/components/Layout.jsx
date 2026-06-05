@@ -163,6 +163,16 @@ export default function Layout({ user, onSwitchRole, onLogout, onImpersonate, im
       // Drop 'body' until we confirm the vendor does body work.
       allowedIds = allowedIds.filter((id) => id !== 'body');
     }
+    // 2026-06-05 Jorge — body repair vendors have a different toolset.
+    // The mechanical surfaces don't apply (no WO V2 lifecycle, no QC
+    // DVIC heatmap, no DSP partnerships, no AMR scorecard). Keep:
+    //  - dvic (Home → BodyRepairFlow via HomeRouter)
+    //  - body (Body Repair tab — same content, separate URL)
+    //  - admin (org settings + users)
+    if (user?.orgType === 'body_repair_vendor') {
+      const allowForBodyVendor = new Set(['dvic', 'body', 'admin']);
+      allowedIds = allowedIds.filter((id) => allowForBodyVendor.has(id));
+    }
     const decorate = (v) => ({
       ...v,
       label: navLabel(v.i18nKey),
