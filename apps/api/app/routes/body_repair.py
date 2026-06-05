@@ -557,10 +557,20 @@ async def attach_pave(
         #     ImportError on poppler-utils / missing module is obvious
         from app.services.pave_parser import parse_pave_report
         from app.settings import get_settings
-        from app.storage.s3 import _internal_client
+        from app.storage.s3 import _public_client
 
+        # 2026-06-05 — use the PUBLIC S3 client, not the internal one.
+        # On EasyPanel / Docker Swarm, the internal hostname is
+        # `nova-fora_minio:9000` (stack_service convention) which has
+        # an underscore — RFC 952 forbids underscores in hostnames
+        # and boto3 rejects them with `ValueError: Invalid endpoint:`
+        # BEFORE attempting the connection. The public endpoint
+        # (settings.s3_public_endpoint) is the browser-facing URL
+        # without an underscore and boto3 accepts it. A 2MB PDF
+        # round-trips in ~50-200ms via the public path; acceptable
+        # for an inline parse.
         s = get_settings()
-        cli = _internal_client()
+        cli = _public_client()
         try:
             obj = cli.get_object(Bucket=s.s3_bucket, Key=body.storage_key)
             pdf_bytes = obj["Body"].read()
