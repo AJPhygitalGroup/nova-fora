@@ -21,6 +21,7 @@ shoehorn it into the WorkOrder schema.
 """
 
 from datetime import datetime
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -29,8 +30,12 @@ from sqlmodel import select
 
 from app.auth.dependencies import get_current_user
 from app.db import get_session
+from app.models.base import utc_now
 from app.models.body_repair import (
     BodyRepairPaveReport,
+    BodyRepairQuote,
+    BodyRepairQuoteLineItem,
+    BodyRepairQuoteStatus,
     BodyRepairRequest,
     BodyRepairRequestStatus,
     BodyRepairSubmissionMode,
@@ -566,3 +571,641 @@ async def list_pave(
         ).scalars().all()
     )
     return [_pave_response(r, req) for r in rows]
+
+
+# ═════════════════════════════════════════════════════
+# PHASE 2 — Quote endpoints (port of NOVABODY/web@mbk/body-repair-demo
+#   app/api/v2/endpoints/body_repair/quotes.py)
+# ═════════════════════════════════════════════════════
+# Mirrors the demo's 5 core flows:
+#   GET    /requests/{id}/quotes           — list with per-role projection
+#   POST   /requests/{id}/quotes           — vendor submits a quote
+#   POST   /requests/{id}/select-quote     — customer picks one
+#   POST   /requests/{id}/decline-quotes   — customer rejects all active
+#   POST   /requests/{id}/renew-quote      — vendor extends validity
+#
+# Revisions (Phase 4) deferred — schema is in place from migration
+# 20260604_0000 but the endpoints land with the rest of the in-repair
+# lifecycle.
+# ─────────────────────────────────────────────────────
+
+# Pricing constants — defaults match the demo. Env overrides exist as
+# Settings will land later; for now constants live here so the math is
+# in one place.
+TIER_1_DISCOUNT_PCT = 20.0           # currently unused (tiers = list)
+TIER_2_DISCOUNT_PCT = 10.0
+CONTRACT_COMMISSION_PCT = 8.5        # contract DSPs pay less
+NON_CONTRACT_COMMISSION_PCT = 20.0
+QUOTE_VALIDITY_DAYS = 7
+
+# Statuses where a request is open for new quotes (or first submission).
+_OPEN_FOR_QUOTES: frozenset = frozenset((
+    BodyRepairRequestStatus.PENDING_QUOTES,
+    BodyRepairRequestStatus.QUOTED,
+))
+
+
+def markup_quote(vendor_raw_cents: int, commission_pct: float | Decimal) -> dict:
+    """Vendor cost → list price. Verbatim port of the demo's
+    markup_quote(). Tier columns = list until a future tier ladder
+    reactivates."""
+    pct = float(commission_pct) if commission_pct is not None else 0.0
+    base = round(vendor_raw_cents * (1 + pct / 100.0))
+    return {
+        "base_cents": base,
+        "list_cents": base,
+        "tier_1_cents": base,
+        "tier_2_cents": base,
+    }
+
+
+def _commission_for_org(customer_org: Organization | None) -> float:
+    """Contract DSPs pay the lower commission. For now everyone is
+    non-contract since `body_repair_contract` isn't on the Organization
+    model yet — that flag will land with Phase 5 (contract onboarding).
+    Keeping the helper here so the rest of the code can call it
+    unchanged when the flag arrives."""
+    return NON_CONTRACT_COMMISSION_PCT
+
+
+def _clean_line_items(raw_items: list[dict] | None) -> tuple[list[dict], int]:
+    """Drop empty rows; sum vendor_raw_cents. Mirrors the demo's
+    _clean_line_items / _parse_line_items."""
+    items: list[dict] = []
+    for li in (raw_items or []):
+        parts = li.get("parts_cents") or 0
+        labor = li.get("labor_cents") or 0
+        if parts + labor <= 0:
+            continue
+        items.append({
+            "description": (li.get("description") or "").strip() or None,
+            "parts_cents": parts,
+            "labor_cents": labor,
+        })
+    vendor_raw = sum(it["parts_cents"] + it["labor_cents"] for it in items)
+    return items, vendor_raw
+
+
+async def _require_body_repair_vendor(
+    current: User, session: AsyncSession
+) -> Organization:
+    """Auth + role helper for vendor-side endpoints. Mirrors the demo's
+    `_require_vendor()` — must be a member of an org whose org_type is
+    BODY_REPAIR_VENDOR. Returns the org for downstream FK use.
+
+    site_admin is permitted (operator may submit a quote on behalf of a
+    vendor during onboarding); they pass an explicit vendor_org_id in
+    the body in that case (Phase 5 surface, not needed yet)."""
+    if current.role == UserRole.SITE_ADMIN:
+        # Site admin is permitted but needs a vendor org id; defer to
+        # the route to read it from the body.
+        return None  # type: ignore[return-value]
+    org = (
+        await session.execute(
+            select(Organization).where(Organization.id == current.organization_id)
+        )
+    ).scalar_one_or_none()
+    if org is None or org.org_type != OrgType.BODY_REPAIR_VENDOR:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not a body repair vendor")
+    return org
+
+
+def _quote_response(
+    q: BodyRepairQuote,
+    line_items: list[BodyRepairQuoteLineItem],
+    vendor_name: str | None,
+    view: str = "customer",
+) -> dict:
+    """Project a quote row to the response shape, applying the
+    disclosure rules per role.
+
+    view='customer' → list/platform_fee/tier_*; line items WITHOUT
+                       per-line cents (the customer sees the headline only)
+    view='vendor'   → vendor_raw + line items at raw cost
+    view='admin'    → all fields (customer + vendor + commission)
+    """
+    is_expired = bool(q.valid_until and q.valid_until < utc_now())
+    expires_in: str | None = None
+    if q.valid_until:
+        now = utc_now()
+        delta = (now - q.valid_until) if is_expired else (q.valid_until - now)
+        days = delta.days
+        if days >= 1:
+            expires_in = f"expired {days}d ago" if is_expired else f"in {days}d"
+        else:
+            hours = max(int(delta.total_seconds() // 3600), 1)
+            expires_in = f"expired {hours}h ago" if is_expired else f"in {hours}h"
+
+    base: dict = {
+        "id": q.id_str,
+        "request_id": f"BRR-{q.body_repair_request_id:05d}",
+        "vendor_org_id": q.vendor_org_id,
+        "vendor_org_name": vendor_name,
+        "status": q.status.value if hasattr(q.status, "value") else q.status,
+        "duration_days": q.duration_days,
+        "notes": q.notes,
+        "valid_until": q.valid_until.isoformat() if q.valid_until else None,
+        "is_expired": is_expired,
+        "expires_in": expires_in,
+        "renewed_count": q.renewed_count,
+        "created_at": q.created_at.isoformat() if q.created_at else None,
+    }
+    if view in ("customer", "admin"):
+        base["list_cents"] = q.list_cents
+        base["tier_1_cents"] = q.tier_1_cents
+        base["tier_2_cents"] = q.tier_2_cents
+        base["tier_1_savings_cents"] = max(0, (q.list_cents or 0) - (q.tier_1_cents or 0))
+        base["tier_2_savings_cents"] = max(0, (q.list_cents or 0) - (q.tier_2_cents or 0))
+        base["platform_fee_cents"] = q.platform_fee_cents
+    if view in ("vendor", "admin"):
+        base["vendor_raw_cents"] = q.vendor_raw_cents
+    if view == "admin":
+        base["base_cents"] = q.base_cents
+        base["commission_pct"] = float(q.commission_pct) if q.commission_pct is not None else None
+
+    if view == "vendor":
+        # Vendor sees their raw line items.
+        base["line_items"] = [
+            {
+                "id": li.id_str if hasattr(li, "id_str") else str(li.id),
+                "position": li.position,
+                "description": li.description,
+                "parts_cents": li.parts_cents,
+                "labor_cents": li.labor_cents,
+                "total_cents": (li.parts_cents or 0) + (li.labor_cents or 0),
+            }
+            for li in line_items
+        ]
+    elif view == "customer":
+        # Customer sees the vendor's line items at COST (no per-item
+        # markup), plus the single platform fee line above. Mirrors the
+        # demo's serialize(customer_view=True) which calls
+        # li.serialize(customer_view=False) — yes, that's intentional:
+        # the customer sees vendor cost per line, then ONE platform fee
+        # added at the end.
+        base["line_items"] = [
+            {
+                "id": li.id_str if hasattr(li, "id_str") else str(li.id),
+                "position": li.position,
+                "description": li.description,
+                "parts_cents": li.parts_cents,
+                "labor_cents": li.labor_cents,
+                "total_cents": (li.parts_cents or 0) + (li.labor_cents or 0),
+            }
+            for li in line_items
+        ]
+    else:  # admin
+        base["line_items"] = [
+            {
+                "id": li.id_str if hasattr(li, "id_str") else str(li.id),
+                "position": li.position,
+                "description": li.description,
+                "parts_cents": li.parts_cents,
+                "labor_cents": li.labor_cents,
+                "total_cents": (li.parts_cents or 0) + (li.labor_cents or 0),
+            }
+            for li in line_items
+        ]
+
+    # Revisions list deferred — Phase 4 adds the read.
+    base["revisions"] = []
+    return base
+
+
+async def _quotes_with_items(
+    session: AsyncSession, request_id: int
+) -> list[tuple[BodyRepairQuote, list[BodyRepairQuoteLineItem]]]:
+    """Load all quotes on a request + their line items. Two queries
+    (request → quotes, then one batch fetch for line items keyed by
+    quote_id) instead of N+1."""
+    quotes = list(
+        (
+            await session.execute(
+                select(BodyRepairQuote)
+                .where(BodyRepairQuote.body_repair_request_id == request_id)
+                .order_by(BodyRepairQuote.created_at.asc())
+            )
+        ).scalars().all()
+    )
+    if not quotes:
+        return []
+    quote_ids = [q.id for q in quotes]
+    items_rows = list(
+        (
+            await session.execute(
+                select(BodyRepairQuoteLineItem)
+                .where(BodyRepairQuoteLineItem.quote_id.in_(quote_ids))
+                .order_by(BodyRepairQuoteLineItem.position.asc())
+            )
+        ).scalars().all()
+    )
+    by_quote: dict[int, list[BodyRepairQuoteLineItem]] = {}
+    for li in items_rows:
+        by_quote.setdefault(li.quote_id, []).append(li)
+    return [(q, by_quote.get(q.id, [])) for q in quotes]
+
+
+# ─────────────────────────────────────────────────────
+# GET /body-repair/requests/{id}/quotes
+# ─────────────────────────────────────────────────────
+@router.get(
+    "/requests/{req_id}/quotes",
+    summary="List quotes on a request, per-role projection",
+)
+async def list_quotes(
+    req_id: str = Path(..., examples=["BRR-00001"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    int_id = _parse_req_id(req_id)
+    if int_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    req = (
+        await session.execute(select(BodyRepairRequest).where(BodyRepairRequest.id == int_id))
+    ).scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+
+    # Determine view.
+    is_admin = current.role == UserRole.SITE_ADMIN
+    is_customer = (
+        current.role == UserRole.DSP_OWNER
+        and req.dsp_id == current.organization_id
+    )
+    is_vendor = False
+    vendor_org_id_to_filter: int | None = None
+    if not is_admin and not is_customer:
+        org = (
+            await session.execute(
+                select(Organization).where(Organization.id == current.organization_id)
+            )
+        ).scalar_one_or_none()
+        if org is not None and org.org_type == OrgType.BODY_REPAIR_VENDOR:
+            is_vendor = True
+            vendor_org_id_to_filter = org.id
+
+    if not (is_admin or is_customer or is_vendor):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+
+    all_pairs = await _quotes_with_items(session, req.id)
+    # Customer sees only active + selected. Vendor sees only their own.
+    if is_admin:
+        pairs = all_pairs
+        view = "admin"
+    elif is_customer:
+        pairs = [(q, lis) for (q, lis) in all_pairs
+                 if q.status in (BodyRepairQuoteStatus.ACTIVE, BodyRepairQuoteStatus.SELECTED)]
+        view = "customer"
+    else:  # vendor
+        pairs = [(q, lis) for (q, lis) in all_pairs if q.vendor_org_id == vendor_org_id_to_filter]
+        view = "vendor"
+
+    # Resolve vendor names in one query.
+    vendor_ids = list({q.vendor_org_id for (q, _) in pairs})
+    name_by_id: dict[int, str] = {}
+    if vendor_ids:
+        rows = (
+            await session.execute(
+                select(Organization).where(Organization.id.in_(vendor_ids))
+            )
+        ).scalars().all()
+        name_by_id = {o.id: o.name for o in rows}
+
+    quotes_out = [
+        _quote_response(q, lis, name_by_id.get(q.vendor_org_id), view=view)
+        for (q, lis) in pairs
+    ]
+    return {
+        "is_vendor": is_vendor,
+        "is_admin": is_admin,
+        "is_customer": is_customer,
+        "quotes": quotes_out,
+    }
+
+
+# ─────────────────────────────────────────────────────
+# POST /body-repair/requests/{id}/quotes — vendor submits a quote
+# ─────────────────────────────────────────────────────
+class _QuoteLineItemBody(BaseModel):
+    description: str | None = Field(default=None, max_length=300)
+    parts_cents: int = Field(default=0, ge=0)
+    labor_cents: int = Field(default=0, ge=0)
+
+
+class SubmitQuoteBody(BaseModel):
+    line_items: list[_QuoteLineItemBody] = Field(default_factory=list)
+    duration_days: int | None = Field(default=None, ge=0, le=365)
+    notes: str | None = Field(default=None, max_length=2000)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.post(
+    "/requests/{req_id}/quotes",
+    summary="Body repair vendor submits a quote on an open request",
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        403: {"description": "Not a body-repair vendor."},
+        404: {"description": "Request not found."},
+        409: {"description": "Request not open for quotes, or vendor already has an active quote."},
+    },
+)
+async def submit_quote(
+    body: SubmitQuoteBody,
+    req_id: str = Path(..., examples=["BRR-00001"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    int_id = _parse_req_id(req_id)
+    if int_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    req = (
+        await session.execute(select(BodyRepairRequest).where(BodyRepairRequest.id == int_id))
+    ).scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+
+    vendor_org = await _require_body_repair_vendor(current, session)
+    if vendor_org is None:
+        # site_admin path — not supported in Phase 2; needs the body to
+        # carry a vendor_org_id (Phase 5 onboarding).
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "site_admin quote-on-behalf-of-vendor not implemented yet",
+        )
+
+    if req.status not in _OPEN_FOR_QUOTES:
+        raise HTTPException(status.HTTP_409_CONFLICT, "request is no longer open for quotes")
+
+    # Already an active quote from this vendor?
+    existing = (
+        await session.execute(
+            select(BodyRepairQuote)
+            .where(BodyRepairQuote.body_repair_request_id == req.id)
+            .where(BodyRepairQuote.vendor_org_id == vendor_org.id)
+            .where(BodyRepairQuote.status == BodyRepairQuoteStatus.ACTIVE.value)
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "you already have an active quote on this request",
+        )
+
+    items, vendor_raw = _clean_line_items([li.model_dump() for li in body.line_items])
+    if vendor_raw <= 0:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "add at least one priced line item")
+
+    customer_org = (
+        await session.execute(
+            select(Organization).where(Organization.id == req.dsp_id)
+        )
+    ).scalar_one_or_none()
+    commission = _commission_for_org(customer_org)
+    priced = markup_quote(vendor_raw, commission)
+
+    from datetime import timedelta
+    quote = BodyRepairQuote(
+        body_repair_request_id=req.id,
+        vendor_org_id=vendor_org.id,
+        status=BodyRepairQuoteStatus.ACTIVE,
+        vendor_raw_cents=vendor_raw,
+        base_cents=priced["base_cents"],
+        list_cents=priced["list_cents"],
+        tier_1_cents=priced["tier_1_cents"],
+        tier_2_cents=priced["tier_2_cents"],
+        commission_pct=Decimal(str(commission)),
+        duration_days=body.duration_days,
+        notes=(body.notes or "").strip() or None,
+        valid_until=utc_now() + timedelta(days=QUOTE_VALIDITY_DAYS),
+    )
+    session.add(quote)
+    await session.flush()
+
+    for pos, li in enumerate(items):
+        session.add(BodyRepairQuoteLineItem(
+            quote_id=quote.id,
+            position=pos,
+            description=li["description"],
+            parts_cents=li["parts_cents"],
+            labor_cents=li["labor_cents"],
+        ))
+
+    if req.status == BodyRepairRequestStatus.PENDING_QUOTES:
+        req.status = BodyRepairRequestStatus.QUOTED
+        session.add(req)
+
+    await session.commit()
+    await session.refresh(quote)
+
+    # Re-fetch line items for the response.
+    refreshed_items = list(
+        (
+            await session.execute(
+                select(BodyRepairQuoteLineItem)
+                .where(BodyRepairQuoteLineItem.quote_id == quote.id)
+                .order_by(BodyRepairQuoteLineItem.position.asc())
+            )
+        ).scalars().all()
+    )
+    return {
+        "quote": _quote_response(quote, refreshed_items, vendor_org.name, view="vendor"),
+    }
+
+
+# ─────────────────────────────────────────────────────
+# POST /body-repair/requests/{id}/select-quote
+# ─────────────────────────────────────────────────────
+class SelectQuoteBody(BaseModel):
+    quote_id: str | int = Field(...)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+def _parse_quote_id(raw: str | int) -> int | None:
+    if isinstance(raw, int):
+        return raw
+    s = str(raw).strip()
+    if s.upper().startswith("BRQ-"):
+        tail = s[4:]
+        return int(tail) if tail.isdigit() else None
+    return int(s) if s.isdigit() else None
+
+
+@router.post(
+    "/requests/{req_id}/select-quote",
+    summary="Customer selects a quote — locks vendor + freezes baseline",
+)
+async def select_quote(
+    body: SelectQuoteBody,
+    req_id: str = Path(..., examples=["BRR-00001"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    if current.role not in (UserRole.DSP_OWNER, UserRole.SITE_ADMIN):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "customer-only action")
+    int_id = _parse_req_id(req_id)
+    if int_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    req = (
+        await session.execute(select(BodyRepairRequest).where(BodyRepairRequest.id == int_id))
+    ).scalar_one_or_none()
+    if req is None or (
+        current.role == UserRole.DSP_OWNER and req.dsp_id != current.organization_id
+    ):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+
+    if req.status not in _OPEN_FOR_QUOTES:
+        raise HTTPException(status.HTTP_409_CONFLICT, "a quote has already been selected")
+
+    quote_int_id = _parse_quote_id(body.quote_id)
+    if quote_int_id is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid quote_id")
+    quote = (
+        await session.execute(
+            select(BodyRepairQuote).where(BodyRepairQuote.id == quote_int_id)
+        )
+    ).scalar_one_or_none()
+    if (
+        quote is None
+        or quote.body_repair_request_id != req.id
+        or quote.status != BodyRepairQuoteStatus.ACTIVE
+    ):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "quote not found")
+    if quote.valid_until and quote.valid_until < utc_now():
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "that quote has expired; ask the vendor to renew it before accepting",
+        )
+
+    # Promote the chosen quote; mark the others declined.
+    quote.status = BodyRepairQuoteStatus.SELECTED
+    session.add(quote)
+    siblings = list(
+        (
+            await session.execute(
+                select(BodyRepairQuote)
+                .where(BodyRepairQuote.body_repair_request_id == req.id)
+                .where(BodyRepairQuote.id != quote.id)
+                .where(BodyRepairQuote.status == BodyRepairQuoteStatus.ACTIVE.value)
+            )
+        ).scalars().all()
+    )
+    for sib in siblings:
+        sib.status = BodyRepairQuoteStatus.DECLINED
+        session.add(sib)
+
+    req.assigned_vendor_id = quote.vendor_org_id
+    req.selected_quote_id = quote.id
+    req.quote_selected_at = utc_now()
+    req.approved_list_cents = quote.list_cents
+    req.status = BodyRepairRequestStatus.QUOTE_SELECTED
+    session.add(req)
+    await session.commit()
+    await session.refresh(req)
+
+    return await _build_response(session, req)
+
+
+# ─────────────────────────────────────────────────────
+# POST /body-repair/requests/{id}/decline-quotes — customer rejects all
+# ─────────────────────────────────────────────────────
+@router.post(
+    "/requests/{req_id}/decline-quotes",
+    summary="Customer declines all active quotes — request stays open for new ones",
+)
+async def decline_quotes(
+    req_id: str = Path(..., examples=["BRR-00001"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    if current.role not in (UserRole.DSP_OWNER, UserRole.SITE_ADMIN):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "customer-only action")
+    int_id = _parse_req_id(req_id)
+    if int_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    req = (
+        await session.execute(select(BodyRepairRequest).where(BodyRepairRequest.id == int_id))
+    ).scalar_one_or_none()
+    if req is None or (
+        current.role == UserRole.DSP_OWNER and req.dsp_id != current.organization_id
+    ):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+
+    actives = list(
+        (
+            await session.execute(
+                select(BodyRepairQuote)
+                .where(BodyRepairQuote.body_repair_request_id == req.id)
+                .where(BodyRepairQuote.status == BodyRepairQuoteStatus.ACTIVE.value)
+            )
+        ).scalars().all()
+    )
+    for q in actives:
+        q.status = BodyRepairQuoteStatus.DECLINED
+        session.add(q)
+    # Request reverts to pending_quotes so new bids can come in.
+    req.status = BodyRepairRequestStatus.PENDING_QUOTES
+    session.add(req)
+    await session.commit()
+    await session.refresh(req)
+    return await _build_response(session, req)
+
+
+# ─────────────────────────────────────────────────────
+# POST /body-repair/requests/{id}/renew-quote — vendor extends validity
+# ─────────────────────────────────────────────────────
+@router.post(
+    "/requests/{req_id}/renew-quote",
+    summary="Vendor extends their active quote's validity window",
+)
+async def renew_quote(
+    req_id: str = Path(..., examples=["BRR-00001"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    vendor_org = await _require_body_repair_vendor(current, session)
+    if vendor_org is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not a body repair vendor")
+    int_id = _parse_req_id(req_id)
+    if int_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    req = (
+        await session.execute(select(BodyRepairRequest).where(BodyRepairRequest.id == int_id))
+    ).scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    if req.status not in _OPEN_FOR_QUOTES:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "renewal is only available while waiting on the customer",
+        )
+
+    quote = (
+        await session.execute(
+            select(BodyRepairQuote)
+            .where(BodyRepairQuote.body_repair_request_id == req.id)
+            .where(BodyRepairQuote.vendor_org_id == vendor_org.id)
+            .where(BodyRepairQuote.status == BodyRepairQuoteStatus.ACTIVE.value)
+        )
+    ).scalar_one_or_none()
+    if quote is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no active quote of yours to renew")
+
+    from datetime import timedelta
+    quote.valid_until = utc_now() + timedelta(days=QUOTE_VALIDITY_DAYS)
+    quote.renewed_count = (quote.renewed_count or 0) + 1
+    session.add(quote)
+    await session.commit()
+    await session.refresh(quote)
+
+    items = list(
+        (
+            await session.execute(
+                select(BodyRepairQuoteLineItem)
+                .where(BodyRepairQuoteLineItem.quote_id == quote.id)
+                .order_by(BodyRepairQuoteLineItem.position.asc())
+            )
+        ).scalars().all()
+    )
+    return {"quote": _quote_response(quote, items, vendor_org.name, view="vendor")}

@@ -154,6 +154,12 @@ class BodyRepairRequest(SQLModel, table=True):
         default=None,
         sa_column=Column("quote_selected_at", sa.DateTime(timezone=True), nullable=True),
     )
+    # The customer-approved list price at the moment of selection. The
+    # vendor's mid-repair revisions measure their auto-apply headroom
+    # against this baseline — only an explicit customer approval bumps
+    # it forward. Critical for the "salami guard" against repeated
+    # small bumps. NULL until quote_selected_at fires.
+    approved_list_cents: int | None = Field(default=None)
 
     # ── Pickup stage (Phase 3-4) ───────────────────────────
     pickup_proposed_at: datetime | None = Field(
