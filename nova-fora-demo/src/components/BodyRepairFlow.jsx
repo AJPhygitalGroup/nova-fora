@@ -1103,6 +1103,16 @@ function CreateRequestModal({ user, onClose, onCreated }) {
     setErr(null);
   };
 
+  // Esc to close — the only "outside" exit beyond X / Cancel.
+  // Skipped when the picker is open so its own Esc handler wins.
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key === 'Escape' && !pickOpen) onClose?.();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose, pickOpen]);
+
   // ── Step 1 alt — fetch PAVE from URL (paveapi.com etc.) ───
   const onSyncUrl = async () => {
     const url = paveUrl.trim();
@@ -1243,16 +1253,19 @@ function CreateRequestModal({ user, onClose, onCreated }) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm overflow-y-auto py-12 px-4"
-      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      // Jorge 2026-06-05: NO click-outside-to-close on this data-entry
+      // modal. The customer can have a half-filled PAVE + 3 issues
+      // typed in; a stray click on the backdrop would drop all of it.
+      // Close = X button (top-right), Cancel (bottom), or Esc.
     >
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        className="bg-navy-900 border border-navy-700 rounded-xl w-full max-w-2xl shadow-2xl"
+        className="bg-navy-900 border border-navy-700 rounded-xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[calc(100vh-2rem)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between px-5 py-4 border-b border-navy-700">
+        <div className="flex items-start justify-between px-5 py-4 border-b border-navy-700 shrink-0">
           <div className="flex items-center gap-2">
             <div className="w-9 h-9 rounded-lg bg-accent-purple/15 border border-accent-purple/40 flex items-center justify-center">
               <Wrench size={16} className="text-accent-purple" />
@@ -1267,7 +1280,7 @@ function CreateRequestModal({ user, onClose, onCreated }) {
           </button>
         </div>
 
-        <div className="px-5 py-4 space-y-4">
+        <div className="px-5 py-4 space-y-4 overflow-y-auto flex-1 min-h-0">
           {/* Step pills — Step 1 done as soon as PAVE is parsed OR
               skipped; Step 2 is the create form. */}
           <div className="flex items-center gap-3 text-xs">
@@ -1590,7 +1603,7 @@ function CreateRequestModal({ user, onClose, onCreated }) {
           )}
         </div>
 
-        <div className="px-5 py-3 border-t border-navy-700 flex justify-end gap-2">
+        <div className="px-5 py-3 border-t border-navy-700 flex justify-end gap-2 shrink-0">
           <button
             onClick={onClose}
             disabled={busy}
@@ -1619,6 +1632,14 @@ function CreateRequestModal({ user, onClose, onCreated }) {
 // so the backend can re-resolve which components they picked.
 // ─────────────────────────────────────────────────────
 function PickPartsModal({ components, selected, setSelected, onClose, storageKey, damageImageCount }) {
+  // Esc-to-close — feels expected for any modal even when backdrop
+  // click is disabled.
+  useEffect(() => {
+    const handler = (e) => { if (e.key === 'Escape') onClose?.(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
   const toggleDamage = (itemNo) => {
     setSelected((cur) => {
       const has = cur.includes(itemNo);
@@ -1642,16 +1663,17 @@ function PickPartsModal({ components, selected, setSelected, onClose, storageKey
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm overflow-y-auto py-8 px-4"
-      onClick={onClose}
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      // Same rule as CreateRequestModal — no backdrop-click-to-close,
+      // Esc + X + Done are the exits.
     >
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        className="bg-navy-900 border border-navy-700 rounded-xl w-full max-w-3xl shadow-2xl"
+        className="bg-navy-900 border border-navy-700 rounded-xl w-full max-w-3xl shadow-2xl flex flex-col max-h-[calc(100vh-2rem)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between px-5 py-4 border-b border-navy-700">
+        <div className="flex items-start justify-between px-5 py-4 border-b border-navy-700 shrink-0">
           <div>
             <h3 className="text-base font-semibold text-white">Pick parts to repair</h3>
             <p className="text-[11px] text-navy-400">
@@ -1662,7 +1684,7 @@ function PickPartsModal({ components, selected, setSelected, onClose, storageKey
             <X size={18} />
           </button>
         </div>
-        <div className="px-5 py-4 max-h-[60vh] overflow-y-auto space-y-2">
+        <div className="px-5 py-4 overflow-y-auto space-y-2 flex-1 min-h-0">
           {(components || []).length === 0 ? (
             <div className="text-sm text-navy-400 italic text-center py-8">
               No current damages on this PAVE report.
@@ -1772,7 +1794,7 @@ function PickPartsModal({ components, selected, setSelected, onClose, storageKey
             })
           )}
         </div>
-        <div className="px-5 py-3 border-t border-navy-700 flex justify-end gap-2">
+        <div className="px-5 py-3 border-t border-navy-700 flex justify-end gap-2 shrink-0">
           <button
             type="button"
             onClick={() => setSelected([])}
