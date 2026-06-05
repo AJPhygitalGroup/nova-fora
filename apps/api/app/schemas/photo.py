@@ -2,12 +2,16 @@
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.photo import Photo, PhotoCategory
 from app.settings import get_settings
 
 _MAX_PHOTO_BYTES = get_settings().max_photo_bytes
+# Body repair PAVE PDFs are bigger than photos — typical PAVE is ~2MB
+# but the rare full-fleet snapshot reaches ~20MB. 25MB ceiling matches
+# the frontend file picker cap.
+_MAX_PAVE_BYTES = 25 * 1024 * 1024
 
 
 # ─────────────────────────────────────────────────────
@@ -25,22 +29,54 @@ class UploadKind(str, Enum):
 
 
 class PresignedUploadRequest(BaseModel):
-    """POST /uploads/presigned body."""
+    """POST /uploads/presigned body.
+
+    content_type + size_bytes are validated per-kind in a model_validator
+    so the photo kinds keep their strict image-only contract while the
+    body-repair PAVE kind only accepts PDFs (and gets a larger size cap).
+    """
 
     kind: UploadKind
     # Parent id in frontend format (INS-XXXXX, FD-XXX, WO-XXXXX) OR raw int
     parent_id: str
     # Original filename (we sanitize; never trust)
     filename: str = Field(min_length=1, max_length=255)
-    content_type: str = Field(pattern=r"^image/(jpeg|png|webp|heic|heif)$")
-    # The client MUST declare the file size up-front so we can sign
-    # ContentLength into the URL (see storage/s3.generate_upload_url).
-    # MinIO then 403s any PUT whose Content-Length doesn't match this
-    # exact value — closes the "lie about size, dump GBs" hole.
-    # Capped at settings.max_photo_bytes (default 10 MB).
-    size_bytes: int = Field(ge=1, le=_MAX_PHOTO_BYTES)
+    # Format-only check; per-kind allow-list lives in the model_validator
+    # below (Pydantic field validators can't see other fields).
+    content_type: str = Field(min_length=1, max_length=80)
+    # Format-only check; per-kind size cap is in the model_validator.
+    size_bytes: int = Field(ge=1, le=_MAX_PAVE_BYTES)
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _validate_kind_contract(self) -> "PresignedUploadRequest":
+        """Per-kind content_type + size_bytes contract.
+
+        - body_repair_pave → PDF only, up to 25 MB
+        - everything else  → image/{jpeg,png,webp,heic,heif} only,
+                             up to settings.max_photo_bytes (10 MB default)
+        """
+        if self.kind == UploadKind.BODY_REPAIR_PAVE:
+            if self.content_type.lower() != "application/pdf":
+                raise ValueError(
+                    "content_type must be application/pdf for body_repair_pave"
+                )
+            if self.size_bytes > _MAX_PAVE_BYTES:
+                raise ValueError(
+                    f"size_bytes exceeds PAVE PDF cap ({_MAX_PAVE_BYTES} bytes)"
+                )
+        else:
+            import re
+            if not re.fullmatch(r"image/(jpeg|png|webp|heic|heif)", self.content_type):
+                raise ValueError(
+                    "content_type must be image/{jpeg,png,webp,heic,heif} for photo kinds"
+                )
+            if self.size_bytes > _MAX_PHOTO_BYTES:
+                raise ValueError(
+                    f"size_bytes exceeds photo cap ({_MAX_PHOTO_BYTES} bytes)"
+                )
+        return self
 
 
 class PresignedUploadResponse(BaseModel):
