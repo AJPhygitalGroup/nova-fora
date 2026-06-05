@@ -131,6 +131,20 @@ async def _check_parent_access(
         await _require_wo_scope(wo, current, session)
         return ("work_orders", wo.id)
 
+    if kind == UploadKind.BODY_REPAIR_PAVE_PREVIEW:
+        # PAVE-first flow: PDF uploaded BEFORE the request exists. No
+        # parent_id check (request doesn't exist yet). The path prefix
+        # below segregates previews from real attachments so a sweeper
+        # can age out previews that never got promoted to a request.
+        # Auth is "any logged-in user that can create a BR request" —
+        # which today means DSP owners and site_admins. Body-repair
+        # vendors don't upload previews (they don't create requests).
+        if current.role not in (UserRole.DSP_OWNER, UserRole.SITE_ADMIN):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, "only customers create PAVE previews"
+            )
+        return ("body_repair_previews", 0)
+
     if kind == UploadKind.BODY_REPAIR_PAVE:
         # 2026-06-03 Jorge — body repair PAVE PDF upload. parent_id is
         # the BRR-NNNNN id (or bare int) of the owning request. Scoping:

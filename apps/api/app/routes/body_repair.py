@@ -414,6 +414,142 @@ async def delete_request(
 
 
 # ─────────────────────────────────────────────────────
+# POST /body-repair/pave/parse-preview — PAVE-first flow (Phase 1c)
+#
+# Used BEFORE a request exists. The customer uploads a PAVE PDF via
+# /uploads/presigned (kind='body_repair_pave_preview') and posts the
+# storage_key here. We parse the PDF and return the structured summary
+# without creating any DB row. The same storage_key gets attached to
+# the real request when /requests/{id}/pave is called after submission.
+#
+# Why PAVE-first: the parsed VIN can validate the vehicle picker, the
+# damage list can drive the parts picker, and the parse confirms BEFORE
+# the customer fills out the rest of the form. Mirrors the demo's
+# Step 1 (paste URL / upload) → Step 2 (scope & notes) flow.
+# ─────────────────────────────────────────────────────
+class ParsePavePreviewBody(BaseModel):
+    storage_key: str = Field(..., min_length=1, max_length=500)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ParsePavePreviewResponse(BaseModel):
+    """The parsed summary — no DB row. Keep the storage_key so the
+    frontend can pass it to /requests/{id}/pave after submitting."""
+
+    storage_key: str
+    parse_status: str  # 'ok' | 'failed'
+    vin: str | None
+    year: int | None
+    make: str | None
+    model: str | None
+    inspection_date_utc: str | None
+    total_score: int | None
+    damage_count: int
+    parse_warnings: list[str] | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+@router.post(
+    "/pave/parse-preview",
+    response_model=ParsePavePreviewResponse,
+    summary="Parse an already-uploaded PAVE PDF without creating a request",
+    responses={
+        403: {"description": "Only DSP owners and site_admins can preview."},
+        409: {"description": "Could not download PDF from storage."},
+    },
+)
+async def parse_pave_preview(
+    body: ParsePavePreviewBody,
+    current: User = Depends(get_current_user),
+) -> ParsePavePreviewResponse:
+    """Download + parse a PAVE PDF that was uploaded with
+    kind='body_repair_pave_preview'. Returns the parsed summary
+    without persisting anything."""
+    import logging
+    import os
+    import tempfile
+
+    log = logging.getLogger("nova.body_repair")
+
+    if current.role not in (UserRole.DSP_OWNER, UserRole.SITE_ADMIN):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "only customers preview PAVE reports"
+        )
+
+    # Tenancy guard on the storage_key path: previews go under
+    # "body_repair_previews/" — refuse anything else so a user can't
+    # parse a real request's PAVE this way (which would 200 fine but
+    # is an info-leak vector if they guessed paths).
+    if not body.storage_key.startswith("body_repair_previews/"):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "storage_key must be a preview upload",
+        )
+
+    try:
+        from app.services.pave_parser import parse_pave_report
+        from app.settings import get_settings
+        from app.storage.s3 import _public_client
+
+        s = get_settings()
+        cli = _public_client()
+        try:
+            obj = cli.get_object(Bucket=s.s3_bucket, Key=body.storage_key)
+            pdf_bytes = obj["Body"].read()
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "parse_pave_preview: S3 fetch failed for key=%s: %s",
+                body.storage_key, e,
+            )
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"could not fetch PDF from storage: {type(e).__name__}: {e}",
+            ) from e
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+        try:
+            tmp.write(pdf_bytes)
+            tmp.flush()
+            tmp.close()
+            parsed: dict = parse_pave_report(tmp.name)
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+
+        scores = parsed.get("scores", {}) or {}
+        total_score = scores.get("total") or scores.get("overall")
+        damages = parsed.get("damages") or []
+        new_damages = parsed.get("new_damage") or []
+        damage_count = len(damages) if damages else len(new_damages)
+        warnings = parsed.get("parse_warnings") or None
+
+        return ParsePavePreviewResponse(
+            storage_key=body.storage_key,
+            parse_status=parsed.get("parse_status", "failed"),
+            vin=parsed.get("vin"),
+            year=parsed.get("year"),
+            make=parsed.get("make"),
+            model=parsed.get("model"),
+            inspection_date_utc=parsed.get("inspection_date_utc"),
+            total_score=int(total_score) if isinstance(total_score, (int, float)) else None,
+            damage_count=damage_count,
+            parse_warnings=warnings,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        log.exception("parse_pave_preview: unhandled exception")
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"parse_pave_preview failed: {type(e).__name__}: {e}",
+        ) from e
+
+
+# ─────────────────────────────────────────────────────
 # POST /body-repair/requests/{id}/pave — Phase 1
 #
 # Attaches a parsed PAVE PDF to a request. The frontend uploads the PDF

@@ -26,6 +26,14 @@ class UploadKind(str, Enum):
     # 2026-06-03 Jorge — body repair PAVE PDF upload. Path scoped to
     # body_repair_requests/<id>/pave/<bag>.pdf in MinIO.
     BODY_REPAIR_PAVE = "body_repair_pave"
+    # 2026-06-05 Jorge — PAVE-first flow. Customer uploads + parses
+    # the PDF BEFORE the request is created (the parsed VIN drives
+    # the vehicle picker, the damages drive the parts picker). No
+    # parent required; the PDF lives under a "previews/" prefix and
+    # gets re-referenced by storage_key when the real request is
+    # created. Tenancy is just "authenticated user only" since the
+    # preview leaves no DB trace.
+    BODY_REPAIR_PAVE_PREVIEW = "body_repair_pave_preview"
 
 
 class PresignedUploadRequest(BaseModel):
@@ -57,10 +65,10 @@ class PresignedUploadRequest(BaseModel):
         - everything else  → image/{jpeg,png,webp,heic,heif} only,
                              up to settings.max_photo_bytes (10 MB default)
         """
-        if self.kind == UploadKind.BODY_REPAIR_PAVE:
+        if self.kind in (UploadKind.BODY_REPAIR_PAVE, UploadKind.BODY_REPAIR_PAVE_PREVIEW):
             if self.content_type.lower() != "application/pdf":
                 raise ValueError(
-                    "content_type must be application/pdf for body_repair_pave"
+                    "content_type must be application/pdf for body_repair_pave* uploads"
                 )
             if self.size_bytes > _MAX_PAVE_BYTES:
                 raise ValueError(
