@@ -29,7 +29,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
   Wrench, Plus, X, Loader2, AlertTriangle, Truck, Calendar, FileText,
-  CheckCircle2, ArrowRight, Upload, FileBadge,
+  CheckCircle2, ArrowRight, Upload, FileBadge, DollarSign, ThumbsUp, ThumbsDown,
+  RefreshCw,
 } from 'lucide-react';
 import {
   bodyRepair as bodyRepairApi,
@@ -62,6 +63,10 @@ const STATUS_STYLE = {
 export default function BodyRepairFlow({ user }) {
   const isDsp = user?.role === 'dsp_owner';
   const isSiteAdmin = user?.role === 'site_admin';
+  // Phase 2 — Body Repair Vendor branch. The backend list/quote endpoints
+  // already do role-based scoping (vendors see open requests + their own
+  // bids); the frontend only needs to swap copy + actions.
+  const isBodyRepairVendor = user?.orgType === 'body_repair_vendor';
   const canCreate = isDsp || isSiteAdmin;
 
   const [items, setItems] = useState([]);
@@ -143,8 +148,11 @@ export default function BodyRepairFlow({ user }) {
             <RequestRow
               key={req.id}
               req={req}
+              user={user}
+              isBodyRepairVendor={isBodyRepairVendor}
               expanded={openItemId === req.id}
               onToggle={() => setOpenItemId((cur) => cur === req.id ? null : req.id)}
+              onReload={reload}
             />
           ))}
         </div>
@@ -165,7 +173,7 @@ export default function BodyRepairFlow({ user }) {
 // ─────────────────────────────────────────────────────
 // Row + status pill
 // ─────────────────────────────────────────────────────
-function RequestRow({ req, expanded, onToggle }) {
+function RequestRow({ req, user, isBodyRepairVendor, expanded, onToggle, onReload }) {
   const s = STATUS_STYLE[req.status] || { label: req.status, color: 'accent-blue' };
   // PAVE rows are lazy-loaded on expand. Caches so re-collapsing +
   // re-expanding doesn't refetch every time.
@@ -251,13 +259,533 @@ function RequestRow({ req, expanded, onToggle }) {
             <div className="text-[10px] text-accent-red">PAVE list error: {String(paveErr)}</div>
           )}
 
-          <div className="text-[11px] text-navy-400">
-            Phase 2 adds the vendor quote queue + parts picker + target-grade selector here.
-          </div>
+          {/* Quotes panel — Phase 2. Lazy fetched on expand. Renders
+              role-specific actions: customer sees select/decline,
+              vendor sees their own quote with renew (or submit if
+              none yet). */}
+          <QuotesPanel
+            req={req}
+            user={user}
+            isBodyRepairVendor={isBodyRepairVendor}
+            onChanged={onReload}
+          />
         </div>
       )}
     </div>
   );
+}
+
+// ─────────────────────────────────────────────────────
+// QuotesPanel — Phase 2.
+// Backend returns { is_vendor, is_admin, is_customer, quotes: [...] }.
+// The `quotes` array carries role-projected fields:
+//   customer view: list_cents, platform_fee_cents, line items (no markup)
+//   vendor view:   vendor_raw_cents + line items
+//   admin view:    both sides + commission_pct + base
+// ─────────────────────────────────────────────────────
+function QuotesPanel({ req, user, isBodyRepairVendor, onChanged }) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [showSubmit, setShowSubmit] = useState(false);
+
+  const load = useCallback(() => {
+    bodyRepairApi
+      .listQuotes(req.id)
+      .then(setData)
+      .catch((e) => setErr(e?.detail || e?.message || 'failed'));
+  }, [req.id]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (err) {
+    return (
+      <div className="rounded-lg border border-accent-red/40 bg-accent-red/5 px-3 py-2 text-xs text-accent-red">
+        Quotes failed to load: {String(err)}
+      </div>
+    );
+  }
+  if (!data) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-navy-400">
+        <Loader2 size={12} className="animate-spin" /> Loading quotes…
+      </div>
+    );
+  }
+
+  const quotes = data.quotes || [];
+  const isCustomerView = !!data.isCustomer;
+  const isVendorView = !!data.isVendor;
+
+  // Vendor: figure out if they already have an active quote here.
+  const ownActive = isVendorView
+    ? quotes.find((q) => q.status === 'active')
+    : null;
+
+  const onSelect = async (q) => {
+    setBusy(true);
+    try {
+      await bodyRepairApi.selectQuote(req.id, q.id);
+      onChanged?.();
+      load();
+    } catch (e) {
+      setErr(e?.detail || e?.message || 'select failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const onDeclineAll = async () => {
+    setBusy(true);
+    try {
+      await bodyRepairApi.declineQuotes(req.id);
+      onChanged?.();
+      load();
+    } catch (e) {
+      setErr(e?.detail || e?.message || 'decline failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const onRenew = async () => {
+    setBusy(true);
+    try {
+      await bodyRepairApi.renewQuote(req.id);
+      load();
+    } catch (e) {
+      setErr(e?.detail || e?.message || 'renew failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <div>
+        <div className="text-[10px] uppercase tracking-wider text-navy-500 font-semibold mb-1.5 flex items-center gap-1">
+          <DollarSign size={10} /> Quotes ({quotes.length})
+        </div>
+        {quotes.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-navy-700 bg-navy-900/40 px-3 py-3 text-center text-xs text-navy-400">
+            {isVendorView
+              ? 'You have not submitted a quote on this request yet.'
+              : isCustomerView
+              ? 'No quotes yet — vendors will appear here as they bid.'
+              : 'No quotes have been submitted yet.'}
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {quotes.map((q) => (
+              <QuoteRow
+                key={q.id}
+                quote={q}
+                isCustomerView={isCustomerView}
+                isVendorView={isVendorView}
+                busy={busy}
+                onSelect={() => onSelect(q)}
+                onRenew={onRenew}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Customer-side global actions */}
+        {isCustomerView && quotes.some((q) => q.status === 'active') && (
+          <div className="mt-2 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={onDeclineAll}
+              disabled={busy}
+              className="inline-flex items-center gap-1 px-3 py-1 rounded-md border border-accent-red/40 text-accent-red text-xs hover:bg-accent-red/10 disabled:opacity-40 cursor-pointer"
+            >
+              <ThumbsDown size={11} /> Decline all
+            </button>
+          </div>
+        )}
+
+        {/* Vendor-side primary action */}
+        {isVendorView && !ownActive && req.status !== 'paid' && req.status !== 'cancelled' && (
+          <div className="mt-2 flex justify-end">
+            <button
+              type="button"
+              onClick={() => setShowSubmit(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-accent-purple text-white text-xs font-semibold hover:bg-accent-purple/85 cursor-pointer"
+            >
+              <Plus size={11} /> Submit a quote
+            </button>
+          </div>
+        )}
+      </div>
+
+      {showSubmit && (
+        <SubmitQuoteModal
+          req={req}
+          onClose={() => setShowSubmit(false)}
+          onCreated={() => { setShowSubmit(false); onChanged?.(); load(); }}
+        />
+      )}
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// QuoteRow — one quote line in the QuotesPanel.
+// Renders role-specific labels and money. The customer sees the
+// list_cents headline; the vendor sees their raw + headline.
+// ─────────────────────────────────────────────────────
+function QuoteRow({ quote, isCustomerView, isVendorView, busy, onSelect, onRenew }) {
+  const isActive = quote.status === 'active';
+  const isSelected = quote.status === 'selected';
+  const isExpired = quote.isExpired;
+
+  const headlineCents = quote.listCents;
+  const headlineLabel = isVendorView ? 'Headline (customer pays)' : 'Total';
+
+  return (
+    <div className={`rounded-lg border px-3 py-2 ${
+      isSelected
+        ? 'bg-accent-green/5 border-accent-green/40'
+        : isExpired
+        ? 'bg-navy-900/40 border-navy-700'
+        : 'bg-navy-800/40 border-navy-700'
+    }`}>
+      <div className="flex items-start justify-between gap-2 flex-wrap mb-1">
+        <div className="flex items-center gap-2 flex-wrap min-w-0">
+          <span className="text-sm font-semibold text-white truncate">
+            {quote.vendorOrgName || `Vendor ${quote.vendorOrgId}`}
+          </span>
+          <span className="text-[9px] text-navy-500 font-mono">{quote.id}</span>
+          {isSelected && (
+            <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-accent-green/15 text-accent-green border border-accent-green/40">
+              Selected
+            </span>
+          )}
+          {!isSelected && isExpired && (
+            <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-accent-red/15 text-accent-red border border-accent-red/40">
+              Expired
+            </span>
+          )}
+        </div>
+        {headlineCents != null && (
+          <div className="text-right">
+            <div className="text-[9px] uppercase tracking-wider text-navy-500">{headlineLabel}</div>
+            <div className="text-sm font-semibold text-white">{formatCents(headlineCents)}</div>
+          </div>
+        )}
+      </div>
+
+      <div className="text-[11px] text-navy-400 flex items-center gap-2 flex-wrap">
+        {quote.durationDays != null && (
+          <span>{quote.durationDays} day{quote.durationDays === 1 ? '' : 's'}</span>
+        )}
+        {quote.expiresIn && (
+          <span className={isExpired ? 'text-accent-red' : ''}>
+            · valid {quote.expiresIn}
+          </span>
+        )}
+        {quote.renewedCount > 0 && (
+          <span className="text-navy-500">· renewed {quote.renewedCount}x</span>
+        )}
+      </div>
+
+      {quote.notes && (
+        <div className="text-[11px] text-navy-300 mt-1 italic">"{quote.notes}"</div>
+      )}
+
+      {/* Pricing breakdown — vendor sees raw + headline; customer sees
+          headline + platform fee. Line items are below for both. */}
+      {isVendorView && quote.vendorRawCents != null && (
+        <div className="text-[11px] text-navy-400 mt-1">
+          <span className="text-navy-500">Your cost:</span> {formatCents(quote.vendorRawCents)}
+          {quote.listCents != null && (
+            <>
+              {' · '}
+              <span className="text-navy-500">Customer pays:</span> {formatCents(quote.listCents)}
+            </>
+          )}
+        </div>
+      )}
+      {isCustomerView && quote.platformFeeCents != null && (
+        <div className="text-[11px] text-navy-400 mt-1">
+          <span className="text-navy-500">Vendor cost:</span> {formatCents(quote.vendorRawCents)}
+          {' · '}
+          <span className="text-navy-500">Platform fee:</span> {formatCents(quote.platformFeeCents)}
+        </div>
+      )}
+
+      {/* Line items */}
+      {Array.isArray(quote.lineItems) && quote.lineItems.length > 0 && (
+        <div className="mt-1.5 space-y-0.5">
+          {quote.lineItems.map((li) => (
+            <div key={li.id} className="flex items-center justify-between gap-2 text-[11px] text-navy-300">
+              <span className="truncate">{li.description || '(no description)'}</span>
+              <span className="text-navy-400 font-mono">{formatCents(li.totalCents ?? 0)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="mt-2 flex items-center justify-end gap-2">
+        {isCustomerView && isActive && !isExpired && (
+          <button
+            type="button"
+            onClick={onSelect}
+            disabled={busy}
+            className="inline-flex items-center gap-1 px-3 py-1 rounded-md bg-accent-green text-white text-xs font-semibold hover:bg-accent-green/85 disabled:opacity-40 cursor-pointer"
+          >
+            <ThumbsUp size={11} /> Select
+          </button>
+        )}
+        {isVendorView && isActive && isExpired && (
+          <button
+            type="button"
+            onClick={onRenew}
+            disabled={busy}
+            className="inline-flex items-center gap-1 px-3 py-1 rounded-md bg-accent-blue text-white text-xs font-semibold hover:bg-accent-blue/85 disabled:opacity-40 cursor-pointer"
+          >
+            <RefreshCw size={11} /> Renew
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// SubmitQuoteModal — vendor adds line items + duration + notes.
+// Backend computes vendor_raw_cents from the sum of parts+labor.
+// ─────────────────────────────────────────────────────
+function SubmitQuoteModal({ req, onClose, onCreated }) {
+  const [lineItems, setLineItems] = useState([
+    { description: '', partsCents: 0, laborCents: 0 },
+  ]);
+  const [durationDays, setDurationDays] = useState('');
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const total = lineItems.reduce(
+    (sum, li) => sum + (Number(li.partsCents) || 0) + (Number(li.laborCents) || 0),
+    0,
+  );
+
+  const setItem = (idx, key, val) => {
+    setLineItems((cur) => cur.map((li, i) => (i === idx ? { ...li, [key]: val } : li)));
+  };
+  const addItem = () => setLineItems((cur) => [...cur, { description: '', partsCents: 0, laborCents: 0 }]);
+  const removeItem = (idx) => setLineItems((cur) => cur.filter((_, i) => i !== idx));
+
+  const submit = async () => {
+    setErr(null);
+    if (total <= 0) {
+      setErr('Add at least one priced line item.');
+      return;
+    }
+    setBusy(true);
+    try {
+      // Keep only items with money on them; trim descriptions.
+      const cleaned = lineItems
+        .map((li) => ({
+          description: (li.description || '').trim() || null,
+          partsCents: Math.round(Number(li.partsCents) || 0),
+          laborCents: Math.round(Number(li.laborCents) || 0),
+        }))
+        .filter((li) => li.partsCents + li.laborCents > 0);
+      const body = {
+        lineItems: cleaned,
+        notes: notes.trim() || undefined,
+      };
+      const d = parseInt(durationDays, 10);
+      if (Number.isFinite(d) && d >= 0) body.durationDays = d;
+      await bodyRepairApi.submitQuote(req.id, body);
+      onCreated?.();
+    } catch (e) {
+      setErr(e instanceof APIError ? (e.detail || e.message) : (e?.message || 'failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm overflow-y-auto py-8 px-4"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-navy-900 border border-navy-700 rounded-xl w-full max-w-2xl shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between px-5 py-4 border-b border-navy-700">
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 rounded-lg bg-accent-purple/15 border border-accent-purple/40 flex items-center justify-center">
+              <DollarSign size={16} className="text-accent-purple" />
+            </div>
+            <div>
+              <h3 className="text-base font-semibold text-white">Submit a quote</h3>
+              <p className="text-[11px] text-navy-400">
+                Van {req.vehicleFleetId || req.vehicleId} · {req.dspName || ''}
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-navy-400 hover:text-white p-2 -mr-2">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          {/* Line items */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-semibold text-text-strong">Scope items</label>
+              <button
+                type="button"
+                onClick={addItem}
+                className="text-[10px] text-accent-blue hover:underline cursor-pointer"
+              >
+                + Add item
+              </button>
+            </div>
+            <div className="space-y-2">
+              {lineItems.map((li, idx) => (
+                <div key={idx} className="grid grid-cols-12 gap-2 items-start">
+                  <input
+                    type="text"
+                    value={li.description}
+                    onChange={(e) => setItem(idx, 'description', e.target.value)}
+                    placeholder="Description (e.g. Rear bumper replace)"
+                    maxLength={300}
+                    className="col-span-6 px-2 py-1.5 rounded-md bg-navy-800 border border-navy-700 text-sm text-white placeholder:text-navy-500 outline-none focus:border-accent-purple"
+                  />
+                  <CentsInput
+                    label="Parts $"
+                    value={li.partsCents}
+                    onChange={(v) => setItem(idx, 'partsCents', v)}
+                  />
+                  <CentsInput
+                    label="Labor $"
+                    value={li.laborCents}
+                    onChange={(v) => setItem(idx, 'laborCents', v)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeItem(idx)}
+                    disabled={lineItems.length <= 1}
+                    className="col-span-1 text-navy-500 hover:text-accent-red disabled:opacity-30 p-1.5 cursor-pointer"
+                    title="Remove item"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 flex justify-end text-xs">
+              <span className="text-navy-400">Your cost:&nbsp;</span>
+              <span className="text-white font-semibold">{formatCents(total)}</span>
+            </div>
+          </div>
+
+          {/* Duration + notes */}
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label htmlFor="dur" className="text-xs font-semibold text-text-strong block mb-1.5">
+                Duration (days)
+              </label>
+              <input
+                id="dur"
+                type="number"
+                min={0}
+                max={365}
+                value={durationDays}
+                onChange={(e) => setDurationDays(e.target.value)}
+                placeholder="3"
+                className="w-full px-2 py-1.5 rounded-md bg-navy-800 border border-navy-700 text-sm text-white outline-none focus:border-accent-purple"
+              />
+            </div>
+            <div className="col-span-2">
+              <label htmlFor="qnotes" className="text-xs font-semibold text-text-strong block mb-1.5">
+                Notes (optional)
+              </label>
+              <input
+                id="qnotes"
+                type="text"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Any clarifications for the customer…"
+                maxLength={2000}
+                className="w-full px-2 py-1.5 rounded-md bg-navy-800 border border-navy-700 text-sm text-white placeholder:text-navy-500 outline-none focus:border-accent-purple"
+              />
+            </div>
+          </div>
+
+          {err && (
+            <div className="px-3 py-2 rounded-md bg-accent-red/10 border border-accent-red/40 text-xs text-accent-red flex items-center gap-2">
+              <AlertTriangle size={12} />
+              {err}
+            </div>
+          )}
+
+          <div className="px-3 py-2 rounded-md bg-accent-blue/5 border border-accent-blue/20 text-[11px] text-navy-300 flex items-start gap-2">
+            <ArrowRight size={12} className="text-accent-blue shrink-0 mt-0.5" />
+            <span>
+              You enter your cost; Nova adds commission server-side. The customer sees a single platform fee line, not a per-item markup. Your raw price stays vendor-side.
+            </span>
+          </div>
+        </div>
+
+        <div className="px-5 py-3 border-t border-navy-700 flex items-center justify-end gap-2">
+          <button
+            onClick={onClose}
+            disabled={busy}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-navy-800 hover:bg-navy-700 text-white border border-navy-700 disabled:opacity-50 cursor-pointer"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={submit}
+            disabled={busy || total <= 0}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-accent-purple text-white hover:bg-accent-purple/85 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+          >
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+            Submit quote
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+// Compact dollars-as-cents input. Internally we ALWAYS work in cents
+// to match the backend's int columns and avoid float drift; the input
+// shows dollars with up to 2 decimals.
+function CentsInput({ label, value, onChange }) {
+  const dollars = ((Number(value) || 0) / 100).toFixed(2);
+  return (
+    <label className="col-span-2 flex flex-col gap-0.5">
+      <span className="text-[9px] uppercase tracking-wider text-navy-500">{label}</span>
+      <input
+        type="number"
+        step="0.01"
+        min={0}
+        value={dollars}
+        onChange={(e) => {
+          const d = parseFloat(e.target.value);
+          onChange(Number.isFinite(d) ? Math.round(d * 100) : 0);
+        }}
+        className="px-2 py-1.5 rounded-md bg-navy-800 border border-navy-700 text-sm text-white outline-none focus:border-accent-purple"
+      />
+    </label>
+  );
+}
+
+// Cents → "$X.XX" for display.
+function formatCents(cents) {
+  const n = (Number(cents) || 0) / 100;
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 // Compact PAVE summary chip. Surfaces parse status + the three most

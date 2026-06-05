@@ -2184,6 +2184,66 @@ export const bodyRepair = {
   listPave(id) {
     return apiFetch(`/body-repair/requests/${encodeURIComponent(id)}/pave`);
   },
+
+  // ── Phase 2 — Quotes ────────────────────────────────
+  // Response shape is role-projected by the backend: customer sees
+  // list_cents + platform_fee_cents, vendor sees vendor_raw_cents,
+  // admin sees both. The `is_customer / is_vendor / is_admin` flags on
+  // the response tell the UI which projection it got.
+
+  /** GET /body-repair/requests/{id}/quotes — list per-role projection */
+  listQuotes(id) {
+    return apiFetch(`/body-repair/requests/${encodeURIComponent(id)}/quotes`);
+  },
+
+  /**
+   * POST /body-repair/requests/{id}/quotes — body repair vendor submits a quote.
+   * body: { lineItems: [{description, partsCents, laborCents}],
+   *         durationDays?, notes? }
+   * Pricing is computed server-side via markup_quote (vendor cost +
+   * commission); the response carries the full ladder in vendor view.
+   */
+  submitQuote(id, body) {
+    return apiFetch(`/body-repair/requests/${encodeURIComponent(id)}/quotes`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /**
+   * POST /body-repair/requests/{id}/select-quote — customer locks one in.
+   * body: { quoteId } where quoteId is the BRQ-NNNNN id (or bare int).
+   * Side-effects: sibling actives → declined, request advances to
+   * QUOTE_SELECTED, approved_list_cents baseline frozen.
+   */
+  selectQuote(id, quoteId) {
+    return apiFetch(`/body-repair/requests/${encodeURIComponent(id)}/select-quote`, {
+      method: 'POST',
+      body: JSON.stringify({ quote_id: quoteId }),
+    });
+  },
+
+  /**
+   * POST /body-repair/requests/{id}/decline-quotes — customer rejects all
+   * active quotes; request reverts to PENDING_QUOTES so new bids can come in.
+   */
+  declineQuotes(id) {
+    return apiFetch(`/body-repair/requests/${encodeURIComponent(id)}/decline-quotes`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  },
+
+  /**
+   * POST /body-repair/requests/{id}/renew-quote — vendor extends their
+   * own active quote's validity by QUOTE_VALIDITY_DAYS (7 default).
+   */
+  renewQuote(id) {
+    return apiFetch(`/body-repair/requests/${encodeURIComponent(id)}/renew-quote`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  },
 };
 
 export { APIError };
