@@ -52,16 +52,40 @@ router = APIRouter(prefix="/body-repair", tags=["body-repair"])
 # ─────────────────────────────────────────────────────
 # Request/Response shapes
 # ─────────────────────────────────────────────────────
-class CreateRequestBody(BaseModel):
-    """Customer submission payload — Phase 0 only supports `mode='text'`.
+class _PickedComponent(BaseModel):
+    """One row in the parts-picker payload — identifies a component
+    selected from the parsed PAVE damage list."""
 
-    Future modes ('parts', 'grade') will add their own required fields
-    via discriminated-union extensions or sibling endpoints.
+    item_no: int = Field(..., ge=0)
+    component_name: str | None = Field(default=None, max_length=200)
+
+
+class _RequestIssue(BaseModel):
+    """One free-text issue from the repeating Notes section. Photo is
+    optional and references an already-uploaded storage_key."""
+
+    description: str = Field(..., min_length=1, max_length=2000)
+    photo_storage_key: str | None = Field(default=None, max_length=500)
+
+
+class CreateRequestBody(BaseModel):
+    """Customer submission payload — all 3 demo modes.
+
+    text  : free-form description (legacy single-shot or via `issues`
+            list for the repeating-Notes UI).
+    parts : customer picked specific damages from the parsed PAVE.
+            `picked_components` carries the item_no list.
+    grade : customer named a target Fleet Condition Grade. Backend
+            computes which items must be addressed to reach it
+            (Phase 2c-1 — for now just stored verbatim).
     """
 
     vehicle_id: int = Field(..., gt=0, description="int id of the vehicle the customer wants repaired")
     mode: BodyRepairSubmissionMode = Field(default=BodyRepairSubmissionMode.TEXT)
     text_description: str | None = Field(default=None, max_length=2000)
+    issues: list[_RequestIssue] = Field(default_factory=list, max_length=20)
+    picked_components: list[_PickedComponent] = Field(default_factory=list, max_length=100)
+    target_grade: int | None = Field(default=None, ge=2, le=5)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -76,6 +100,11 @@ class BodyRepairRequestResponse(BaseModel):
     assigned_vendor_id: str | None
     submission_mode: str
     text_description: str | None
+    target_grade: str | None = None
+    # Combined "parts + issues" blob — frontend reads .pickedComponents
+    # and .issues. None when the customer used text mode without any
+    # repeating issues.
+    scope_blob: dict | None = None
     status: str
     selected_quote_id: int | None
     quote_selected_at: datetime | None
@@ -127,6 +156,8 @@ async def _build_response(
         assigned_vendor_id=(vendor.id_str if vendor else None),
         submission_mode=req.submission_mode.value if hasattr(req.submission_mode, "value") else req.submission_mode,
         text_description=req.text_description,
+        target_grade=req.target_grade,
+        scope_blob=req.picked_components_json,
         status=req.status.value if hasattr(req.status, "value") else req.status,
         selected_quote_id=req.selected_quote_id,
         quote_selected_at=req.quote_selected_at,
@@ -184,18 +215,69 @@ async def create_request(
             "only dsp_owner or site_admin can submit body repair requests",
         )
 
-    # Phase 0: enforce mode='text' + non-empty text_description.
-    if body.mode != BodyRepairSubmissionMode.TEXT:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            f"submission mode '{body.mode.value}' will land in a later phase — "
-            f"only 'text' is supported in Phase 0",
-        )
-    if not (body.text_description and body.text_description.strip()):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "text_description is required when mode='text'",
-        )
+    # Mode-specific validation.
+    text_payload: str | None = None
+    issues_payload: list[dict] = []
+    picked_components_payload: list[dict] | None = None
+    target_grade_payload: str | None = None
+
+    if body.mode == BodyRepairSubmissionMode.TEXT:
+        # Accept either a single text_description OR the repeating
+        # issues list (or both — issues take precedence). Mirrors the
+        # demo's "A · Notes" section.
+        if body.issues:
+            issues_payload = [
+                {
+                    "description": it.description.strip(),
+                    "photo_storage_key": it.photo_storage_key,
+                }
+                for it in body.issues
+                if it.description and it.description.strip()
+            ]
+            if not issues_payload and not (body.text_description and body.text_description.strip()):
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "text mode requires at least one non-empty issue or text_description",
+                )
+        elif not (body.text_description and body.text_description.strip()):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "text_description is required when mode='text'",
+            )
+        text_payload = (body.text_description or "").strip() or None
+    elif body.mode == BodyRepairSubmissionMode.PARTS:
+        if not body.picked_components:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "parts mode requires at least one picked component",
+            )
+        picked_components_payload = [
+            {"item_no": p.item_no, "component_name": p.component_name}
+            for p in body.picked_components
+        ]
+        # Free-text + issues still allowed alongside parts.
+        text_payload = (body.text_description or "").strip() or None
+        if body.issues:
+            issues_payload = [
+                {"description": it.description.strip(), "photo_storage_key": it.photo_storage_key}
+                for it in body.issues if it.description and it.description.strip()
+            ]
+    elif body.mode == BodyRepairSubmissionMode.GRADE:
+        if body.target_grade is None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "grade mode requires target_grade (2-5)",
+            )
+        # Map int grade → label for the column (the schema stores str
+        # for future extensibility: 'mint' / 'excellent' / etc.).
+        from app.services.fca_scoring import grade_label as _gl
+        target_grade_payload = _gl(body.target_grade) or str(body.target_grade)
+        text_payload = (body.text_description or "").strip() or None
+        if body.issues:
+            issues_payload = [
+                {"description": it.description.strip(), "photo_storage_key": it.photo_storage_key}
+                for it in body.issues if it.description and it.description.strip()
+            ]
 
     # Vehicle lookup + tenancy enforcement.
     veh = (
@@ -208,11 +290,25 @@ async def create_request(
         # vehicles. Matches the pattern elsewhere in the codebase.
         raise HTTPException(status.HTTP_404_NOT_FOUND, "vehicle not found")
 
+    # picked_components_json carries BOTH the parts payload and the
+    # repeating-issues list (one JSON blob keeps the schema simple
+    # while Phase 2c+ irons out the data shapes; if either domain
+    # grows it can move to its own table without a frontend change).
+    blob: dict | None = None
+    if picked_components_payload is not None or issues_payload:
+        blob = {}
+        if picked_components_payload is not None:
+            blob["picked_components"] = picked_components_payload
+        if issues_payload:
+            blob["issues"] = issues_payload
+
     req = BodyRepairRequest(
         dsp_id=veh.dsp_id,
         vehicle_id=veh.id,
-        submission_mode=BodyRepairSubmissionMode.TEXT,
-        text_description=body.text_description.strip(),
+        submission_mode=body.mode,
+        text_description=text_payload,
+        target_grade=target_grade_payload,
+        picked_components_json=blob,
         status=BodyRepairRequestStatus.PENDING_QUOTES,
         created_by_id=current.id,
     )

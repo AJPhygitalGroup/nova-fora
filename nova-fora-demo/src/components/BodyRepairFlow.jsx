@@ -955,7 +955,20 @@ function CreateRequestModal({ user, onClose, onCreated }) {
   const [vehicleOptions, setVehicleOptions] = useState([]);
   const [vehicleSearch, setVehicleSearch] = useState('');
   const [vehicleId, setVehicleId] = useState('');
-  const [text, setText] = useState('');
+  // Submission mode: 'text' | 'parts' | 'grade'. The form changes
+  // shape based on this — text shows repeating issues, parts shows
+  // the picker button, grade shows the target-grade selector.
+  const [mode, setMode] = useState('text');
+  // Repeating issues (text mode + parts mode). Each entry is
+  // { description, photoFile?, photoStorageKey? } — photos upload
+  // later when the user submits (Phase 2c-2 will inline them).
+  const [issues, setIssues] = useState([{ description: '' }]);
+  const [text, setText] = useState('');                     // single-shot fallback
+  // Parts mode: list of selected item_nos from the parsed PAVE.
+  const [pickedItemNos, setPickedItemNos] = useState([]);
+  const [pickOpen, setPickOpen] = useState(false);
+  // Grade mode: target FCG (3-5 per the demo's MIN/MAX).
+  const [targetGrade, setTargetGrade] = useState(4);
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -1039,9 +1052,25 @@ function CreateRequestModal({ user, onClose, onCreated }) {
       setErr('Pick the vehicle this request is for.');
       return;
     }
-    if (!text.trim()) {
-      setErr('Describe what needs to be repaired.');
-      return;
+    // Mode-specific validation, mirrors the backend.
+    const cleanedIssues = issues
+      .map((it) => ({ description: (it.description || '').trim() }))
+      .filter((it) => it.description.length > 0);
+    if (mode === 'text') {
+      if (cleanedIssues.length === 0 && !text.trim()) {
+        setErr('Add at least one issue or describe the damage in text.');
+        return;
+      }
+    } else if (mode === 'parts') {
+      if (pickedItemNos.length === 0) {
+        setErr('Pick at least one part to repair.');
+        return;
+      }
+    } else if (mode === 'grade') {
+      if (!Number.isInteger(targetGrade) || targetGrade < 2 || targetGrade > 5) {
+        setErr('Choose a target grade.');
+        return;
+      }
     }
     setBusy(true);
     setStage('creating');
@@ -1058,12 +1087,32 @@ function CreateRequestModal({ user, onClose, onCreated }) {
         setStage('idle');
         return;
       }
-      // 1. Create the request.
-      createdRequest = await bodyRepairApi.create({
+      // 1. Create the request — mode-specific payload.
+      const createBody = {
         vehicleId: intId,
-        mode: 'text',
-        textDescription: text.trim(),
-      });
+        mode,
+        textDescription: text.trim() || undefined,
+      };
+      if (cleanedIssues.length > 0) {
+        createBody.issues = cleanedIssues;
+      }
+      if (mode === 'parts') {
+        // Map picked item_nos back to {item_no, component_name} pairs.
+        const compMap = new Map();
+        (paveData?.components || []).forEach((c) => {
+          (c.damages || []).forEach((d) => {
+            if (d.itemNo != null) compMap.set(d.itemNo, c.name);
+          });
+        });
+        createBody.pickedComponents = pickedItemNos.map((n) => ({
+          itemNo: n,
+          componentName: compMap.get(n) || null,
+        }));
+      }
+      if (mode === 'grade') {
+        createBody.targetGrade = targetGrade;
+      }
+      createdRequest = await bodyRepairApi.create(createBody);
 
       // 2. If we have a parsed PAVE, attach it. The PDF is already in
       //    MinIO from Step 1 — we just re-reference the storage_key.
@@ -1251,16 +1300,156 @@ function CreateRequestModal({ user, onClose, onCreated }) {
                   )}
                 </div>
 
+                {/* Mode tabs — text / parts / grade. Parts + grade
+                    require a parsed PAVE (otherwise there's nothing to
+                    pick from); we hide those tabs if pave was skipped. */}
+                <div>
+                  <div className="text-xs font-semibold text-text-strong block mb-1.5">
+                    How do you want to scope the work?
+                  </div>
+                  <div className="flex items-center gap-1 p-1 rounded-lg bg-navy-800/60 border border-navy-700 mb-3">
+                    {['text', 'parts', 'grade'].map((m) => {
+                      const disabled = (m === 'parts' || m === 'grade') && !paveData;
+                      const labels = { text: 'Notes', parts: 'Pick parts', grade: 'Target grade' };
+                      const sub = { text: 'free-form', parts: 'from PAVE', grade: 'reach FCG' };
+                      return (
+                        <button
+                          key={m}
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => setMode(m)}
+                          title={disabled ? 'Attach a PAVE to enable this mode' : undefined}
+                          className={`flex-1 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+                            mode === m
+                              ? 'bg-accent-purple text-white'
+                              : 'text-navy-300 hover:text-white hover:bg-navy-800'
+                          }`}
+                        >
+                          <div>{labels[m]}</div>
+                          <div className="text-[9px] opacity-70">{sub[m]}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* ── Mode: text ─────────────────────────────── */}
+                  {mode === 'text' && (
+                    <div className="space-y-2">
+                      {issues.map((it, i) => (
+                        <div key={i} className="rounded-lg bg-navy-900/40 border border-navy-800 p-2.5">
+                          <div className="flex gap-2 items-start">
+                            <textarea
+                              value={it.description}
+                              maxLength={2000}
+                              rows={2}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setIssues((cur) => cur.map((x, j) => (j === i ? { ...x, description: v } : x)));
+                              }}
+                              placeholder={`Issue ${i + 1}: e.g. dent on driver-side rear panel`}
+                              className="flex-1 rounded-md px-2 py-1.5 text-sm bg-navy-800 border border-navy-700 text-white placeholder:text-navy-500 outline-none focus:border-accent-purple resize-none"
+                            />
+                            {issues.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => setIssues((cur) => cur.filter((_, j) => j !== i))}
+                                className="text-navy-400 hover:text-accent-red p-1 cursor-pointer"
+                                title="Remove"
+                              >
+                                <X size={14} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setIssues((cur) => [...cur, { description: '' }])}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-navy-700 text-xs text-accent-blue hover:border-accent-blue hover:bg-navy-800/50 cursor-pointer"
+                      >
+                        <Plus size={11} /> Add another issue
+                      </button>
+                    </div>
+                  )}
+
+                  {/* ── Mode: parts ────────────────────────────── */}
+                  {mode === 'parts' && (
+                    <div className="rounded-lg border border-navy-800 bg-navy-900/40 p-3 flex items-center justify-between">
+                      <div className="text-sm">
+                        {pickedItemNos.length > 0 ? (
+                          <>
+                            <span className="font-semibold text-white">{pickedItemNos.length} damage{pickedItemNos.length === 1 ? '' : 's'} selected</span>
+                            <span className="text-navy-400 text-xs"> from the parsed PAVE.</span>
+                          </>
+                        ) : (
+                          <span className="text-navy-400">No parts selected yet.</span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPickOpen(true)}
+                        className="px-3 py-1.5 rounded-md border border-navy-700 text-xs hover:border-accent-purple hover:bg-navy-800/60 cursor-pointer"
+                      >
+                        {pickedItemNos.length > 0 ? 'Edit selection' : 'Open picker'}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* ── Mode: grade ────────────────────────────── */}
+                  {mode === 'grade' && (
+                    <div className="rounded-lg border border-navy-800 bg-navy-900/40 p-3 space-y-2">
+                      <div className="text-xs text-navy-300 mb-1">
+                        Pick the Fleet Condition Grade you want this van to reach. The vendor will scope the repairs that get you there.
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[
+                          { g: 5, label: 'Great', desc: 'Like new' },
+                          { g: 4, label: 'Good', desc: 'Light wear' },
+                          { g: 3, label: 'Fair', desc: 'Compliance bar' },
+                        ].map(({ g, label, desc }) => (
+                          <button
+                            key={g}
+                            type="button"
+                            onClick={() => setTargetGrade(g)}
+                            className={`px-3 py-2 rounded-lg border-2 transition-colors text-center cursor-pointer ${
+                              targetGrade === g
+                                ? 'border-accent-purple bg-accent-purple/10'
+                                : 'border-navy-700 hover:border-navy-500'
+                            }`}
+                          >
+                            <div className="text-lg font-bold text-white">{g}</div>
+                            <div className="text-[10px] font-semibold text-navy-300">{label}</div>
+                            <div className="text-[9px] text-navy-500">{desc}</div>
+                          </button>
+                        ))}
+                      </div>
+                      {paveData?.currentGrade != null && (
+                        <div className="text-[10px] text-navy-400 mt-2">
+                          Current grade: <span className="font-semibold text-white">{paveData.currentGrade} ({paveData.gradeLabel})</span>
+                          {targetGrade > paveData.currentGrade && (
+                            <span className="text-accent-green"> · improvement</span>
+                          )}
+                          {targetGrade < paveData.currentGrade && (
+                            <span className="text-accent-orange"> · downgrade?</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Free-text supplement — always visible regardless of mode. */}
                 <div>
                   <label htmlFor="body-text" className="text-xs font-semibold text-text-strong block mb-1.5">
-                    What needs to be repaired?
+                    {mode === 'text' ? 'Additional notes' : 'Notes for the vendor'}
+                    <span className="text-navy-500 text-[10px] ml-1">(optional)</span>
                   </label>
                   <textarea
                     id="body-text"
                     value={text}
                     onChange={(e) => setText(e.target.value)}
-                    placeholder="e.g. Driver-side rear panel — heavy dent + scratched paint after a parking lot incident."
-                    rows={5}
+                    placeholder={mode === 'text' ? 'Any extra context…' : 'Anything else the vendor should know…'}
+                    rows={3}
                     maxLength={2000}
                     className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white placeholder:text-navy-500 outline-none focus:border-accent-purple resize-none"
                   />
@@ -1274,6 +1463,16 @@ function CreateRequestModal({ user, onClose, onCreated }) {
                   </div>
                 )}
               </div>
+
+              {/* Pick parts modal — opens from the parts-mode panel */}
+              {pickOpen && paveData && (
+                <PickPartsModal
+                  components={paveData.components || []}
+                  selected={pickedItemNos}
+                  setSelected={setPickedItemNos}
+                  onClose={() => setPickOpen(false)}
+                />
+              )}
             </>
           )}
         </div>
@@ -1293,6 +1492,174 @@ function CreateRequestModal({ user, onClose, onCreated }) {
           >
             {busy ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
             {submitLabel}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// PickPartsModal — interactive parts picker on parsed PAVE damages.
+// Mirrors the demo's PickPartsModal at BodyRepair.tsx line 1729.
+// Customer ticks individual damages; selected list is item_no based
+// so the backend can re-resolve which components they picked.
+// ─────────────────────────────────────────────────────
+function PickPartsModal({ components, selected, setSelected, onClose }) {
+  const toggleDamage = (itemNo) => {
+    setSelected((cur) => {
+      const has = cur.includes(itemNo);
+      return has ? cur.filter((x) => x !== itemNo) : [...cur, itemNo];
+    });
+  };
+  const toggleComponent = (comp) => {
+    const itemNos = (comp.damages || []).map((d) => d.itemNo).filter((n) => n != null);
+    const allSelected = itemNos.every((n) => selected.includes(n));
+    setSelected((cur) => {
+      if (allSelected) return cur.filter((n) => !itemNos.includes(n));
+      // Add any missing.
+      const next = new Set(cur);
+      itemNos.forEach((n) => next.add(n));
+      return Array.from(next);
+    });
+  };
+  const totalSelected = selected.length;
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm overflow-y-auto py-8 px-4"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-navy-900 border border-navy-700 rounded-xl w-full max-w-3xl shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between px-5 py-4 border-b border-navy-700">
+          <div>
+            <h3 className="text-base font-semibold text-white">Pick parts to repair</h3>
+            <p className="text-[11px] text-navy-400">
+              {totalSelected} damage{totalSelected === 1 ? '' : 's'} selected · choose specific items from the parsed PAVE.
+            </p>
+          </div>
+          <button onClick={onClose} className="text-navy-400 hover:text-white p-2 -mr-2">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="px-5 py-4 max-h-[60vh] overflow-y-auto space-y-2">
+          {(components || []).length === 0 ? (
+            <div className="text-sm text-navy-400 italic text-center py-8">
+              No current damages on this PAVE report.
+            </div>
+          ) : (
+            (components || []).map((c) => {
+              const itemNos = (c.damages || []).map((d) => d.itemNo).filter((n) => n != null);
+              const compAllSelected = itemNos.length > 0 && itemNos.every((n) => selected.includes(n));
+              const compSomeSelected = itemNos.some((n) => selected.includes(n));
+              return (
+                <div
+                  key={c.name + (c.itemNos || []).join(',')}
+                  className={`rounded-lg border ${
+                    c.priority ? 'border-accent-red/40 bg-accent-red/5' : 'border-navy-700 bg-navy-800/40'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => toggleComponent(c)}
+                    className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-navy-800/70 transition-colors"
+                  >
+                    <span
+                      className={`inline-flex w-4 h-4 rounded border-2 items-center justify-center shrink-0 ${
+                        compAllSelected
+                          ? 'bg-accent-blue border-accent-blue'
+                          : compSomeSelected
+                          ? 'bg-accent-blue/30 border-accent-blue'
+                          : 'border-navy-600 bg-transparent'
+                      }`}
+                    >
+                      {compAllSelected && <CheckCircle2 size={10} className="text-white" />}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-white text-sm">{c.name}</span>
+                        {c.priority && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent-red/20 text-accent-red font-semibold">
+                            Priority
+                          </span>
+                        )}
+                        {c.worstScore != null && (
+                          <span className="text-[10px] text-navy-400">worst: {c.worstScore}</span>
+                        )}
+                        <span className="text-[10px] text-navy-500">{(c.damages || []).length} damage{(c.damages || []).length === 1 ? '' : 's'}</span>
+                      </div>
+                    </div>
+                  </button>
+                  <div className="pl-9 pr-3 pb-2 space-y-1">
+                    {(c.damages || []).map((d) => {
+                      const isSel = selected.includes(d.itemNo);
+                      return (
+                        <button
+                          key={d.itemNo}
+                          type="button"
+                          onClick={() => toggleDamage(d.itemNo)}
+                          className={`w-full grid grid-cols-[18px_30px_1fr_60px_50px] gap-2 items-center px-2 py-1 rounded-md text-left text-xs hover:bg-navy-800 transition-colors ${
+                            isSel ? 'bg-accent-blue/10' : ''
+                          }`}
+                        >
+                          <span
+                            className={`inline-flex w-3.5 h-3.5 rounded border items-center justify-center shrink-0 ${
+                              isSel
+                                ? 'bg-accent-blue border-accent-blue'
+                                : 'border-navy-600 bg-transparent'
+                            }`}
+                          >
+                            {isSel && <CheckCircle2 size={8} className="text-white" />}
+                          </span>
+                          <span className="text-navy-500 font-mono text-[10px]">#{d.itemNo}</span>
+                          <span className="text-navy-300 truncate">
+                            {d.damageType ? d.damageType.replace(/_/g, ' ') : '—'}
+                            {d.severity ? <span className="text-navy-500"> · {d.severity}</span> : null}
+                          </span>
+                          <span className="text-navy-400 text-[10px]">
+                            {d.side || '—'}
+                          </span>
+                          <span className="text-right">
+                            {d.fleetScore != null ? (
+                              <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold ${
+                                d.isPriority ? 'bg-accent-red text-white' : 'bg-navy-700 text-white'
+                              }`}>
+                                {d.fleetScore}
+                              </span>
+                            ) : (
+                              <span className="text-navy-500">—</span>
+                            )}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+        <div className="px-5 py-3 border-t border-navy-700 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setSelected([])}
+            disabled={totalSelected === 0}
+            className="px-3 py-2 rounded-lg text-xs text-navy-400 hover:text-white disabled:opacity-40 cursor-pointer"
+          >
+            Clear all
+          </button>
+          <button
+            onClick={onClose}
+            className="px-4 py-2 rounded-lg text-sm font-semibold bg-accent-purple text-white hover:bg-accent-purple/85 cursor-pointer"
+          >
+            Done · {totalSelected} selected
           </button>
         </div>
       </motion.div>
