@@ -274,15 +274,78 @@ function RequestRow({ req, user, isBodyRepairVendor, expanded, onToggle, onReloa
       </div>
       {expanded && (
         <div className="px-4 py-3 border-t border-navy-700/60 bg-navy-900/40 text-sm space-y-3">
-          {req.textDescription ? (
+          {/* Submission mode pill — Notes / Parts / Grade. */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {req.submissionMode === 'text' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-accent-blue/15 text-accent-blue border border-accent-blue/40">
+                <FileText size={10} /> Free-form notes
+              </span>
+            )}
+            {req.submissionMode === 'parts' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-accent-purple/15 text-accent-purple border border-accent-purple/40">
+                <FileBadge size={10} /> Picked parts
+              </span>
+            )}
+            {req.submissionMode === 'grade' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-accent-gold/15 text-accent-gold border border-accent-gold/40">
+                <CheckCircle2 size={10} /> Target grade: {req.targetGrade || '—'}
+              </span>
+            )}
+          </div>
+
+          {/* Repeating Notes issues — shown when the customer used the
+              "A · Notes" list (text or alongside parts/grade). */}
+          {Array.isArray(req.scopeBlob?.issues) && req.scopeBlob.issues.length > 0 && (
             <div>
               <div className="text-[10px] uppercase tracking-wider text-navy-500 font-semibold mb-1 flex items-center gap-1">
-                <FileText size={10} /> Customer description
+                <FileText size={10} /> Customer notes ({req.scopeBlob.issues.length})
               </div>
-              <p className="text-text-strong whitespace-pre-wrap">{req.textDescription}</p>
+              <div className="space-y-1">
+                {req.scopeBlob.issues.map((it, i) => (
+                  <div key={i} className="text-text-strong text-xs px-2 py-1 rounded-md bg-navy-800/40 border border-navy-700/40">
+                    <span className="text-navy-500 mr-1">{i + 1}.</span>
+                    <span className="whitespace-pre-wrap">{it.description}</span>
+                  </div>
+                ))}
+              </div>
             </div>
-          ) : (
-            <p className="text-navy-400 italic">No text description provided.</p>
+          )}
+
+          {/* Picked parts — shown for parts mode. */}
+          {Array.isArray(req.scopeBlob?.pickedComponents) && req.scopeBlob.pickedComponents.length > 0 && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-navy-500 font-semibold mb-1 flex items-center gap-1">
+                <FileBadge size={10} /> Picked damages ({req.scopeBlob.pickedComponents.length})
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {req.scopeBlob.pickedComponents.map((p, i) => (
+                  <span
+                    key={`${p.itemNo}-${i}`}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] bg-accent-purple/10 text-accent-purple border border-accent-purple/40"
+                  >
+                    <span className="font-mono text-[9px] opacity-70">#{p.itemNo}</span>
+                    <span>{p.componentName || 'Component'}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Free-text description — supplemental "notes for vendor"
+              for any mode, or the main payload for legacy text mode. */}
+          {req.textDescription && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-navy-500 font-semibold mb-1 flex items-center gap-1">
+                <FileText size={10} /> Notes for the vendor
+              </div>
+              <p className="text-text-strong whitespace-pre-wrap text-xs">{req.textDescription}</p>
+            </div>
+          )}
+          {!req.textDescription
+            && !(req.scopeBlob?.issues?.length)
+            && !(req.scopeBlob?.pickedComponents?.length)
+            && req.submissionMode !== 'grade' && (
+            <p className="text-navy-400 italic text-xs">No description provided.</p>
           )}
 
           {/* PAVE report panel — shows VIN, score, damage count, parse
@@ -973,6 +1036,8 @@ function CreateRequestModal({ user, onClose, onCreated }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const fileInputRef = useRef(null);
+  // URL-paste flow: paveapi.com URL or any HTTPS PDF link.
+  const [paveUrl, setPaveUrl] = useState('');
 
   // Step 2 is unlocked once PAVE is parsed OR the customer skips.
   const onStep2 = paveData !== null || paveSkipped;
@@ -1033,7 +1098,27 @@ function CreateRequestModal({ user, onClose, onCreated }) {
     setPaveFile(null);
     setPaveData(null);
     setPaveSkipped(false);
+    setPaveUrl('');
     setErr(null);
+  };
+
+  // ── Step 1 alt — fetch PAVE from URL (paveapi.com etc.) ───
+  const onSyncUrl = async () => {
+    const url = paveUrl.trim();
+    if (!url) return;
+    setErr(null);
+    setBusy(true);
+    setStage('uploading_pave');
+    try {
+      const parsed = await bodyRepairApi.ingestPaveUrl({ url });
+      setPaveData(parsed);
+    } catch (err2) {
+      const msg = err2 instanceof APIError ? (err2.detail || err2.message) : (err2?.message || 'PAVE fetch failed');
+      setErr(msg);
+    } finally {
+      setBusy(false);
+      setStage('idle');
+    }
   };
 
   // VIN-match indicator for Step 2 — green if the selected vehicle's
@@ -1203,6 +1288,31 @@ function CreateRequestModal({ user, onClose, onCreated }) {
               />
               {!paveFile ? (
                 <>
+                  {/* URL paste — mirrors the demo's "PAVE report URL" input + Sync button. */}
+                  <div>
+                    <label className="block text-[11px] text-navy-300 mb-1 font-semibold">
+                      PAVE report URL
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="url"
+                        value={paveUrl}
+                        onChange={(e) => setPaveUrl(e.target.value)}
+                        placeholder="https://reports.paveapi.com/api/report/…"
+                        disabled={busy}
+                        className="flex-1 rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white placeholder:text-navy-500 outline-none focus:border-accent-purple disabled:opacity-50"
+                      />
+                      <button
+                        type="button"
+                        onClick={onSyncUrl}
+                        disabled={busy || !paveUrl.trim()}
+                        className="px-3 py-2 rounded-lg bg-accent-blue text-white text-sm font-semibold hover:bg-accent-blue/85 disabled:opacity-40 cursor-pointer"
+                      >
+                        Sync
+                      </button>
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-navy-500 text-center">— or —</div>
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}

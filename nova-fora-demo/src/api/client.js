@@ -2213,6 +2213,18 @@ export const bodyRepair = {
     });
   },
 
+  /**
+   * POST /body-repair/pave/ingest-url — URL-paste flow.
+   * Backend fetches the PDF from `url`, stores under previews/,
+   * parses, returns the same shape as parsePavePreview.
+   */
+  ingestPaveUrl(body) {
+    return apiFetch('/body-repair/pave/ingest-url', {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
   // ── Phase 2 — Quotes ────────────────────────────────
   // Response shape is role-projected by the backend: customer sees
   // list_cents + platform_fee_cents, vendor sees vendor_raw_cents,

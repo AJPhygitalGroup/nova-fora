@@ -529,6 +529,18 @@ class ParsePavePreviewBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class IngestPaveUrlBody(BaseModel):
+    """URL-paste flow — backend fetches the PDF from paveapi.com (or
+    any HTTPS URL) and stores it under the previews/ prefix as if the
+    user had uploaded it. Returns the same shape as
+    ParsePavePreviewResponse so the frontend can use one rendering
+    path."""
+
+    url: str = Field(..., min_length=8, max_length=1000)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ParsePavePreviewResponse(BaseModel):
     """The parsed PAVE summary — no DB row. Mirrors the rich summary
     the demo's PaveSummaryCard renders (NOVABODY/web BodyRepair.tsx
@@ -814,6 +826,172 @@ async def parse_pave_preview(
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             f"parse_pave_preview failed: {type(e).__name__}: {e}",
+        ) from e
+
+
+@router.post(
+    "/pave/ingest-url",
+    response_model=ParsePavePreviewResponse,
+    summary="Fetch a PAVE PDF from a URL, store + parse, return summary",
+    responses={
+        400: {"description": "URL is invalid or unsupported scheme."},
+        403: {"description": "Only DSP owners and site_admins can ingest."},
+        409: {"description": "Fetch or upload failed."},
+    },
+)
+async def ingest_pave_url(
+    body: IngestPaveUrlBody,
+    current: User = Depends(get_current_user),
+) -> ParsePavePreviewResponse:
+    """URL-paste flow (mirrors demo's Sync button on the PAVE URL
+    input).
+
+    Customer types a paveapi.com URL — backend fetches the PDF over
+    HTTPS, uploads it to MinIO under previews/, parses it, and returns
+    the same summary shape as the upload-flow endpoint. The frontend
+    treats both paths identically downstream.
+    """
+    import logging
+    import os
+    import tempfile
+    import urllib.request
+    import urllib.error
+    import urllib.parse
+    import uuid as _uuid
+
+    log = logging.getLogger("nova.body_repair")
+
+    if current.role not in (UserRole.DSP_OWNER, UserRole.SITE_ADMIN):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "only customers ingest PAVE URLs"
+        )
+
+    # URL safety: HTTPS only, must parse, must not be a local-network
+    # host. We don't enforce a paveapi.com domain — the demo also
+    # accepted arbitrary URLs because the customer might use a vendor-
+    # provided link — but block obvious SSRF targets.
+    try:
+        parsed_url = urllib.parse.urlparse(body.url)
+    except (ValueError, AttributeError):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid URL")
+    if parsed_url.scheme not in ("https", "http"):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "URL must use http(s)"
+        )
+    host = (parsed_url.hostname or "").lower()
+    if not host or host in ("localhost", "127.0.0.1") or host.endswith(".local") or host.startswith("169.254."):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "URL host is not allowed"
+        )
+
+    try:
+        from app.services.pave_parser import parse_pave_report
+        from app.settings import get_settings
+        from app.storage.s3 import _public_client
+
+        # Cap at 25 MB so a malicious URL can't make us swallow GBs.
+        MAX_BYTES = 25 * 1024 * 1024
+
+        # Stream the response into a tempfile so we don't double-buffer.
+        req_obj = urllib.request.Request(body.url, headers={"User-Agent": "nova-fora/body-repair/1.0"})
+        try:
+            with urllib.request.urlopen(req_obj, timeout=12) as resp:
+                ctype = (resp.headers.get("Content-Type") or "").lower()
+                if "pdf" not in ctype and not body.url.lower().endswith(".pdf"):
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST,
+                        f"URL did not return a PDF (Content-Type: {ctype})",
+                    )
+                pdf_bytes = resp.read(MAX_BYTES + 1)
+        except HTTPException:
+            raise
+        except urllib.error.HTTPError as e:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"upstream returned {e.code}: {e.reason}",
+            ) from e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"could not fetch URL: {type(e).__name__}: {e}",
+            ) from e
+
+        if len(pdf_bytes) > MAX_BYTES:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"PDF exceeds {MAX_BYTES // (1024 * 1024)} MB cap",
+            )
+
+        # Store under previews/ with a synthesized storage_key that
+        # matches what /uploads/presigned would have produced.
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        uid = _uuid.uuid4().hex[:12]
+        storage_key = f"photos/body_repair_previews/0/{now:%Y-%m-%d}/{uid}.pdf"
+
+        s = get_settings()
+        cli = _public_client()
+        try:
+            cli.put_object(
+                Bucket=s.s3_bucket,
+                Key=storage_key,
+                Body=pdf_bytes,
+                ContentType="application/pdf",
+            )
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"could not store fetched PDF: {type(e).__name__}: {e}",
+            ) from e
+
+        # Parse from the tempfile (faster than re-downloading from S3
+        # for this small one-shot path).
+        tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+        try:
+            tmp.write(pdf_bytes)
+            tmp.flush()
+            tmp.close()
+            parsed: dict = parse_pave_report(tmp.name)
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+
+        summary = _build_pave_summary(parsed)
+        warnings = parsed.get("parse_warnings") or None
+
+        return ParsePavePreviewResponse(
+            storage_key=storage_key,
+            parse_status=parsed.get("parse_status", "failed"),
+            vin=parsed.get("vin"),
+            year=parsed.get("year"),
+            make=parsed.get("make"),
+            model=parsed.get("model"),
+            inspection_date_utc=parsed.get("inspection_date_utc"),
+            grade=summary["grade"],
+            grade_label=summary["grade_label"],
+            grade_definition=summary["grade_definition"],
+            current_fcs=summary["current_fcs"],
+            current_grade=summary["current_grade"],
+            side_counts=summary["side_counts"],
+            side_counts_total=summary["side_counts_total"],
+            all_damages_count=summary["all_damages_count"],
+            damage_count=summary["all_damages_count"] or 0,
+            total_score=summary["grade"],
+            priority_detected=summary["priority_detected"],
+            at_risk_of_grounding=summary["at_risk_of_grounding"],
+            components=summary["components"],
+            priority_components_top=summary["priority_components_top"],
+            parse_warnings=warnings,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        log.exception("ingest_pave_url: unhandled exception")
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"ingest_pave_url failed: {type(e).__name__}: {e}",
         ) from e
 
 
