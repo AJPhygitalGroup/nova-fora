@@ -1226,6 +1226,13 @@ function AccountManagerCard() {
 // Tab: Organization
 // ============================================================
 function OrganizationTab({ user }) {
+  // 2026-06-05 Jorge — the SMS + key drop + preferred-vendors blocks
+  // below are DSP-side coordination tools (telling vendors when keys
+  // are ready, where to drop them, who to route AMR work to). A body
+  // repair vendor org has none of those concerns. Skip the block list
+  // entirely for them — only the Business details card + Account
+  // Manager surface stays visible.
+  const isBodyRepairVendor = user?.orgType === 'body_repair_vendor';
   const { t } = useTranslation('admin');
   const isDsp = user.role === 'dsp_owner';
   const isVendor = user.role === 'vendor_admin';
@@ -1272,7 +1279,9 @@ function OrganizationTab({ user }) {
         <AccountManagerCard />
       </div>
 
-      {/* SMS opt-in */}
+      {/* DSP-side coordination blocks — hidden for body repair vendors.
+          See OrganizationTab() header comment for why. */}
+      {!isBodyRepairVendor && (
       <div className="bg-navy-900/60 border border-navy-700/40 rounded-xl p-4 sm:p-5">
         <label className="flex items-start gap-3 cursor-pointer">
           <input type="checkbox" checked={form.inspectionImpossibleSMS} onChange={() => setForm({ ...form, inspectionImpossibleSMS: !form.inspectionImpossibleSMS })} className="mt-1 w-5 h-5" />
@@ -1282,8 +1291,10 @@ function OrganizationTab({ user }) {
           </div>
         </label>
       </div>
+      )}
 
       {/* Evening reminder text */}
+      {!isBodyRepairVendor && (
       <div className="bg-navy-900/60 border border-navy-700/40 rounded-xl p-4 sm:p-5">
         <label className="flex items-start gap-3 cursor-pointer">
           <input type="checkbox" checked={form.eveningReminder} onChange={() => setForm({ ...form, eveningReminder: !form.eveningReminder })} className="mt-1 w-5 h-5" />
@@ -1309,8 +1320,10 @@ function OrganizationTab({ user }) {
           </div>
         </label>
       </div>
+      )}
 
       {/* Key return info */}
+      {!isBodyRepairVendor && (
       <div className="bg-navy-900/60 border border-navy-700/40 rounded-xl p-4 sm:p-5">
         <label className="flex items-start gap-3 cursor-pointer">
           <input type="checkbox" checked={form.keyReturnInfo} onChange={() => setForm({ ...form, keyReturnInfo: !form.keyReturnInfo })} className="mt-1 w-5 h-5" />
@@ -1330,8 +1343,10 @@ function OrganizationTab({ user }) {
           </div>
         </label>
       </div>
+      )}
 
       {/* Preferred Vendors */}
+      {!isBodyRepairVendor && (
       <div className="bg-navy-900/60 border border-navy-700/40 rounded-xl p-4 sm:p-5">
         <label className="flex items-start gap-3 cursor-pointer">
           <input type="checkbox" checked={form.preferredVendors} onChange={() => setForm({ ...form, preferredVendors: !form.preferredVendors })} className="mt-1 w-5 h-5" />
@@ -1357,6 +1372,7 @@ function OrganizationTab({ user }) {
           </div>
         </label>
       </div>
+      )}
 
       {/* Slack Integration */}
       <div className="bg-navy-900/60 border border-navy-700/40 rounded-xl p-4 sm:p-5">
