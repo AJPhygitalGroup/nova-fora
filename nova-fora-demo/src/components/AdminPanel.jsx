@@ -2350,13 +2350,18 @@ export default function AdminPanel({ user }) {
   const isOrgAdmin = isOrgAdminRole(user);
 
   const isVendor = isVendorRole(user);
+  // 2026-06-05 Jorge — body repair vendors don't run the mechanical
+  // PM cycle and don't earn AMR rewards. Hide both tabs for that
+  // org type even though the role-based gate would otherwise show
+  // them (role=vendor_admin passes both isOrgAdmin and isVendor).
+  const isBodyRepairVendor = user?.orgType === 'body_repair_vendor';
   const tabs = [
     { id: 'users',       label: t('tabs.users', 'Users'),               icon: Users,        available: isOrgAdmin },
     { id: 'invitations', label: t('tabs.invitations', 'Invitations'),   icon: Mail,         available: isOrgAdmin },
     { id: 'security',    label: t('tabs.security', 'Security'),         icon: Shield,       available: true },
     { id: 'org',         label: t('tabs.organization', 'Organization'), icon: Building2,    available: isOrgAdmin },
-    { id: 'pm',          label: t('tabs.pm', 'Preventive Maintenance'), icon: RefreshCw,    available: isOrgAdmin },
-    { id: 'rewards',     label: t('tabs.rewards', 'Rewards'),           icon: Gift,         available: isVendor || isSiteAdmin },
+    { id: 'pm',          label: t('tabs.pm', 'Preventive Maintenance'), icon: RefreshCw,    available: isOrgAdmin && !isBodyRepairVendor },
+    { id: 'rewards',     label: t('tabs.rewards', 'Rewards'),           icon: Gift,         available: (isVendor || isSiteAdmin) && !isBodyRepairVendor },
     { id: 'inspectors',  label: t('tabs.inspectors', 'Inspector Performance'), icon: Shield, available: isDspOwner || isSiteAdmin },
     { id: 'defects',     label: t('tabs.defects', 'Defect Rules'),      icon: CheckCheck,   available: isDspOwner || isSiteAdmin },
     { id: 'audit',       label: t('tabs.audit', 'Audit Log'),           icon: ScrollText,   available: isSiteAdmin },
