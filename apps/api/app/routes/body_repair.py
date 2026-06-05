@@ -586,6 +586,13 @@ class ParsePavePreviewResponse(BaseModel):
     components: list[dict] | None = None
     priority_components_top: list[dict] | None = None
 
+    # Image bag — counts of extracted thumbnails (panel / damage).
+    # The frontend builds thumbnail URLs from `/pave/image?storage_key=
+    # &category=&idx=<i>` for i in [0, panel_image_count) and similar
+    # for damage.
+    panel_image_count: int = 0
+    damage_image_count: int = 0
+
     parse_warnings: list[str] | None = None
 
     model_config = ConfigDict(from_attributes=True)
@@ -645,6 +652,50 @@ def _group_components(damages: list[dict]) -> list[dict]:
         -len(c["damages"]),
         c["name"] or "",
     ))
+
+
+def _extract_and_upload_pave_images(pdf_path: str, storage_key_pdf: str) -> dict[str, int]:
+    """Extract panel + damage thumbnails via pdfimages and upload them
+    to MinIO under deterministic keys derived from the PDF's
+    storage_key. Returns counts per category so the response carries
+    {panel_image_count, damage_image_count}; failures degrade silently
+    (no images → 0 / 0)."""
+    import logging
+    from app.services.pave_images import extract_pave_images, image_key_for
+    from app.settings import get_settings
+    from app.storage.s3 import _public_client
+
+    log = logging.getLogger("nova.body_repair")
+    counts = {"panel": 0, "damage": 0}
+    try:
+        cats = extract_pave_images(pdf_path)
+    except Exception as e:  # noqa: BLE001
+        log.warning("pave image extract failed: %s", e)
+        return counts
+
+    if not cats:
+        return counts
+
+    s = get_settings()
+    cli = _public_client()
+    for category in ("panel", "damage"):
+        for idx, item in enumerate(cats.get(category, []) or []):
+            key = image_key_for(storage_key_pdf, category, idx)
+            try:
+                cli.put_object(
+                    Bucket=s.s3_bucket,
+                    Key=key,
+                    Body=item["data"],
+                    ContentType=item.get("mime") or "image/jpeg",
+                )
+                counts[category] += 1
+            except Exception as e:  # noqa: BLE001
+                log.warning(
+                    "pave image upload failed for %s/%s/%d: %s",
+                    storage_key_pdf, category, idx, e,
+                )
+                # Keep iterating — partial upload is still useful.
+    return counts
 
 
 def _build_pave_summary(parsed: dict) -> dict:
@@ -781,11 +832,16 @@ async def parse_pave_preview(
             ) from e
 
         tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+        img_counts = {"panel": 0, "damage": 0}
         try:
             tmp.write(pdf_bytes)
             tmp.flush()
             tmp.close()
             parsed: dict = parse_pave_report(tmp.name)
+            # Image extraction shares the same tempfile — saves a
+            # re-write. Best-effort; the parse remains useful even if
+            # pdfimages errors.
+            img_counts = _extract_and_upload_pave_images(tmp.name, body.storage_key)
         finally:
             try:
                 os.unlink(tmp.name)
@@ -817,6 +873,8 @@ async def parse_pave_preview(
             at_risk_of_grounding=summary["at_risk_of_grounding"],
             components=summary["components"],
             priority_components_top=summary["priority_components_top"],
+            panel_image_count=img_counts.get("panel", 0),
+            damage_image_count=img_counts.get("damage", 0),
             parse_warnings=warnings,
         )
     except HTTPException:
@@ -945,13 +1003,15 @@ async def ingest_pave_url(
             ) from e
 
         # Parse from the tempfile (faster than re-downloading from S3
-        # for this small one-shot path).
+        # for this small one-shot path). Same tempfile feeds pdfimages.
         tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+        img_counts = {"panel": 0, "damage": 0}
         try:
             tmp.write(pdf_bytes)
             tmp.flush()
             tmp.close()
             parsed: dict = parse_pave_report(tmp.name)
+            img_counts = _extract_and_upload_pave_images(tmp.name, storage_key)
         finally:
             try:
                 os.unlink(tmp.name)
@@ -983,6 +1043,8 @@ async def ingest_pave_url(
             at_risk_of_grounding=summary["at_risk_of_grounding"],
             components=summary["components"],
             priority_components_top=summary["priority_components_top"],
+            panel_image_count=img_counts.get("panel", 0),
+            damage_image_count=img_counts.get("damage", 0),
             parse_warnings=warnings,
         )
     except HTTPException:
@@ -993,6 +1055,61 @@ async def ingest_pave_url(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             f"ingest_pave_url failed: {type(e).__name__}: {e}",
         ) from e
+
+
+# ─────────────────────────────────────────────────────
+# GET /body-repair/pave/image — proxy an extracted thumbnail
+# ─────────────────────────────────────────────────────
+@router.get(
+    "/pave/image",
+    summary="Serve a categorized PAVE thumbnail by storage_key + category + idx",
+    responses={
+        404: {"description": "Image not found."},
+        403: {"description": "storage_key is not a preview."},
+    },
+)
+async def get_pave_image(
+    storage_key: str = Query(..., min_length=1, max_length=500),
+    category: str = Query(..., pattern="^(panel|damage)$"),
+    idx: int = Query(..., ge=0, le=999),
+    current: User = Depends(get_current_user),
+) -> Response:
+    """Serve an extracted PAVE thumbnail (JPEG) from MinIO.
+
+    Used by the frontend's PaveSummaryCard (panel) + PickPartsModal
+    (per-damage). Streams the bytes from MinIO directly — keeps the
+    bucket private (no public presigned URL needed) and the auth
+    surface narrow.
+    """
+    if current.role not in (UserRole.DSP_OWNER, UserRole.SITE_ADMIN):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not allowed")
+    # Same path-prefix guard as parse_pave_preview — only previews
+    # are reachable here. Phase 2c will add an attached variant for
+    # post-create PAVE images.
+    if not storage_key.startswith("photos/body_repair_previews/"):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "storage_key must be a preview upload",
+        )
+
+    from app.services.pave_images import image_key_for
+    from app.settings import get_settings
+    from app.storage.s3 import _public_client
+
+    key = image_key_for(storage_key, category, idx)
+    s = get_settings()
+    cli = _public_client()
+    try:
+        obj = cli.get_object(Bucket=s.s3_bucket, Key=key)
+        body = obj["Body"].read()
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "image not found")
+
+    return Response(
+        content=body,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=300"},
+    )
 
 
 # ─────────────────────────────────────────────────────

@@ -36,6 +36,7 @@ import {
   bodyRepair as bodyRepairApi,
   vehicles as vehiclesApi,
   uploads as uploadsApi,
+  getAccessToken,
   APIError,
 } from '../api/client';
 
@@ -1580,6 +1581,8 @@ function CreateRequestModal({ user, onClose, onCreated }) {
                   components={paveData.components || []}
                   selected={pickedItemNos}
                   setSelected={setPickedItemNos}
+                  storageKey={paveData.storageKey}
+                  damageImageCount={paveData.damageImageCount || 0}
                   onClose={() => setPickOpen(false)}
                 />
               )}
@@ -1615,7 +1618,7 @@ function CreateRequestModal({ user, onClose, onCreated }) {
 // Customer ticks individual damages; selected list is item_no based
 // so the backend can re-resolve which components they picked.
 // ─────────────────────────────────────────────────────
-function PickPartsModal({ components, selected, setSelected, onClose }) {
+function PickPartsModal({ components, selected, setSelected, onClose, storageKey, damageImageCount }) {
   const toggleDamage = (itemNo) => {
     setSelected((cur) => {
       const has = cur.includes(itemNo);
@@ -1710,12 +1713,16 @@ function PickPartsModal({ components, selected, setSelected, onClose }) {
                   <div className="pl-9 pr-3 pb-2 space-y-1">
                     {(c.damages || []).map((d) => {
                       const isSel = selected.includes(d.itemNo);
+                      const showThumb = storageKey
+                        && damageImageCount
+                        && typeof d.photoIndex === 'number'
+                        && d.photoIndex < damageImageCount;
                       return (
                         <button
                           key={d.itemNo}
                           type="button"
                           onClick={() => toggleDamage(d.itemNo)}
-                          className={`w-full grid grid-cols-[18px_30px_1fr_60px_50px] gap-2 items-center px-2 py-1 rounded-md text-left text-xs hover:bg-navy-800 transition-colors ${
+                          className={`w-full grid grid-cols-[18px_30px_44px_1fr_60px_50px] gap-2 items-center px-2 py-1 rounded-md text-left text-xs hover:bg-navy-800 transition-colors ${
                             isSel ? 'bg-accent-blue/10' : ''
                           }`}
                         >
@@ -1729,6 +1736,15 @@ function PickPartsModal({ components, selected, setSelected, onClose }) {
                             {isSel && <CheckCircle2 size={8} className="text-white" />}
                           </span>
                           <span className="text-navy-500 font-mono text-[10px]">#{d.itemNo}</span>
+                          {showThumb ? (
+                            <AuthImg
+                              src={paveImageUrl(storageKey, 'damage', d.photoIndex)}
+                              alt={`Damage ${d.itemNo}`}
+                              className="w-10 h-10 rounded border border-navy-700 object-cover"
+                            />
+                          ) : (
+                            <div className="w-10 h-10 rounded border border-navy-800 bg-navy-900" />
+                          )}
                           <span className="text-navy-300 truncate">
                             {d.damageType ? d.damageType.replace(/_/g, ' ') : '—'}
                             {d.severity ? <span className="text-navy-500"> · {d.severity}</span> : null}
@@ -1798,6 +1814,70 @@ function StepPill({ n, label, state }) {
   );
 }
 
+// Build a backend URL for a categorized PAVE thumbnail. The endpoint
+// proxies the JPEG bytes (kept private — no presigned link leaked).
+// The Authorization header is required, so we hit the apiFetch path
+// via a blob URL would normally be needed; for now we rely on the
+// browser sending the cookie/header for our same-origin requests in
+// dev + the `Authorization` set via the fetch wrapper for prod.
+// In <img src=...> we use the apiFetch token bridge: the URL points
+// at /api which the Vite proxy + prod LB handle with the bearer.
+function paveImageUrl(storageKey, category, idx) {
+  // The backend mounts /body-repair under the API root; we use the
+  // env-driven base url so dev / prod / preview all work.
+  const base = (import.meta?.env?.VITE_API_BASE_URL) || '';
+  const params = new URLSearchParams({
+    storage_key: storageKey,
+    category,
+    idx: String(idx),
+  });
+  return `${base}/body-repair/pave/image?${params.toString()}`;
+}
+
+// Authenticated <img> — img tags don't carry the bearer token
+// automatically. This component fetches the image via apiFetch (which
+// adds the JWT) and renders the result as a blob URL. Cleans up the
+// URL on unmount.
+function AuthImg({ src, alt, className, onError }) {
+  const [blobUrl, setBlobUrl] = useState(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setFailed(false);
+    setBlobUrl(null);
+    const token = getAccessToken();
+    fetch(src, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then((resp) => {
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        return resp.blob();
+      })
+      .then((blob) => {
+        if (cancelled) return;
+        setBlobUrl(URL.createObjectURL(blob));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setFailed(true);
+        onError?.();
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [src, onError]);
+  useEffect(() => {
+    return () => { if (blobUrl) URL.revokeObjectURL(blobUrl); };
+  }, [blobUrl]);
+  if (failed) {
+    return <div className={`${className} bg-navy-900 flex items-center justify-center text-[9px] text-navy-500`}>no img</div>;
+  }
+  if (!blobUrl) {
+    return <div className={`${className} bg-navy-900 flex items-center justify-center`}>
+      <Loader2 size={12} className="text-navy-600 animate-spin" />
+    </div>;
+  }
+  return <img src={blobUrl} alt={alt} className={className} />;
+}
+
 // ─────────────────────────────────────────────────────
 // PaveSummaryCard — rich preview matching the demo's Step 2 card
 // (NOVABODY/web BodyRepair.tsx line 1204). Renders:
@@ -1839,6 +1919,16 @@ function PaveSummaryCard({ pave, onChange }) {
         : 'bg-navy-950/40 border-navy-800'
     }`}>
       <div className="flex items-start gap-4">
+        {/* Panel thumbnail — first wide-aspect image extracted by
+            pdfimages. Shown only when at least one panel made it
+            through extraction. */}
+        {pave.storageKey && pave.panelImageCount > 0 && (
+          <AuthImg
+            src={paveImageUrl(pave.storageKey, 'panel', 0)}
+            alt="PAVE panel shot"
+            className="w-28 h-20 rounded-lg border border-navy-700 object-cover shrink-0"
+          />
+        )}
         {/* Grade badge */}
         <div
           className={`flex flex-col items-center justify-center w-16 h-16 rounded-xl border-2 ${gradeCls} shrink-0`}
@@ -1912,18 +2002,18 @@ function PaveSummaryCard({ pave, onChange }) {
         </>
       )}
 
-      {/* Top priority damages — same "must repair to exit Poor" table
-          the demo renders below side counts. Each row shows component
-          + worst damage chip + count. Phase 2c will add damage photo
-          crops next to each row. */}
+      {/* Top priority damages — "must repair to exit Poor" table.
+          Mirrors the demo's table at BodyRepair.tsx line 1285 with
+          damage photo crops per row. */}
       {!failed && Array.isArray(pave.priorityComponentsTop) && pave.priorityComponentsTop.length > 0 && (
         <div className="mt-4">
           <div className="text-[10px] uppercase tracking-wider text-navy-500 mb-1.5">
             Top priority damages
           </div>
           <div className="rounded-lg border border-navy-800 overflow-hidden">
-            <div className="grid grid-cols-[2fr_70px_60px_1fr] gap-2 px-2 py-1 text-[10px] uppercase tracking-wider text-navy-500 border-b border-navy-800 bg-navy-900/40">
+            <div className="grid grid-cols-[1.4fr_44px_60px_50px_1fr] gap-2 px-2 py-1 text-[10px] uppercase tracking-wider text-navy-500 border-b border-navy-800 bg-navy-900/40">
               <span>Component</span>
+              <span className="text-center">Photo</span>
               <span className="text-center">Worst</span>
               <span className="text-center">Count</span>
               <span>Top damage</span>
@@ -1931,16 +2021,31 @@ function PaveSummaryCard({ pave, onChange }) {
             {pave.priorityComponentsTop.map((c, i) => {
               const topDamage = (c.damages || []).find((d) => d.isPriority) || (c.damages || [])[0];
               const dmgScore = topDamage?.fleetScore ?? c.worstScore;
+              const showThumb = pave.storageKey
+                && pave.damageImageCount
+                && typeof topDamage?.photoIndex === 'number'
+                && topDamage.photoIndex < pave.damageImageCount;
               return (
                 <div
                   key={`${c.name}-${i}`}
-                  className="grid grid-cols-[2fr_70px_60px_1fr] gap-2 px-2 py-1.5 text-xs items-center border-b border-navy-800/50 last:border-0 bg-accent-red/[0.05]"
+                  className="grid grid-cols-[1.4fr_44px_60px_50px_1fr] gap-2 px-2 py-1.5 text-xs items-center border-b border-navy-800/50 last:border-0 bg-accent-red/[0.05]"
                 >
                   <div className="min-w-0">
                     <div className="text-sm font-medium text-white leading-tight truncate">{c.name}</div>
                     <span className="inline-block mt-0.5 text-[9px] px-1 py-0.5 rounded bg-accent-red/20 text-accent-red font-semibold">
                       Priority
                     </span>
+                  </div>
+                  <div className="flex items-center justify-center">
+                    {showThumb ? (
+                      <AuthImg
+                        src={paveImageUrl(pave.storageKey, 'damage', topDamage.photoIndex)}
+                        alt={`Damage ${topDamage.itemNo}`}
+                        className="w-10 h-10 rounded border border-navy-700 object-cover"
+                      />
+                    ) : (
+                      <div className="w-10 h-10 rounded border border-navy-800 bg-navy-900" />
+                    )}
                   </div>
                   <div className="text-center">
                     {dmgScore != null ? (
