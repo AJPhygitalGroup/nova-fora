@@ -30,7 +30,7 @@ import { motion } from 'framer-motion';
 import {
   Wrench, Plus, X, Loader2, AlertTriangle, Truck, Calendar, FileText,
   CheckCircle2, ArrowRight, Upload, FileBadge, DollarSign, ThumbsUp, ThumbsDown,
-  RefreshCw,
+  RefreshCw, Trash2,
 } from 'lucide-react';
 import {
   bodyRepair as bodyRepairApi,
@@ -179,6 +179,7 @@ function RequestRow({ req, user, isBodyRepairVendor, expanded, onToggle, onReloa
   // re-expanding doesn't refetch every time.
   const [paveRows, setPaveRows] = useState(null);
   const [paveErr, setPaveErr] = useState(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   useEffect(() => {
     if (!expanded || paveRows !== null) return;
     let cancelled = false;
@@ -191,43 +192,86 @@ function RequestRow({ req, user, isBodyRepairVendor, expanded, onToggle, onReloa
 
   const paveCount = Array.isArray(paveRows) ? paveRows.length : 0;
 
+  // Delete is allowed only while pending_quotes (backend enforces it
+  // too — this just hides the button so the user doesn't see a dead
+  // action). DSP owners delete their own drafts; site_admin can delete
+  // anyone's (operator cleanup). Body repair vendors can never delete.
+  const canDelete = (
+    (user?.role === 'dsp_owner' || user?.role === 'site_admin')
+    && req.status === 'pending_quotes'
+    && !isBodyRepairVendor
+  );
+  const onDelete = async (e) => {
+    e.stopPropagation();
+    if (!window.confirm(`Delete draft request ${req.id} for Van ${req.vehicleFleetId || req.vehicleId}? This cannot be undone.`)) {
+      return;
+    }
+    setDeleteBusy(true);
+    try {
+      await bodyRepairApi.remove(req.id);
+      onReload?.();
+    } catch (err) {
+      const msg = err instanceof APIError ? (err.detail || err.message) : (err?.message || 'delete failed');
+      alert(`Could not delete: ${msg}`);
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
   return (
     <div className="rounded-xl border border-navy-700 bg-navy-900/60 overflow-hidden">
-      <button
-        onClick={onToggle}
-        className="w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-navy-800/40 transition-colors text-left"
-      >
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-9 h-9 rounded-lg bg-accent-purple/15 border border-accent-purple/40 flex items-center justify-center shrink-0">
-            <Truck size={14} className="text-accent-purple" />
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-semibold text-white">
-                Van {req.vehicleFleetId || req.vehicleId}
-              </span>
-              <span className="text-[10px] text-navy-500 font-mono">{req.id}</span>
-              {req.vendorName && (
-                <span className="text-[10px] text-navy-400">· {req.vendorName}</span>
-              )}
-              {paveCount > 0 && (
-                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-accent-purple/15 text-accent-purple border border-accent-purple/40">
-                  <FileBadge size={9} />
-                  PAVE
+      {/* Header is a clickable row to toggle expansion. The delete
+          button is a SIBLING (not nested) — putting a <button> inside
+          another <button> is invalid HTML and Chrome was eating the
+          click target. */}
+      <div className="flex items-center gap-2 px-4 py-3 hover:bg-navy-800/40 transition-colors">
+        <button
+          onClick={onToggle}
+          className="flex-1 flex items-center justify-between gap-3 text-left min-w-0"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-lg bg-accent-purple/15 border border-accent-purple/40 flex items-center justify-center shrink-0">
+              <Truck size={14} className="text-accent-purple" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-semibold text-white">
+                  Van {req.vehicleFleetId || req.vehicleId}
                 </span>
-              )}
-            </div>
-            <div className="text-[11px] text-navy-400 truncate">
-              {req.dspName}
-              {req.vehicleYear ? ` · ${req.vehicleYear} ${req.vehicleMake || ''} ${req.vehicleModel || ''}`.trim() : ''}
-              {' · created '}{relativeTime(req.createdAt)}
+                <span className="text-[10px] text-navy-500 font-mono">{req.id}</span>
+                {req.vendorName && (
+                  <span className="text-[10px] text-navy-400">· {req.vendorName}</span>
+                )}
+                {paveCount > 0 && (
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-accent-purple/15 text-accent-purple border border-accent-purple/40">
+                    <FileBadge size={9} />
+                    PAVE
+                  </span>
+                )}
+              </div>
+              <div className="text-[11px] text-navy-400 truncate">
+                {req.dspName}
+                {req.vehicleYear ? ` · ${req.vehicleYear} ${req.vehicleMake || ''} ${req.vehicleModel || ''}`.trim() : ''}
+                {' · created '}{relativeTime(req.createdAt)}
+              </div>
             </div>
           </div>
-        </div>
-        <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-${s.color}/15 text-${s.color} border border-${s.color}/40`}>
-          {s.label}
-        </span>
-      </button>
+          <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-${s.color}/15 text-${s.color} border border-${s.color}/40`}>
+            {s.label}
+          </span>
+        </button>
+        {canDelete && (
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={deleteBusy}
+            className="shrink-0 p-1.5 rounded-md text-navy-500 hover:text-accent-red hover:bg-accent-red/10 transition-colors disabled:opacity-40 cursor-pointer"
+            title="Delete this draft request"
+          >
+            {deleteBusy ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+          </button>
+        )}
+      </div>
       {expanded && (
         <div className="px-4 py-3 border-t border-navy-700/60 bg-navy-900/40 text-sm space-y-3">
           {req.textDescription ? (
