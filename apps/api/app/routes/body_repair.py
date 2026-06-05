@@ -479,10 +479,12 @@ async def parse_pave_preview(
         )
 
     # Tenancy guard on the storage_key path: previews go under
-    # "body_repair_previews/" — refuse anything else so a user can't
-    # parse a real request's PAVE this way (which would 200 fine but
-    # is an info-leak vector if they guessed paths).
-    if not body.storage_key.startswith("body_repair_previews/"):
+    # "photos/body_repair_previews/" (the "photos/" root is added by
+    # storage/s3.new_storage_key for ALL kinds — it's a misnomer at
+    # this point, but every storage key has it). Refuse anything else
+    # so a user can't parse a real request's PAVE this way (which
+    # would 200 fine but is an info-leak vector if they guessed paths).
+    if not body.storage_key.startswith("photos/body_repair_previews/"):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "storage_key must be a preview upload",
