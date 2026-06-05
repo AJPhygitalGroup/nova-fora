@@ -25,6 +25,14 @@ from .body_repair_pave_report import (
     PaveParseStatus,
     PavePhase,
 )
+from .body_repair_quote import (
+    BodyRepairQuote,
+    BodyRepairQuoteLineItem,
+    BodyRepairQuoteRevision,
+    BodyRepairQuoteRevisionLineItem,
+    BodyRepairQuoteStatus,
+    BodyRepairRevisionStatus,
+)
 from .body_repair_request import (
     BodyRepairRequest,
     BodyRepairRequestStatus,
@@ -38,4 +46,10 @@ __all__ = [
     "BodyRepairPaveReport",
     "PavePhase",
     "PaveParseStatus",
+    "BodyRepairQuote",
+    "BodyRepairQuoteLineItem",
+    "BodyRepairQuoteRevision",
+    "BodyRepairQuoteRevisionLineItem",
+    "BodyRepairQuoteStatus",
+    "BodyRepairRevisionStatus",
 ]

@@ -13,8 +13,14 @@ from app.models.auth_audit_log import AuthAuditEvent, AuthAuditLog
 from app.models.base import timestamp_column, utc_now
 from app.models.body_repair import (
     BodyRepairPaveReport,
+    BodyRepairQuote,
+    BodyRepairQuoteLineItem,
+    BodyRepairQuoteRevision,
+    BodyRepairQuoteRevisionLineItem,
+    BodyRepairQuoteStatus,
     BodyRepairRequest,
     BodyRepairRequestStatus,
+    BodyRepairRevisionStatus,
     BodyRepairSubmissionMode,
     PaveParseStatus,
     PavePhase,
