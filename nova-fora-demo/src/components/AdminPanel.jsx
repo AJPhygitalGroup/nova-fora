@@ -1233,6 +1233,19 @@ function OrganizationTab({ user }) {
   // entirely for them — only the Business details card + Account
   // Manager surface stays visible.
   const isBodyRepairVendor = user?.orgType === 'body_repair_vendor';
+
+  // Save state — the Save Changes button used to be a dead UI element
+  // (no onClick). Wired up to a local "saved" pulse so the user gets
+  // immediate feedback. Backend persistence for these settings is a
+  // separate ticket — most of the form fields here aren't in the
+  // Organization model yet (they live in mock state).
+  const [savedAt, setSavedAt] = useState(null);
+  const handleSave = (e) => {
+    e?.preventDefault?.();
+    setSavedAt(Date.now());
+    // Auto-hide the confirmation after 2.5s.
+    setTimeout(() => setSavedAt((cur) => (cur && Date.now() - cur >= 2400 ? null : cur)), 2500);
+  };
   const { t } = useTranslation('admin');
   const isDsp = user.role === 'dsp_owner';
   const isVendor = user.role === 'vendor_admin';
@@ -1429,8 +1442,17 @@ function OrganizationTab({ user }) {
         </div>
       )}
 
-      <div className="flex justify-end">
-        <button className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-accent-blue text-white text-sm font-semibold hover:opacity-90 cursor-pointer">
+      <div className="flex items-center justify-end gap-3">
+        {savedAt && (
+          <span className="inline-flex items-center gap-1 text-xs text-accent-green">
+            <Check size={12} /> {t('organization.saved', 'Saved')}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={handleSave}
+          className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-accent-blue text-white text-sm font-semibold hover:opacity-90 cursor-pointer"
+        >
           <Check size={14} /> {t('organization.saveChanges', 'Save Changes')}
         </button>
       </div>
