@@ -65,6 +65,24 @@ async def lifespan(app: FastAPI):
         except Exception as e:  # noqa: BLE001
             print(f"[nova-api] WARN: catalog re-sync failed: {e}")
 
+        # 2026-06-05 Jorge — auto-seed the demo body repair vendor so
+        # the RoleSwitcher's Atlas Body Shop persona works without
+        # operator shell access. Idempotent: skips creation if either
+        # the org or user already exists. Defaults match
+        # data/mockData.js's demoAccounts[4] entry (org name + email +
+        # password 'nova2026!').
+        try:
+            from app.cli import cmd_seed_body_repair_vendor
+            print("[nova-api] ensuring demo body repair vendor…")
+            await cmd_seed_body_repair_vendor()
+        except SystemExit:
+            # cmd_seed_body_repair_vendor exits(1) when an existing
+            # org has the wrong org_type. We don't want that to kill
+            # the whole boot — log and continue.
+            print("[nova-api] WARN: body repair vendor seed bailed (existing org with wrong org_type?)")
+        except Exception as e:  # noqa: BLE001
+            print(f"[nova-api] WARN: body repair vendor seed failed: {e}")
+
     yield
     print("[nova-api] shutting down")
 
