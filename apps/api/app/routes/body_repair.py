@@ -460,6 +460,8 @@ class ParsePavePreviewResponse(BaseModel):
     grade: int | None = None              # 0-5
     grade_label: str | None = None        # 'Great' | 'Good' | 'Fair' | 'Poor'
     grade_definition: str | None = None   # tooltip text
+    current_fcs: int | None = None        # FCS sum across current damages
+    current_grade: int | None = None      # FCS bracket (may differ from PAVE-reported grade)
 
     # Per-side breakdown (from PAVE's scores section)
     side_counts: dict | None = None       # {front, back, left, right}
@@ -472,18 +474,76 @@ class ParsePavePreviewResponse(BaseModel):
     priority_detected: bool = False
     at_risk_of_grounding: bool = False
 
+    # Damage detail — drives the priority table + parts picker
+    components: list[dict] | None = None
+    priority_components_top: list[dict] | None = None
+
     parse_warnings: list[str] | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
+def _current_damage_rows(parsed: dict) -> list[dict]:
+    """Current per-side damages + new_damage rows not already covered.
+    Mirrors the demo's _current_damage_rows. Repaired-damage rows are
+    excluded — they're history, not actionable scope."""
+    side_rows = parsed.get("damages") or []
+    seen = {d.get("item_no") for d in side_rows if d.get("item_no") is not None}
+    new_only = [
+        d for d in (parsed.get("new_damage") or [])
+        if d.get("item_no") is None or d.get("item_no") not in seen
+    ]
+    return side_rows + new_only
+
+
+def _group_components(damages: list[dict]) -> list[dict]:
+    """Group damage rows by component for the parts-picker UX.
+    Verbatim port of the demo's _group_components."""
+    by_component: dict[str, list[dict]] = {}
+    for d in damages:
+        by_component.setdefault(d.get("component") or "Other", []).append(d)
+    groups = []
+    for name, rows in by_component.items():
+        scores = [r.get("fleet_score") for r in rows if r.get("fleet_score") is not None]
+        groups.append({
+            "name": name,
+            "worst_score": min(scores) if scores else None,
+            "priority": any(r.get("is_priority") for r in rows),
+            "item_nos": [r.get("item_no") for r in rows if r.get("item_no") is not None],
+            "damages": [
+                {
+                    "item_no": r.get("item_no"),
+                    "damage_type": r.get("damage_type"),
+                    "severity": r.get("severity"),
+                    "repair_method": r.get("repair_method"),
+                    "fleet_score": r.get("fleet_score"),
+                    "raw_score": r.get("raw_score"),
+                    "component_group": r.get("component_group"),
+                    "size": r.get("size"),
+                    "is_priority": bool(r.get("is_priority")),
+                    "is_included": bool(r.get("is_included")),
+                    "side": r.get("side"),
+                    "photo_index": r.get("photo_index"),
+                }
+                for r in rows
+            ],
+        })
+    # Priority components first; within each band, most-severe first
+    # (score 4 is the worst on PAVE's part-damage scale), then by
+    # damage count, then alphabetically.
+    return sorted(groups, key=lambda c: (
+        not c["priority"],
+        -(c["worst_score"] or 0),
+        -len(c["damages"]),
+        c["name"] or "",
+    ))
+
+
 def _build_pave_summary(parsed: dict) -> dict:
     """Port of NOVABODY/web@mbk/body-repair-demo's _pave_summary
-    (web/app/api/v2/endpoints/body_repair/endpoints.py line 216).
-    Trimmed to the fields nova-fora's Phase 1 PaveSummaryCard renders;
-    the per-component grouping + priority_components_top land with
-    Phase 2c (parts picker)."""
+    (web/app/api/v2/endpoints/body_repair/endpoints.py line 216)."""
     from app.services.fca_scoring import (
+        fcs_of,
         grade_definition,
         grade_for_fcs,
         grade_label,
@@ -491,10 +551,19 @@ def _build_pave_summary(parsed: dict) -> dict:
 
     scores = parsed.get("scores") or {}
     grade = scores.get("total")
+    damages = _current_damage_rows(parsed)
+    components = _group_components(damages)
+    current_fcs = fcs_of(damages)
     # Mirror PAVE's auto-Poor rule: a priority defect caps the grade
     # at Poor (2) regardless of FCS.
-    if isinstance(grade, int) and grade > 2 and scores.get("priority_detected"):
-        grade = 2
+    current_grade = grade_for_fcs(current_fcs)
+    if current_grade > 2 and scores.get("priority_detected"):
+        current_grade = 2
+
+    # Display grade — PAVE-reported, capped at Poor on priority.
+    display_grade = grade if isinstance(grade, int) else current_grade
+    if isinstance(display_grade, int) and display_grade > 2 and scores.get("priority_detected"):
+        display_grade = 2
 
     side_counts = {
         "front": scores.get("front_damage_count"),
@@ -506,23 +575,41 @@ def _build_pave_summary(parsed: dict) -> dict:
 
     # all_damages_count from PAVE; fall back to len(damages) for older
     # PAVE PDFs that don't print the change summary row.
-    damages = parsed.get("damages") or []
-    new_damages = parsed.get("new_damage") or []
-    fallback_count = len(damages) if damages else len(new_damages)
+    fallback_count = len(damages)
     all_count = scores.get("all_damages_count") or fallback_count
 
+    # Top 5 priority components — for the "must repair to exit Poor"
+    # table in the summary card.
+    priority_components_top = [
+        {
+            "name": c["name"],
+            "worst_score": c["worst_score"],
+            "damage_count": len(c["damages"]),
+            "item_nos": c["item_nos"],
+            "damages": c["damages"],
+        }
+        for c in sorted(
+            (g for g in components if g["priority"]),
+            key=lambda g: (-(g["worst_score"] or 0), -len(g["damages"]), g["name"] or ""),
+        )
+    ][:5]
+
     return {
-        "grade": grade if isinstance(grade, int) else None,
+        "grade": display_grade if isinstance(display_grade, int) else None,
         "grade_label": (
             scores.get("total_label")
-            or grade_label(grade)
+            or grade_label(display_grade)
         ),
-        "grade_definition": grade_definition(grade) if isinstance(grade, int) else None,
+        "grade_definition": grade_definition(display_grade) if isinstance(display_grade, int) else None,
+        "current_fcs": current_fcs,
+        "current_grade": current_grade,
         "priority_detected": bool(scores.get("priority_detected")),
         "at_risk_of_grounding": bool(scores.get("at_risk_of_grounding")),
         "side_counts": side_counts,
         "side_counts_total": side_total,
         "all_damages_count": all_count,
+        "components": components,
+        "priority_components_top": priority_components_top,
     }
 
 
@@ -611,6 +698,8 @@ async def parse_pave_preview(
             grade=summary["grade"],
             grade_label=summary["grade_label"],
             grade_definition=summary["grade_definition"],
+            current_fcs=summary["current_fcs"],
+            current_grade=summary["current_grade"],
             side_counts=summary["side_counts"],
             side_counts_total=summary["side_counts_total"],
             all_damages_count=summary["all_damages_count"],
@@ -618,6 +707,8 @@ async def parse_pave_preview(
             total_score=summary["grade"],
             priority_detected=summary["priority_detected"],
             at_risk_of_grounding=summary["at_risk_of_grounding"],
+            components=summary["components"],
+            priority_components_top=summary["priority_components_top"],
             parse_warnings=warnings,
         )
     except HTTPException:

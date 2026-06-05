@@ -1435,6 +1435,57 @@ function PaveSummaryCard({ pave, onChange }) {
         </>
       )}
 
+      {/* Top priority damages — same "must repair to exit Poor" table
+          the demo renders below side counts. Each row shows component
+          + worst damage chip + count. Phase 2c will add damage photo
+          crops next to each row. */}
+      {!failed && Array.isArray(pave.priorityComponentsTop) && pave.priorityComponentsTop.length > 0 && (
+        <div className="mt-4">
+          <div className="text-[10px] uppercase tracking-wider text-navy-500 mb-1.5">
+            Top priority damages
+          </div>
+          <div className="rounded-lg border border-navy-800 overflow-hidden">
+            <div className="grid grid-cols-[2fr_70px_60px_1fr] gap-2 px-2 py-1 text-[10px] uppercase tracking-wider text-navy-500 border-b border-navy-800 bg-navy-900/40">
+              <span>Component</span>
+              <span className="text-center">Worst</span>
+              <span className="text-center">Count</span>
+              <span>Top damage</span>
+            </div>
+            {pave.priorityComponentsTop.map((c, i) => {
+              const topDamage = (c.damages || []).find((d) => d.isPriority) || (c.damages || [])[0];
+              const dmgScore = topDamage?.fleetScore ?? c.worstScore;
+              return (
+                <div
+                  key={`${c.name}-${i}`}
+                  className="grid grid-cols-[2fr_70px_60px_1fr] gap-2 px-2 py-1.5 text-xs items-center border-b border-navy-800/50 last:border-0 bg-accent-red/[0.05]"
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-white leading-tight truncate">{c.name}</div>
+                    <span className="inline-block mt-0.5 text-[9px] px-1 py-0.5 rounded bg-accent-red/20 text-accent-red font-semibold">
+                      Priority
+                    </span>
+                  </div>
+                  <div className="text-center">
+                    {dmgScore != null ? (
+                      <span className="inline-flex items-center justify-center rounded-full w-6 h-6 text-[10px] font-bold bg-accent-red text-white">
+                        {dmgScore}
+                      </span>
+                    ) : (
+                      <span className="text-navy-500">—</span>
+                    )}
+                  </div>
+                  <div className="text-center text-navy-300 font-semibold">{c.damageCount}</div>
+                  <div className="min-w-0 text-[11px] text-navy-300 truncate">
+                    {topDamage?.damageType ? topDamage.damageType.replace(/_/g, ' ') : '—'}
+                    {topDamage?.severity ? <span className="text-navy-500"> · {topDamage.severity}</span> : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {Array.isArray(pave.parseWarnings) && pave.parseWarnings.length > 0 && (
         <div className="text-[10px] text-accent-orange mt-3">
           {pave.parseWarnings[0]}
