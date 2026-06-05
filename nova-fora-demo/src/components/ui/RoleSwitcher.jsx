@@ -35,6 +35,14 @@ const roleTint = {
   site_admin:     { bg: 'bg-accent-gold/15',   text: 'text-accent-gold',   border: 'border-accent-gold/40' },
 };
 
+// orgType-level override — body_repair_vendor uses role=vendor_admin
+// but should look distinct in the switcher so the operator can tell
+// at a glance which side of the body-repair loop they'll be on after
+// switching. Purple-pink to match the BodyRepair tab's accent.
+const orgTypeTint = {
+  body_repair_vendor: { bg: 'bg-accent-purple/20', text: 'text-accent-purple', border: 'border-accent-purple/50' },
+};
+
 export default function RoleSwitcher({ user, onSwitchRole, onLogout }) {
   const { t, i18n } = useTranslation('layout');
   const [open, setOpen] = useState(false);
@@ -93,7 +101,10 @@ export default function RoleSwitcher({ user, onSwitchRole, onLogout }) {
               <div className="max-h-96 overflow-y-auto">
                 {demoAccounts.map((acc) => {
                   const Ico = roleIcon[acc.role];
-                  const t = roleTint[acc.role];
+                  // orgType override beats role tint when applicable
+                  // (body_repair_vendor uses role=vendor_admin but
+                  // gets a distinct purple-pink accent).
+                  const t = orgTypeTint[acc.orgType] || roleTint[acc.role];
                   const isCurrent = user.id === acc.id;
                   return (
                     <button

@@ -78,6 +78,10 @@ class CreateRequestBody(BaseModel):
     grade : customer named a target Fleet Condition Grade. Backend
             computes which items must be addressed to reach it
             (Phase 2c-1 — for now just stored verbatim).
+
+    vendor_id (optional): if set, the request is targeted at that
+    specific body repair vendor. Only that vendor can submit a quote.
+    If null, the request stays open to any body repair vendor.
     """
 
     vehicle_id: int = Field(..., gt=0, description="int id of the vehicle the customer wants repaired")
@@ -86,6 +90,7 @@ class CreateRequestBody(BaseModel):
     issues: list[_RequestIssue] = Field(default_factory=list, max_length=20)
     picked_components: list[_PickedComponent] = Field(default_factory=list, max_length=100)
     target_grade: int | None = Field(default=None, ge=2, le=5)
+    vendor_id: int | None = Field(default=None, gt=0)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -302,6 +307,28 @@ async def create_request(
         if issues_payload:
             blob["issues"] = issues_payload
 
+    # Optional targeted-vendor selection. If the DSP picked a specific
+    # body shop, validate it's a BODY_REPAIR_VENDOR org and store it
+    # on assigned_vendor_id so submit_quote's auth gate routes to it.
+    assigned_vendor: int | None = None
+    if body.vendor_id is not None:
+        target_org = (
+            await session.execute(
+                select(Organization).where(Organization.id == body.vendor_id)
+            )
+        ).scalar_one_or_none()
+        if target_org is None or target_org.org_type != OrgType.BODY_REPAIR_VENDOR:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "vendor_id must point to a body_repair_vendor organization",
+            )
+        if not target_org.is_active:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "selected vendor is not active",
+            )
+        assigned_vendor = target_org.id
+
     req = BodyRepairRequest(
         dsp_id=veh.dsp_id,
         vehicle_id=veh.id,
@@ -309,6 +336,7 @@ async def create_request(
         text_description=text_payload,
         target_grade=target_grade_payload,
         picked_components_json=blob,
+        assigned_vendor_id=assigned_vendor,
         status=BodyRepairRequestStatus.PENDING_QUOTES,
         created_by_id=current.id,
     )
@@ -367,9 +395,17 @@ async def list_requests(
         ).scalar_one_or_none()
         if org is None or org.org_type != OrgType.BODY_REPAIR_VENDOR:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "not a body repair vendor")
+        # Body repair vendor sees:
+        #   - all requests already assigned to them (any status)
+        #   - unassigned open requests they can still pick up
+        # Targeted requests assigned to a DIFFERENT vendor stay hidden
+        # (no info-leak to a competing shop).
         stmt = stmt.where(
             (BodyRepairRequest.assigned_vendor_id == current.organization_id)
-            | (BodyRepairRequest.status == BodyRepairRequestStatus.PENDING_QUOTES.value)
+            | (
+                (BodyRepairRequest.assigned_vendor_id.is_(None))
+                & (BodyRepairRequest.status == BodyRepairRequestStatus.PENDING_QUOTES.value)
+            )
         )
 
     if status_filter is not None:
@@ -523,6 +559,49 @@ async def delete_request(
 # the customer fills out the rest of the form. Mirrors the demo's
 # Step 1 (paste URL / upload) → Step 2 (scope & notes) flow.
 # ─────────────────────────────────────────────────────
+class BodyRepairVendorSummary(BaseModel):
+    """Compact body repair vendor row for the customer's vendor picker."""
+
+    id: str
+    name: str
+    is_active: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+@router.get(
+    "/vendors",
+    response_model=list[BodyRepairVendorSummary],
+    summary="List body repair vendors available to receive a request",
+)
+async def list_body_repair_vendors(
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[BodyRepairVendorSummary]:
+    """Returns active body_repair_vendor organizations so the DSP can
+    pick a specific shop at submission time. Any authenticated user
+    can read this list — it's intentionally public-ish within the
+    tenant since the same list drives the customer-facing picker."""
+    rows = list(
+        (
+            await session.execute(
+                select(Organization)
+                .where(Organization.org_type == OrgType.BODY_REPAIR_VENDOR.value)
+                .where(Organization.is_active.is_(True))
+                .order_by(Organization.name.asc())
+            )
+        ).scalars().all()
+    )
+    return [
+        BodyRepairVendorSummary(
+            id=o.id_str,
+            name=o.name,
+            is_active=o.is_active,
+        )
+        for o in rows
+    ]
+
+
 class ParsePavePreviewBody(BaseModel):
     storage_key: str = Field(..., min_length=1, max_length=500)
 
@@ -1741,6 +1820,16 @@ async def submit_quote(
 
     if req.status not in _OPEN_FOR_QUOTES:
         raise HTTPException(status.HTTP_409_CONFLICT, "request is no longer open for quotes")
+
+    # Vendor targeting: if the customer pre-selected a vendor at create
+    # time, only that vendor can quote. Other body shops see the request
+    # in their queue (list endpoint scopes that already) but the submit
+    # gate refuses bids that aren't from the chosen shop.
+    if req.assigned_vendor_id is not None and req.assigned_vendor_id != vendor_org.id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "this request is targeted at a different body repair vendor",
+        )
 
     # Already an active quote from this vendor?
     existing = (

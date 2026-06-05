@@ -66,6 +66,28 @@ export const demoAccounts = [
     notifications: 0,
     language: 'en',
   },
+  {
+    // 2026-06-05 Jorge — body repair vendor demo persona.
+    // The backend persona is seeded via `python -m app.cli seed-body-repair-vendor`;
+    // the entry here surfaces it in the RoleSwitcher dropdown for one-click
+    // testing of the customer ↔ vendor loop. role stays 'vendor_admin' —
+    // body_repair_vendor is an org_type, not a UserRole — so the existing
+    // role tint + icon still apply; an extra orgType-based override in
+    // RoleSwitcher gives it a distinguishing purple-pink accent.
+    id: 'usr-005',
+    name: 'Atlas Body Shop Owner',
+    email: 'bodyrepair@atlasbodyshop.com',
+    password: 'nova2026!',
+    org: 'Atlas Body Shop',
+    orgId: 'BRV-001',
+    orgType: 'body_repair_vendor',
+    role: 'vendor_admin',
+    roleLabel: 'Body Repair Vendor',
+    avatar: 'AB',
+    station: null,
+    notifications: 0,
+    language: 'en',
+  },
 ];
 
 // Views available per role (used to derive the navigation).

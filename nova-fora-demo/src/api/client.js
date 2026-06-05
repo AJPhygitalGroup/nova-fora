@@ -2199,6 +2199,14 @@ export const bodyRepair = {
   },
 
   /**
+   * GET /body-repair/vendors — list active body repair vendors.
+   * Drives the DSP's vendor picker at create time.
+   */
+  listVendors() {
+    return apiFetch('/body-repair/vendors');
+  },
+
+  /**
    * POST /body-repair/pave/parse-preview — PAVE-first flow.
    * The PDF must already be uploaded to MinIO with
    * kind='body_repair_pave_preview' (no parent required). This call

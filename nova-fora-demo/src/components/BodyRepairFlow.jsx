@@ -1033,6 +1033,20 @@ function CreateRequestModal({ user, onClose, onCreated }) {
   const [pickOpen, setPickOpen] = useState(false);
   // Grade mode: target FCG (3-5 per the demo's MIN/MAX).
   const [targetGrade, setTargetGrade] = useState(4);
+  // DSP-side vendor picker. Null = "open to any vendor" (the previous
+  // default). When set, request is targeted at that body shop only.
+  const [vendorOptions, setVendorOptions] = useState([]);
+  const [vendorId, setVendorId] = useState('');
+
+  // Load body repair vendors once we're in Step 2 (don't hit the API
+  // unnecessarily while the customer is still on Step 1).
+  useEffect(() => {
+    if (!onStep2) return;
+    bodyRepairApi
+      .listVendors()
+      .then((rows) => setVendorOptions(Array.isArray(rows) ? rows : []))
+      .catch(() => setVendorOptions([]));
+  }, [onStep2]);
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -1207,6 +1221,11 @@ function CreateRequestModal({ user, onClose, onCreated }) {
       }
       if (mode === 'grade') {
         createBody.targetGrade = targetGrade;
+      }
+      // Optional vendor targeting — '' means "leave open to any vendor".
+      if (vendorId) {
+        const m = String(vendorId).match(/(\d+)/);
+        if (m) createBody.vendorId = Number(m[1]);
       }
       createdRequest = await bodyRepairApi.create(createBody);
 
@@ -1421,6 +1440,37 @@ function CreateRequestModal({ user, onClose, onCreated }) {
                         <AlertTriangle size={11} /> VIN mismatch — PAVE has {paveData.vin}.
                       </div>
                     )
+                  )}
+                </div>
+
+                {/* Body repair vendor picker. Optional — leaving it
+                    blank keeps the request open to ANY body shop.
+                    Picking one targets the request: only that shop can
+                    quote, and other shops won't see it in their queue. */}
+                <div>
+                  <label className="text-xs font-semibold text-text-strong block mb-1.5">
+                    Body repair vendor
+                    <span className="text-navy-500 text-[10px] ml-1">(optional — pick a specific shop)</span>
+                  </label>
+                  <select
+                    value={vendorId}
+                    onChange={(e) => setVendorId(e.target.value)}
+                    className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-purple"
+                  >
+                    <option value="">— Open to any body repair vendor —</option>
+                    {vendorOptions.map((v) => (
+                      <option key={v.id} value={v.id}>{v.name} · {v.id}</option>
+                    ))}
+                  </select>
+                  {vendorId && (
+                    <div className="text-[10px] text-navy-400 mt-1">
+                      This request will go ONLY to the selected shop. Other body repair vendors won't see it in their queue.
+                    </div>
+                  )}
+                  {vendorOptions.length === 0 && (
+                    <div className="text-[10px] text-accent-orange mt-1">
+                      No body repair vendors registered yet. The request will stay open until one is enrolled.
+                    </div>
                   )}
                 </div>
 
