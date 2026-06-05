@@ -660,6 +660,98 @@ async def cmd_create_service_user(
         print(sep)
 
 
+async def cmd_seed_body_repair_vendor(
+    org_name: str = "Atlas Body Shop",
+    owner_email: str = "bodyrepair@atlasbodyshop.com",
+    owner_name: str = "Atlas Body Shop Owner",
+    password: str | None = None,
+) -> None:
+    """Create a body_repair_vendor org + a vendor_admin user.
+
+    Idempotent — if the org or user already exists they're reused
+    (password not reset). Prints the credentials at the end so the
+    operator can copy them into the demo session. Defaults match the
+    body-repair flow's first reference vendor; pass arguments to seed
+    additional shops.
+    """
+    from app.models.organization import Organization, OrgType
+    from app.models.user import User, UserRole, UserStatus
+
+    pwd = password or "nova2026!"
+    email_lc = owner_email.strip().lower()
+
+    async with AsyncSessionLocal() as session:
+        # ── Org ────────────────────────────────────────────
+        org = (
+            await session.execute(
+                select(Organization).where(Organization.name == org_name)
+            )
+        ).scalar_one_or_none()
+        if org is None:
+            org = Organization(
+                name=org_name,
+                org_type=OrgType.BODY_REPAIR_VENDOR,
+                phone=None,
+                address=None,
+            )
+            session.add(org)
+            await session.flush()
+            print(f"[seed] body_repair_vendor org created: {org.name} (id={org.id}, {org.id_str})")
+        else:
+            if org.org_type != OrgType.BODY_REPAIR_VENDOR:
+                print(
+                    f"ERROR: org {org.name!r} already exists with org_type "
+                    f"{org.org_type.value}, not body_repair_vendor. Refusing "
+                    f"to overwrite."
+                )
+                sys.exit(1)
+            print(f"[seed] org already exists: {org.name} (id={org.id}, {org.id_str})")
+
+        # ── Owner ──────────────────────────────────────────
+        existing_user = (
+            await session.execute(select(User).where(User.email == email_lc))
+        ).scalar_one_or_none()
+        if existing_user is not None:
+            print(f"[seed] user already exists: {email_lc} (id={existing_user.id})")
+            await session.commit()
+            print()
+            print("─" * 72)
+            print("✅ Body repair vendor ready. Credentials (use existing pw if known):")
+            print(f"  org         : {org.name} ({org.id_str})")
+            print(f"  email       : {existing_user.email}")
+            print(f"  password    : <existing password unchanged>")
+            print("─" * 72)
+            return
+
+        parts = [p for p in owner_name.split() if p]
+        avatar = "".join(p[0].upper() for p in parts[:2]) or "??"
+        new_user = User(
+            email=email_lc,
+            full_name=owner_name,
+            password_hash=hash_password(pwd),
+            organization_id=org.id,
+            role=UserRole.VENDOR_ADMIN,
+            avatar=avatar,
+            language="en",
+            status=UserStatus.ACTIVE,
+        )
+        session.add(new_user)
+        await session.commit()
+        await session.refresh(new_user)
+
+        print()
+        print("─" * 72)
+        print("✅ Body repair vendor seeded. Copy these credentials NOW:")
+        print("─" * 72)
+        print(f"  org         : {org.name} ({org.id_str})")
+        print(f"  user_id     : {new_user.id}")
+        print(f"  email       : {new_user.email}")
+        print(f"  full_name   : {new_user.full_name}")
+        print(f"  role        : {new_user.role.value} (vendor_admin)")
+        print(f"  password    : {pwd}")
+        print("─" * 72)
+
+
 async def cmd_reset_password(email: str, new_password: str) -> None:
     async with AsyncSessionLocal() as session:
         user = (
@@ -723,6 +815,20 @@ def main() -> None:
             print("Usage: python -m app.cli reset-password <email> <new_password>")
             sys.exit(1)
         asyncio.run(cmd_reset_password(sys.argv[2], sys.argv[3]))
+    elif cmd == "seed-body-repair-vendor":
+        # Optional args: <org_name> <owner_email> <owner_name> <password>
+        # All default to a reference body shop (Atlas Body Shop +
+        # bodyrepair@atlasbodyshop.com / nova2026!).
+        kwargs = {}
+        if len(sys.argv) >= 3:
+            kwargs["org_name"] = sys.argv[2]
+        if len(sys.argv) >= 4:
+            kwargs["owner_email"] = sys.argv[3]
+        if len(sys.argv) >= 5:
+            kwargs["owner_name"] = sys.argv[4]
+        if len(sys.argv) >= 6:
+            kwargs["password"] = sys.argv[5]
+        asyncio.run(cmd_seed_body_repair_vendor(**kwargs))
     else:
         print(f"Unknown command: {cmd}")
         print(__doc__)
