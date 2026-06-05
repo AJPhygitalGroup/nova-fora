@@ -2198,6 +2198,21 @@ export const bodyRepair = {
     return apiFetch(`/body-repair/requests/${encodeURIComponent(id)}/pave`);
   },
 
+  /**
+   * POST /body-repair/pave/parse-preview — PAVE-first flow.
+   * The PDF must already be uploaded to MinIO with
+   * kind='body_repair_pave_preview' (no parent required). This call
+   * downloads + parses + returns the summary without creating any DB
+   * row. After the customer fills in vehicle + scope, the same
+   * storage_key gets attached via /requests/{id}/pave.
+   */
+  parsePavePreview(body) {
+    return apiFetch('/body-repair/pave/parse-preview', {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
   // ── Phase 2 — Quotes ────────────────────────────────
   // Response shape is role-projected by the backend: customer sees
   // list_cents + platform_fee_cents, vendor sees vendor_raw_cents,

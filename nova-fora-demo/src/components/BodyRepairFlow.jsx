@@ -918,23 +918,51 @@ function EmptyState({ onNew }) {
 // ─────────────────────────────────────────────────────
 // Create modal — Phase 0 = text mode only
 // ─────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────
+// CreateRequestModal — PAVE-first 2-step flow (Jorge 2026-06-05).
+// Mirrors NOVABODY/web@mbk/body-repair-demo's BodyRepair.tsx step
+// architecture (line 386 onward in the demo):
+//
+//   Step 1  PAVE report
+//     - Upload PDF (or skip)
+//     - Parsed inline; preview shown with VIN / scores / damage count
+//   Step 2  Scope & notes
+//     - Vehicle picker (with ✓/⚠ VIN-match indicator from Step 1)
+//     - Free-text description (parts picker + grade mode = Phase 2c)
+//     - Submit → create request → attach the already-parsed PAVE
+//
+// Key behaviour vs the previous text-first flow:
+//   - Parse happens BEFORE create — if it fails, nothing is orphaned.
+//   - The parsed VIN drives the vehicle-match indicator; the customer
+//     can spot a mis-uploaded PAVE before submitting.
+//   - The same storage_key from the preview upload gets attached to
+//     the new request, so we don't re-upload to MinIO.
+// ─────────────────────────────────────────────────────
 function CreateRequestModal({ user, onClose, onCreated }) {
   const isSiteAdmin = user?.role === 'site_admin';
+
+  // Step 1 — PAVE state
+  const [paveFile, setPaveFile] = useState(null);
+  // paveData = { storageKey, vin, year, make, model, totalScore,
+  //              damageCount, parseStatus, parseWarnings }
+  const [paveData, setPaveData] = useState(null);
+  // 'idle' | 'uploading_pave' | 'parsing_pave' | 'creating' | 'attaching_pave'
+  const [stage, setStage] = useState('idle');
+  // Skip state — customer chose "no PAVE", proceed directly to Step 2.
+  const [paveSkipped, setPaveSkipped] = useState(false);
+
+  // Step 2 — request state
   const [vehicleOptions, setVehicleOptions] = useState([]);
   const [vehicleSearch, setVehicleSearch] = useState('');
   const [vehicleId, setVehicleId] = useState('');
   const [text, setText] = useState('');
+
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
-  // PAVE PDF state — null until the user picks a file. The actual
-  // upload + parse happens AFTER the request is created (the parent_id
-  // for the presigned URL is the new BRR-NNNNN).
-  const [paveFile, setPaveFile] = useState(null);
-  // Submission stage: 'idle' | 'creating' | 'uploading_pave' | 'parsing_pave' | 'done'
-  // Surfaced as inline progress text + spinner labels so the user
-  // knows what's happening when they wait 2-3 seconds for parse.
-  const [stage, setStage] = useState('idle');
   const fileInputRef = useRef(null);
+
+  // Step 2 is unlocked once PAVE is parsed OR the customer skips.
+  const onStep2 = paveData !== null || paveSkipped;
 
   useEffect(() => {
     vehiclesApi
@@ -943,7 +971,12 @@ function CreateRequestModal({ user, onClose, onCreated }) {
       .catch(() => setVehicleOptions([]));
   }, [vehicleSearch]);
 
-  const onPickFile = (e) => {
+  // ── Step 1 — upload + parse PAVE (no DB row created) ───
+  // The file picker fires this directly. We upload to MinIO via the
+  // preview kind (no request parent yet), then call /pave/parse-preview
+  // which returns the summary. If anything fails, paveData stays null
+  // and the user can retry.
+  const onPickFile = async (e) => {
     const f = e.target.files?.[0];
     e.target.value = '';
     if (!f) return;
@@ -957,8 +990,49 @@ function CreateRequestModal({ user, onClose, onCreated }) {
     }
     setErr(null);
     setPaveFile(f);
+    setBusy(true);
+    setStage('uploading_pave');
+    try {
+      const { uploadUrl, storageKey } = await uploadsApi.presigned({
+        kind: 'body_repair_pave_preview',
+        // parent_id is required by the schema but ignored for the
+        // preview kind on the backend — pass a placeholder.
+        parentId: 'preview',
+        filename: f.name,
+        contentType: f.type || 'application/pdf',
+        sizeBytes: f.size,
+      });
+      await uploadsApi.putToPresigned(uploadUrl, f, 'application/pdf');
+      setStage('parsing_pave');
+      const parsed = await bodyRepairApi.parsePavePreview({ storageKey });
+      setPaveData(parsed);
+    } catch (err2) {
+      const msg = err2 instanceof APIError ? (err2.detail || err2.message) : (err2?.message || 'PAVE upload failed');
+      setErr(msg);
+      setPaveFile(null);
+    } finally {
+      setBusy(false);
+      setStage('idle');
+    }
   };
 
+  const onChangePave = () => {
+    setPaveFile(null);
+    setPaveData(null);
+    setPaveSkipped(false);
+    setErr(null);
+  };
+
+  // VIN-match indicator for Step 2 — green if the selected vehicle's
+  // VIN matches the PAVE's VIN, amber otherwise, hidden if either side
+  // doesn't have a VIN to compare.
+  const selectedVehicle = vehicleOptions.find((v) => String(v.id) === String(vehicleId)) || null;
+  const vinMatch = (() => {
+    if (!paveData?.vin || !selectedVehicle?.vin) return null;
+    return paveData.vin.trim().toUpperCase() === selectedVehicle.vin.trim().toUpperCase();
+  })();
+
+  // ── Step 2 — Submit: create request + attach PAVE if present ───
   const submit = async () => {
     setErr(null);
     if (!vehicleId) {
@@ -984,32 +1058,22 @@ function CreateRequestModal({ user, onClose, onCreated }) {
         setStage('idle');
         return;
       }
-      // 1. Create the request (mode='text').
+      // 1. Create the request.
       createdRequest = await bodyRepairApi.create({
         vehicleId: intId,
         mode: 'text',
         textDescription: text.trim(),
       });
 
-      // 2. If a PAVE PDF was picked, upload + parse it now.
-      if (paveFile && createdRequest?.id) {
-        setStage('uploading_pave');
-        const { uploadUrl, storageKey } = await uploadsApi.presigned({
-          kind: 'body_repair_pave',
-          parentId: createdRequest.id,
-          filename: paveFile.name,
-          contentType: paveFile.type || 'application/pdf',
-          sizeBytes: paveFile.size,
-        });
-        await uploadsApi.putToPresigned(uploadUrl, paveFile, 'application/pdf');
-
-        setStage('parsing_pave');
-        // The /pave endpoint downloads from MinIO + runs pdftotext +
-        // stores the parsed dict. Typical PAVE parses in well under
-        // a second; allow it to surface its own errors.
+      // 2. If we have a parsed PAVE, attach it. The PDF is already in
+      //    MinIO from Step 1 — we just re-reference the storage_key.
+      //    Re-parse on the backend (~sub-second; cheaper than threading
+      //    the parsed dict through a body).
+      if (paveData?.storageKey && createdRequest?.id) {
+        setStage('attaching_pave');
         await bodyRepairApi.attachPave(createdRequest.id, {
-          storageKey,
-          fileSizeBytes: paveFile.size,
+          storageKey: paveData.storageKey,
+          fileSizeBytes: paveFile?.size,
           phase: 'pre',
           source: 'upload',
         });
@@ -1018,29 +1082,11 @@ function CreateRequestModal({ user, onClose, onCreated }) {
       setStage('done');
       onCreated?.();
     } catch (e) {
-      // Distinguish create-failure from upload-failure for the message.
       const baseMsg = e instanceof APIError ? (e.detail || e.message) : (e?.message || 'Failed to submit');
-      // 2026-06-05 Jorge: when PAVE attach fails AFTER the request was
-      // created, roll back the request so the user doesn't see an
-      // orphan row in their list. Best-effort delete — we ignore a
-      // failure here (the request can still be cleaned up manually).
-      // We only attempt the rollback when the user attached a PAVE
-      // AND the create succeeded; a bare-text submission failure
-      // leaves nothing to roll back.
-      if ((stage === 'uploading_pave' || stage === 'parsing_pave') && createdRequest?.id) {
-        try {
-          await bodyRepairApi.remove(createdRequest.id);
-        } catch {
-          // swallow — the user still sees the original error below;
-          // the orphan is recoverable.
-        }
-      }
-      if (stage === 'uploading_pave' || stage === 'parsing_pave') {
-        setErr(
-          createdRequest
-            ? `PAVE attach failed: ${baseMsg}. Your draft request was rolled back — try again.`
-            : baseMsg,
-        );
+      // If attach failed AFTER create, roll the request back.
+      if (stage === 'attaching_pave' && createdRequest?.id) {
+        try { await bodyRepairApi.remove(createdRequest.id); } catch { /* noop */ }
+        setErr(`PAVE attach failed: ${baseMsg}. Your draft request was rolled back — try again.`);
       } else {
         setErr(baseMsg);
       }
@@ -1053,6 +1099,7 @@ function CreateRequestModal({ user, onClose, onCreated }) {
     if (!busy) return 'Submit request';
     if (stage === 'uploading_pave') return 'Uploading PAVE…';
     if (stage === 'parsing_pave') return 'Parsing PAVE…';
+    if (stage === 'attaching_pave') return 'Attaching PAVE…';
     return 'Creating request…';
   })();
 
@@ -1086,114 +1133,149 @@ function CreateRequestModal({ user, onClose, onCreated }) {
         </div>
 
         <div className="px-5 py-4 space-y-4">
-          <div>
-            <label className="text-xs font-semibold text-text-strong block mb-1.5">
-              Vehicle
-            </label>
-            <input
-              type="text"
-              placeholder="Search by fleet id, VIN, or plate…"
-              value={vehicleSearch}
-              onChange={(e) => setVehicleSearch(e.target.value)}
-              className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white placeholder:text-navy-500 outline-none focus:border-accent-purple mb-2"
-            />
-            <select
-              value={vehicleId}
-              onChange={(e) => setVehicleId(e.target.value)}
-              className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-purple"
-            >
-              <option value="">— Pick a vehicle —</option>
-              {vehicleOptions.map((v) => (
-                <option key={v.id} value={v.id}>
-                  Van {v.fleetId || v.id}
-                  {v.year ? ` · ${v.year} ${v.make || ''} ${v.model || ''}`.trim() : ''}
-                  {isSiteAdmin && v.dsp ? ` · ${v.dsp}` : ''}
-                </option>
-              ))}
-            </select>
+          {/* Step pills — Step 1 done as soon as PAVE is parsed OR
+              skipped; Step 2 is the create form. */}
+          <div className="flex items-center gap-3 text-xs">
+            <StepPill n={1} label="PAVE report" state={onStep2 ? 'done' : 'current'} />
+            <span className="h-px w-8 bg-navy-700" />
+            <StepPill n={2} label="Scope & vehicle" state={onStep2 ? 'current' : 'idle'} />
           </div>
 
-          <div>
-            <label htmlFor="body-text" className="text-xs font-semibold text-text-strong block mb-1.5">
-              What needs to be repaired?
-            </label>
-            <textarea
-              id="body-text"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder="e.g. Driver-side rear panel — heavy dent + scratched paint after a parking lot incident."
-              rows={5}
-              maxLength={2000}
-              className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white placeholder:text-navy-500 outline-none focus:border-accent-purple resize-none"
-            />
-            <div className="text-[10px] text-navy-500 mt-1 text-right">{text.length} / 2000</div>
-          </div>
-
-          {/* PAVE PDF — optional but recommended. Backend parses it
-              right after upload with pdftotext (poppler-utils).
-              Extracted: VIN, year/make/model, inspection date, scores,
-              full damage list. The DSP doesn't see the parse output in
-              the modal — it's surfaced in the detail row after the
-              request lands. */}
-          <div>
-            <label className="text-xs font-semibold text-text-strong block mb-1.5 flex items-center gap-1.5">
-              <FileBadge size={12} className="text-accent-purple" />
-              PAVE report (optional)
-            </label>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="application/pdf,.pdf"
-              onChange={onPickFile}
-              className="hidden"
-            />
-            {!paveFile ? (
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={busy}
-                className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border-2 border-dashed border-navy-700 hover:border-accent-purple/50 hover:bg-navy-800/40 transition-all text-sm text-navy-300 cursor-pointer disabled:opacity-50"
-              >
-                <Upload size={14} className="text-navy-400" />
-                Click to attach PAVE PDF
-              </button>
-            ) : (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-accent-purple/10 border border-accent-purple/40">
-                <FileText size={14} className="text-accent-purple shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm text-text-strong truncate">{paveFile.name}</div>
-                  <div className="text-[10px] text-navy-400">{Math.round(paveFile.size / 1024)} KB</div>
-                </div>
-                {!busy && (
+          {!onStep2 ? (
+            // ── Step 1 — PAVE upload or skip ─────────────────
+            <div className="rounded-lg border border-navy-800 bg-navy-950/40 p-4 space-y-3">
+              <div className="text-sm font-semibold text-white">Step 1 · PAVE report</div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/pdf,.pdf"
+                onChange={onPickFile}
+                className="hidden"
+              />
+              {!paveFile ? (
+                <>
                   <button
                     type="button"
-                    onClick={() => setPaveFile(null)}
-                    className="text-navy-400 hover:text-accent-red p-1 cursor-pointer"
-                    title="Remove"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={busy}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-3 rounded-lg border-2 border-dashed border-navy-700 hover:border-accent-purple/50 hover:bg-navy-800/40 transition-all text-sm text-navy-300 cursor-pointer disabled:opacity-50"
                   >
-                    <X size={14} />
+                    <Upload size={16} className="text-navy-400" />
+                    Upload PAVE PDF
                   </button>
+                  <div className="text-[11px] text-navy-500 text-center">— or —</div>
+                  <button
+                    type="button"
+                    onClick={() => setPaveSkipped(true)}
+                    disabled={busy}
+                    className="w-full text-center text-xs text-accent-blue hover:underline cursor-pointer disabled:opacity-50"
+                  >
+                    Skip — I'll describe the damage in text
+                  </button>
+                  <div className="text-[10px] text-navy-500 mt-2 text-center">
+                    PDF only · max 25 MB · parsed automatically (VIN, scores, damage list)
+                  </div>
+                </>
+              ) : busy ? (
+                <div className="flex items-center gap-2 px-3 py-3 rounded-lg bg-accent-purple/10 border border-accent-purple/40">
+                  <Loader2 size={14} className="text-accent-purple animate-spin" />
+                  <div className="text-sm text-white">
+                    {stage === 'uploading_pave' ? 'Uploading PDF…' : 'Parsing PAVE…'}
+                  </div>
+                </div>
+              ) : null}
+              {err && (
+                <div className="px-3 py-2 rounded-md bg-accent-red/10 border border-accent-red/40 text-xs text-accent-red flex items-center gap-2">
+                  <AlertTriangle size={12} />
+                  {err}
+                </div>
+              )}
+            </div>
+          ) : (
+            // ── Step 2 — form ────────────────────────────────
+            <>
+              {paveData ? (
+                <PaveSummaryCard pave={paveData} onChange={onChangePave} />
+              ) : (
+                <div className="flex items-center justify-between rounded-lg border border-navy-800 bg-navy-950/40 px-3 py-2 text-sm">
+                  <span className="text-navy-300">No PAVE attached.</span>
+                  <button
+                    type="button"
+                    className="text-accent-blue hover:underline text-xs cursor-pointer"
+                    onClick={onChangePave}
+                  >
+                    Attach PAVE
+                  </button>
+                </div>
+              )}
+
+              <div className="rounded-lg border border-navy-800 bg-navy-950/40 p-4 space-y-4">
+                <div className="text-sm font-semibold text-white">Step 2 · Scope & vehicle</div>
+
+                <div>
+                  <label className="text-xs font-semibold text-text-strong block mb-1.5">
+                    Vehicle
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Search by fleet id, VIN, or plate…"
+                    value={vehicleSearch}
+                    onChange={(e) => setVehicleSearch(e.target.value)}
+                    className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white placeholder:text-navy-500 outline-none focus:border-accent-purple mb-2"
+                  />
+                  <select
+                    value={vehicleId}
+                    onChange={(e) => setVehicleId(e.target.value)}
+                    className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white outline-none focus:border-accent-purple"
+                  >
+                    <option value="">— Pick a vehicle —</option>
+                    {vehicleOptions.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        Van {v.fleetId || v.id}
+                        {v.year ? ` · ${v.year} ${v.make || ''} ${v.model || ''}`.trim() : ''}
+                        {isSiteAdmin && v.dsp ? ` · ${v.dsp}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {/* VIN match indicator — only when both sides have a VIN. */}
+                  {paveData?.vin && selectedVehicle?.vin && (
+                    vinMatch ? (
+                      <div className="text-[11px] text-accent-green mt-1.5 flex items-center gap-1">
+                        <CheckCircle2 size={11} /> Vehicle VIN matches PAVE.
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-accent-orange mt-1.5 flex items-center gap-1">
+                        <AlertTriangle size={11} /> VIN mismatch — PAVE has {paveData.vin}.
+                      </div>
+                    )
+                  )}
+                </div>
+
+                <div>
+                  <label htmlFor="body-text" className="text-xs font-semibold text-text-strong block mb-1.5">
+                    What needs to be repaired?
+                  </label>
+                  <textarea
+                    id="body-text"
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    placeholder="e.g. Driver-side rear panel — heavy dent + scratched paint after a parking lot incident."
+                    rows={5}
+                    maxLength={2000}
+                    className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white placeholder:text-navy-500 outline-none focus:border-accent-purple resize-none"
+                  />
+                  <div className="text-[10px] text-navy-500 mt-1 text-right">{text.length} / 2000</div>
+                </div>
+
+                {err && (
+                  <div className="px-3 py-2 rounded-md bg-accent-red/10 border border-accent-red/40 text-xs text-accent-red flex items-center gap-2">
+                    <AlertTriangle size={12} />
+                    {err}
+                  </div>
                 )}
               </div>
-            )}
-            <div className="text-[10px] text-navy-500 mt-1">
-              PDF only · max 25 MB · parsed automatically (VIN, scores, damage list)
-            </div>
-          </div>
-
-          {err && (
-            <div className="px-3 py-2 rounded-md bg-accent-red/10 border border-accent-red/40 text-xs text-accent-red flex items-center gap-2">
-              <AlertTriangle size={12} />
-              {err}
-            </div>
+            </>
           )}
-
-          <div className="px-3 py-2 rounded-md bg-accent-blue/5 border border-accent-blue/20 text-[11px] text-navy-300 flex items-start gap-2">
-            <ArrowRight size={12} className="text-accent-blue shrink-0 mt-0.5" />
-            <span>
-              Phase 1 ships text-mode + PAVE PDF upload &amp; parsing. Parts picker, target-grade selector, and the vendor quote queue come in Phase 2.
-            </span>
-          </div>
         </div>
 
         <div className="px-5 py-3 border-t border-navy-700 flex justify-end gap-2">
@@ -1206,7 +1288,7 @@ function CreateRequestModal({ user, onClose, onCreated }) {
           </button>
           <button
             onClick={submit}
-            disabled={busy || !vehicleId || !text.trim()}
+            disabled={!onStep2 || busy || !vehicleId || !text.trim()}
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-accent-purple text-white hover:bg-accent-purple/85 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
           >
             {busy ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
@@ -1215,6 +1297,94 @@ function CreateRequestModal({ user, onClose, onCreated }) {
         </div>
       </motion.div>
     </motion.div>
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// StepPill — the "1 PAVE / 2 Scope" indicator in the create modal.
+// State drives the visual: idle (gray), current (purple), done (green).
+// Mirrors the demo's StepPill in BodyRepair.tsx (line 405).
+// ─────────────────────────────────────────────────────
+function StepPill({ n, label, state }) {
+  const cls = {
+    idle:    'bg-navy-800 text-navy-400 border-navy-700',
+    current: 'bg-accent-purple/15 text-accent-purple border-accent-purple/40',
+    done:    'bg-accent-green/15 text-accent-green border-accent-green/40',
+  }[state] || 'bg-navy-800 text-navy-400 border-navy-700';
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-semibold ${cls}`}>
+      <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-current/10 text-[10px]">
+        {state === 'done' ? '✓' : n}
+      </span>
+      {label}
+    </span>
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// PaveSummaryCard — preview of the parsed PAVE shown in Step 2
+// before the customer submits. VIN drives the vehicle-match check
+// outside; we just display the data here.
+// ─────────────────────────────────────────────────────
+function PaveSummaryCard({ pave, onChange }) {
+  const failed = pave.parseStatus === 'failed';
+  return (
+    <div className={`rounded-lg border px-3 py-2.5 ${
+      failed
+        ? 'bg-accent-red/5 border-accent-red/40'
+        : 'bg-accent-purple/5 border-accent-purple/40'
+    }`}>
+      <div className="flex items-start justify-between gap-2 mb-1.5">
+        <div className="flex items-center gap-2 flex-wrap">
+          <FileBadge size={12} className="text-accent-purple" />
+          <span className="text-xs font-semibold text-white">PAVE report</span>
+          {failed ? (
+            <span className="inline-flex items-center gap-1 text-[10px] text-accent-red">
+              <AlertTriangle size={10} /> Parse failed — review or skip
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-[10px] text-accent-green">
+              <CheckCircle2 size={10} /> Parsed
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onChange}
+          className="text-[10px] text-accent-blue hover:underline cursor-pointer shrink-0"
+        >
+          Change
+        </button>
+      </div>
+      {!failed && (
+        <div className="flex items-center gap-3 text-[11px] text-navy-300 flex-wrap">
+          {pave.vin && (
+            <span className="font-mono">VIN {pave.vin}</span>
+          )}
+          {pave.year && (
+            <span>{pave.year} {pave.make} {pave.model}</span>
+          )}
+          {pave.totalScore != null && (
+            <span>
+              <span className="text-navy-500">Score: </span>
+              <span className="font-semibold text-white">{pave.totalScore}</span>
+            </span>
+          )}
+          {pave.damageCount > 0 && (
+            <span>
+              <span className="text-navy-500">Damages: </span>
+              <span className="font-semibold text-white">{pave.damageCount}</span>
+            </span>
+          )}
+        </div>
+      )}
+      {Array.isArray(pave.parseWarnings) && pave.parseWarnings.length > 0 && (
+        <div className="text-[10px] text-accent-orange mt-1.5">
+          {pave.parseWarnings[0]}
+          {pave.parseWarnings.length > 1 && ` (+${pave.parseWarnings.length - 1} more)`}
+        </div>
+      )}
+    </div>
   );
 }
 
