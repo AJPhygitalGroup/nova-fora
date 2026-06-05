@@ -23,7 +23,7 @@ shoehorn it into the WorkOrder schema.
 from datetime import datetime
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -339,6 +339,78 @@ async def get_request(
             raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
 
     return await _build_response(session, req)
+
+
+# ─────────────────────────────────────────────────────
+# DELETE /body-repair/requests/{id} — rollback / abandon a draft
+# ─────────────────────────────────────────────────────
+@router.delete(
+    "/requests/{req_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a draft body repair request (DSP owner only, pre-quotes)",
+    responses={
+        404: {"description": "Request not found or not yours."},
+        409: {"description": "Request has progressed past the deletable state."},
+    },
+)
+async def delete_request(
+    req_id: str = Path(..., examples=["BRR-00001"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Delete a body repair request that the customer wants to abandon.
+
+    Allowed states: only `pending_quotes` — the request was just
+    submitted and no vendor has bid yet. Once any quote arrives or
+    the customer has selected one, the request leaves the deletable
+    window (cancel-and-rebill semantics live in Phase 5).
+
+    Auth:
+      - DSP owner of the request's own DSP, OR
+      - site_admin (operator cleanup)
+
+    Used primarily by the frontend's "rollback PAVE failure" flow:
+    when the customer attaches a PDF that fails to upload/parse, the
+    create-modal calls this so an orphan request doesn't linger in
+    their list.
+    """
+    raw = str(req_id).strip()
+    int_id: int | None = None
+    if raw.upper().startswith("BRR-"):
+        raw_num = raw[4:]
+        if raw_num.isdigit():
+            int_id = int(raw_num)
+    elif raw.isdigit():
+        int_id = int(raw)
+    if int_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+
+    req = (
+        await session.execute(select(BodyRepairRequest).where(BodyRepairRequest.id == int_id))
+    ).scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+
+    # Tenancy:
+    if current.role == UserRole.DSP_OWNER:
+        if req.dsp_id != current.organization_id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    elif current.role != UserRole.SITE_ADMIN:
+        # Vendors / SW can't delete a request.
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not allowed")
+
+    # State guard — only pre-quotes is rollback-safe. PAVE rows + quote
+    # rows (if any) cascade via the FK ondelete='CASCADE' so a clean
+    # delete here doesn't leave dangling children.
+    if req.status != BodyRepairRequestStatus.PENDING_QUOTES:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"request is in status '{req.status.value}'; only pending_quotes drafts can be deleted",
+        )
+
+    await session.delete(req)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ─────────────────────────────────────────────────────

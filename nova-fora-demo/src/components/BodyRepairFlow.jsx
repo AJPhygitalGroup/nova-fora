@@ -976,10 +976,25 @@ function CreateRequestModal({ user, onClose, onCreated }) {
     } catch (e) {
       // Distinguish create-failure from upload-failure for the message.
       const baseMsg = e instanceof APIError ? (e.detail || e.message) : (e?.message || 'Failed to submit');
+      // 2026-06-05 Jorge: when PAVE attach fails AFTER the request was
+      // created, roll back the request so the user doesn't see an
+      // orphan row in their list. Best-effort delete — we ignore a
+      // failure here (the request can still be cleaned up manually).
+      // We only attempt the rollback when the user attached a PAVE
+      // AND the create succeeded; a bare-text submission failure
+      // leaves nothing to roll back.
+      if ((stage === 'uploading_pave' || stage === 'parsing_pave') && createdRequest?.id) {
+        try {
+          await bodyRepairApi.remove(createdRequest.id);
+        } catch {
+          // swallow — the user still sees the original error below;
+          // the orphan is recoverable.
+        }
+      }
       if (stage === 'uploading_pave' || stage === 'parsing_pave') {
         setErr(
           createdRequest
-            ? `Request ${createdRequest.id} was created, but PAVE attach failed: ${baseMsg}. You can retry from the detail view.`
+            ? `PAVE attach failed: ${baseMsg}. Your draft request was rolled back — try again.`
             : baseMsg,
         );
       } else {

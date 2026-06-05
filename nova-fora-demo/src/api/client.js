@@ -2166,6 +2166,19 @@ export const bodyRepair = {
   },
 
   /**
+   * DELETE /body-repair/requests/{id} — abandon a draft request.
+   * Only DSP owner of the request's DSP (or site_admin). Only allowed
+   * while status === 'pending_quotes'. Used by the create-modal's
+   * rollback flow: if a PAVE attach fails, we delete the orphan request
+   * so it doesn't linger in the user's list.
+   */
+  remove(id) {
+    return apiFetch(`/body-repair/requests/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+  },
+
+  /**
    * POST /body-repair/requests/{id}/pave
    * body: { storageKey, fileSizeBytes?, phase='pre', source='upload', sourceUrl? }
    * The PDF must already be uploaded to MinIO via uploads.presigned
