@@ -461,84 +461,108 @@ async def attach_pave(
          SW can review manually.
       5. Insert body_repair_pave_reports row + return the shape.
     """
-    int_id = _parse_req_id(req_id)
-    if int_id is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
-    req = (
-        await session.execute(select(BodyRepairRequest).where(BodyRepairRequest.id == int_id))
-    ).scalar_one_or_none()
-    if req is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
-    await _require_request_scope(req, current, session)
-
+    import logging
     import os
     import tempfile
+    import traceback
 
-    from app.services.pave_parser import parse_pave_report
-    from app.settings import get_settings
-    from app.storage.s3 import _internal_client
+    log = logging.getLogger("nova.body_repair")
 
-    s = get_settings()
-    cli = _internal_client()
     try:
-        obj = cli.get_object(Bucket=s.s3_bucket, Key=body.storage_key)
-        pdf_bytes = obj["Body"].read()
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"could not fetch PDF from storage: {e}",
+        int_id = _parse_req_id(req_id)
+        if int_id is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+        req = (
+            await session.execute(select(BodyRepairRequest).where(BodyRepairRequest.id == int_id))
+        ).scalar_one_or_none()
+        if req is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+        await _require_request_scope(req, current, session)
+
+        # Lazy imports inside the function for two reasons:
+        #  1. avoid pulling boto3 at module import time
+        #  2. keep the parser import path next to the call site so any
+        #     ImportError on poppler-utils / missing module is obvious
+        from app.services.pave_parser import parse_pave_report
+        from app.settings import get_settings
+        from app.storage.s3 import _internal_client
+
+        s = get_settings()
+        cli = _internal_client()
+        try:
+            obj = cli.get_object(Bucket=s.s3_bucket, Key=body.storage_key)
+            pdf_bytes = obj["Body"].read()
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "attach_pave: S3 fetch failed for key=%s: %s", body.storage_key, e
+            )
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"could not fetch PDF from storage: {type(e).__name__}: {e}",
+            ) from e
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+        try:
+            tmp.write(pdf_bytes)
+            tmp.flush()
+            tmp.close()
+            parsed: dict = parse_pave_report(tmp.name)
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+
+        status_str = parsed.get("parse_status", "failed")
+        inspection_date = parsed.get("inspection_date_utc")
+        inspection_dt: datetime | None = None
+        if inspection_date:
+            try:
+                inspection_dt = datetime.fromisoformat(str(inspection_date).replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                inspection_dt = None
+        scores = parsed.get("scores", {}) or {}
+        total_score = scores.get("total") or scores.get("overall")
+        damages = parsed.get("damages") or []
+        new_damages = parsed.get("new_damage") or []
+        damage_count = len(damages) if damages else len(new_damages)
+
+        row = BodyRepairPaveReport(
+            request_id=req.id,
+            phase=body.phase,
+            storage_path=body.storage_key,
+            file_size_bytes=body.file_size_bytes,
+            parse_status=(
+                PaveParseStatus.OK if status_str == "ok" else PaveParseStatus.FAILED
+            ),
+            vin=parsed.get("vin"),
+            year=parsed.get("year"),
+            make=parsed.get("make"),
+            model=parsed.get("model"),
+            inspection_date_utc=inspection_dt,
+            total_score=int(total_score) if isinstance(total_score, (int, float)) else None,
+            damage_count=damage_count,
+            parsed_json=parsed,
+            source=body.source,
+            source_url=body.source_url,
+            uploaded_by_id=current.id,
         )
-
-    tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
-    try:
-        tmp.write(pdf_bytes)
-        tmp.flush()
-        tmp.close()
-        parsed: dict = parse_pave_report(tmp.name)
-    finally:
-        try:
-            os.unlink(tmp.name)
-        except OSError:
-            pass
-
-    status_str = parsed.get("parse_status", "failed")
-    inspection_date = parsed.get("inspection_date_utc")
-    inspection_dt: datetime | None = None
-    if inspection_date:
-        try:
-            inspection_dt = datetime.fromisoformat(str(inspection_date).replace("Z", "+00:00"))
-        except (ValueError, AttributeError):
-            inspection_dt = None
-    scores = parsed.get("scores", {}) or {}
-    total_score = scores.get("total") or scores.get("overall")
-    damages = parsed.get("damages") or []
-    new_damages = parsed.get("new_damage") or []
-    damage_count = len(damages) if damages else len(new_damages)
-
-    row = BodyRepairPaveReport(
-        request_id=req.id,
-        phase=body.phase,
-        storage_path=body.storage_key,
-        file_size_bytes=body.file_size_bytes,
-        parse_status=(
-            PaveParseStatus.OK if status_str == "ok" else PaveParseStatus.FAILED
-        ),
-        vin=parsed.get("vin"),
-        year=parsed.get("year"),
-        make=parsed.get("make"),
-        model=parsed.get("model"),
-        inspection_date_utc=inspection_dt,
-        total_score=int(total_score) if isinstance(total_score, (int, float)) else None,
-        damage_count=damage_count,
-        parsed_json=parsed,
-        source=body.source,
-        source_url=body.source_url,
-        uploaded_by_id=current.id,
-    )
-    session.add(row)
-    await session.commit()
-    await session.refresh(row)
-    return _pave_response(row, req)
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+        return _pave_response(row, req)
+    except HTTPException:
+        # Re-raise FastAPI's typed errors untouched.
+        raise
+    except Exception as e:  # noqa: BLE001
+        # Last-resort safety net so the client gets a useful detail
+        # instead of a bare "Internal Server Error". Logs the full
+        # traceback to stdout for EasyPanel.
+        log.exception("attach_pave: unhandled exception")
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"attach_pave failed: {type(e).__name__}: {e}",
+        ) from e
 
 
 @router.get(
