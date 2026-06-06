@@ -1987,9 +1987,14 @@ function paveImageUrl(storageKey, category, idx) {
 // automatically. This component fetches the image via apiFetch (which
 // adds the JWT) and renders the result as a blob URL. Cleans up the
 // URL on unmount.
-function AuthImg({ src, alt, className, onError }) {
+//
+// 2026-06-05 Jorge: any thumbnail double-clicks opens a viewport-
+// sized lightbox. `zoomable` is on by default; pass `zoomable={false}`
+// (e.g. for non-clickable previews) to disable.
+function AuthImg({ src, alt, className, onError, zoomable = true }) {
   const [blobUrl, setBlobUrl] = useState(null);
   const [failed, setFailed] = useState(false);
+  const [zoom, setZoom] = useState(false);
   useEffect(() => {
     let cancelled = false;
     setFailed(false);
@@ -2016,6 +2021,14 @@ function AuthImg({ src, alt, className, onError }) {
   useEffect(() => {
     return () => { if (blobUrl) URL.revokeObjectURL(blobUrl); };
   }, [blobUrl]);
+  // Esc closes the lightbox.
+  useEffect(() => {
+    if (!zoom) return;
+    const handler = (e) => { if (e.key === 'Escape') setZoom(false); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [zoom]);
+
   if (failed) {
     return <div className={`${className} bg-navy-900 flex items-center justify-center text-[9px] text-navy-500`}>no img</div>;
   }
@@ -2024,7 +2037,52 @@ function AuthImg({ src, alt, className, onError }) {
       <Loader2 size={12} className="text-navy-600 animate-spin" />
     </div>;
   }
-  return <img src={blobUrl} alt={alt} className={className} />;
+
+  const onDblClick = zoomable && blobUrl ? () => setZoom(true) : undefined;
+  const cursorCls = zoomable ? 'cursor-zoom-in' : '';
+
+  return (
+    <>
+      <img
+        src={blobUrl}
+        alt={alt}
+        className={`${className} ${cursorCls}`}
+        onDoubleClick={onDblClick}
+        title={zoomable ? 'Double-click to enlarge' : undefined}
+        draggable={false}
+      />
+      {zoom && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          // z-[120] above every modal layer (CreateRequestModal=50,
+          // PickPartsModal=60, etc.).
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-black/90 backdrop-blur-sm p-6 cursor-zoom-out"
+          onClick={() => setZoom(false)}
+        >
+          <motion.img
+            initial={{ scale: 0.92, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            src={blobUrl}
+            alt={alt}
+            className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={() => setZoom(false)}
+            draggable={false}
+          />
+          <button
+            type="button"
+            onClick={() => setZoom(false)}
+            className="absolute top-4 right-4 w-9 h-9 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center cursor-pointer"
+            title="Close (Esc)"
+          >
+            <X size={16} />
+          </button>
+        </motion.div>
+      )}
+    </>
+  );
 }
 
 // ─────────────────────────────────────────────────────
