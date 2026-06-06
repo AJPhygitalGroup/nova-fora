@@ -128,11 +128,21 @@ export default function BodyRepairFlow({ user }) {
         )}
       </div>
 
-      {/* Error */}
+      {/* Error — with a Retry button. The most common cause of a
+          "Failed to fetch" here is a transient deploy-time blip on
+          the EasyPanel container; Retry usually clears it without a
+          hard refresh. */}
       {err && (
         <div className="px-3 py-2 rounded-md bg-accent-red/10 border border-accent-red/40 text-sm text-accent-red flex items-center gap-2">
-          <AlertTriangle size={14} />
-          {err}
+          <AlertTriangle size={14} className="shrink-0" />
+          <span className="flex-1 min-w-0 truncate">{err}</span>
+          <button
+            type="button"
+            onClick={reload}
+            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-accent-red/20 hover:bg-accent-red/30 text-accent-red text-xs font-semibold cursor-pointer"
+          >
+            <RefreshCw size={11} /> Retry
+          </button>
         </div>
       )}
 
@@ -141,6 +151,12 @@ export default function BodyRepairFlow({ user }) {
         <div className="flex items-center justify-center py-12">
           <Loader2 size={20} className="text-accent-blue animate-spin" />
         </div>
+      ) : err ? (
+        // When the fetch failed, don't render the empty state —
+        // that lies to the user ("you have 0 requests" when really
+        // we just couldn't load them). The Retry button up top is
+        // the only affordance shown.
+        null
       ) : items.length === 0 ? (
         <EmptyState onNew={canCreate ? () => setShowCreate(true) : null} />
       ) : (
