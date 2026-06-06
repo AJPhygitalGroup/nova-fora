@@ -466,23 +466,30 @@ function RequestRow({ req, user, isBodyRepairVendor, expanded, onToggle, onReloa
 // ─────────────────────────────────────────────────────
 function QuotesPanel({ req, user, isBodyRepairVendor, onChanged }) {
   const [data, setData] = useState(null);
-  const [err, setErr] = useState(null);
+  // 2026-06-05 Jorge bug — loadErr vs actionErr split. Was a single
+  // err state shared by listQuotes + select/decline/renew, so any
+  // action failure surfaced as "Quotes failed to load: …" even when
+  // the list itself loaded fine. Now each has its own bucket and
+  // an action failure DOESN'T blow away the rendered list.
+  const [loadErr, setLoadErr] = useState(null);
+  const [actionErr, setActionErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const [showSubmit, setShowSubmit] = useState(false);
 
   const load = useCallback(() => {
+    setLoadErr(null);
     bodyRepairApi
       .listQuotes(req.id)
-      .then(setData)
-      .catch((e) => setErr(e?.detail || e?.message || 'failed'));
+      .then((res) => { setData(res); })
+      .catch((e) => setLoadErr(e?.detail || e?.message || 'failed'));
   }, [req.id]);
 
   useEffect(() => { load(); }, [load]);
 
-  if (err) {
+  if (loadErr) {
     return (
       <div className="rounded-lg border border-accent-red/40 bg-accent-red/5 px-3 py-2 text-xs text-accent-red">
-        Quotes failed to load: {String(err)}
+        Quotes failed to load: {String(loadErr)}
       </div>
     );
   }
@@ -503,41 +510,31 @@ function QuotesPanel({ req, user, isBodyRepairVendor, onChanged }) {
     ? quotes.find((q) => q.status === 'active')
     : null;
 
-  const onSelect = async (q) => {
+  // Common action wrapper: clear prior action error, run, on any
+  // failure surface it inline AND reload so the UI catches up to
+  // backend state (e.g. "already selected" stale-cache cases).
+  const runAction = async (fn, label) => {
+    setActionErr(null);
     setBusy(true);
     try {
-      await bodyRepairApi.selectQuote(req.id, q.id);
+      await fn();
       onChanged?.();
       load();
     } catch (e) {
-      setErr(e?.detail || e?.message || 'select failed');
-    } finally {
-      setBusy(false);
-    }
-  };
-  const onDeclineAll = async () => {
-    setBusy(true);
-    try {
-      await bodyRepairApi.declineQuotes(req.id);
-      onChanged?.();
+      const msg = e?.detail || e?.message || `${label} failed`;
+      setActionErr(msg);
+      // Refresh anyway — the backend's "already selected" / "already
+      // declined" 409s mean the UI was stale; pulling new data makes
+      // the buttons disappear so the user can't keep retrying a
+      // no-op action.
       load();
-    } catch (e) {
-      setErr(e?.detail || e?.message || 'decline failed');
     } finally {
       setBusy(false);
     }
   };
-  const onRenew = async () => {
-    setBusy(true);
-    try {
-      await bodyRepairApi.renewQuote(req.id);
-      load();
-    } catch (e) {
-      setErr(e?.detail || e?.message || 'renew failed');
-    } finally {
-      setBusy(false);
-    }
-  };
+  const onSelect = (q) => runAction(() => bodyRepairApi.selectQuote(req.id, q.id), 'Select');
+  const onDeclineAll = () => runAction(() => bodyRepairApi.declineQuotes(req.id), 'Decline');
+  const onRenew = () => runAction(() => bodyRepairApi.renewQuote(req.id), 'Renew');
 
   return (
     <>
@@ -545,6 +542,12 @@ function QuotesPanel({ req, user, isBodyRepairVendor, onChanged }) {
         <div className="text-[10px] uppercase tracking-wider text-navy-500 font-semibold mb-1.5 flex items-center gap-1">
           <DollarSign size={10} /> Quotes ({quotes.length})
         </div>
+        {actionErr && (
+          <div className="mb-2 rounded-md border border-accent-orange/40 bg-accent-orange/10 px-3 py-1.5 text-[11px] text-accent-orange flex items-start gap-1.5">
+            <AlertTriangle size={11} className="shrink-0 mt-0.5" />
+            <span>{String(actionErr)}</span>
+          </div>
+        )}
         {quotes.length === 0 ? (
           <div className="rounded-lg border border-dashed border-navy-700 bg-navy-900/40 px-3 py-3 text-center text-xs text-navy-400">
             {isVendorView
