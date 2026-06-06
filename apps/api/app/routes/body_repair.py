@@ -141,6 +141,28 @@ class BodyRepairRequestListResponse(BaseModel):
 # ─────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────
+async def _is_body_repair_vendor_user(
+    current: User, session: AsyncSession
+) -> bool:
+    """True iff the caller belongs to an Organization whose org_type is
+    BODY_REPAIR_VENDOR. Cheap one-shot lookup — used by every body
+    repair gate so role checks don't reject the wrong user.
+
+    Body repair vendor staff still have role=vendor_admin (or service
+    _writer, etc.) at the User level since body_repair_vendor is an
+    org type, not a UserRole. Gating by role alone was the 2026-06-05
+    bug where Atlas Body Shop got 403 'not a mechanical vendor surface'
+    even though their org_type was correct."""
+    if current.organization_id is None:
+        return False
+    org = (
+        await session.execute(
+            select(Organization).where(Organization.id == current.organization_id)
+        )
+    ).scalar_one_or_none()
+    return org is not None and org.org_type == OrgType.BODY_REPAIR_VENDOR
+
+
 async def _build_response(
     session: AsyncSession, req: BodyRepairRequest
 ) -> BodyRepairRequestResponse:
@@ -369,32 +391,15 @@ async def list_requests(
       - site_admin            → no filter
       - vendor (regular mech) → 403; body repair is its own surface
     """
-    if current.role == UserRole.VENDOR_ADMIN or current.role == UserRole.SERVICE_WRITER:
-        # Regular mech vendors don't see body repair work — different
-        # org type entirely. The Body Repair Vendor tab is the entry
-        # point for orgs with that capability.
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "body repair is handled by body_repair_vendor orgs — not a mechanical vendor surface",
-        )
-
     stmt = select(BodyRepairRequest).order_by(BodyRepairRequest.created_at.desc())
+
+    is_brv = await _is_body_repair_vendor_user(current, session)
 
     if current.role == UserRole.DSP_OWNER:
         stmt = stmt.where(BodyRepairRequest.dsp_id == current.organization_id)
     elif current.role == UserRole.SITE_ADMIN:
         pass  # no extra filter
-    else:
-        # Body repair vendor — see their assigned work + the open queue.
-        # Role check via the org_type rather than UserRole: a
-        # body_repair_vendor's admin can be any role bound to that org.
-        org = (
-            await session.execute(
-                select(Organization).where(Organization.id == current.organization_id)
-            )
-        ).scalar_one_or_none()
-        if org is None or org.org_type != OrgType.BODY_REPAIR_VENDOR:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "not a body repair vendor")
+    elif is_brv:
         # Body repair vendor sees:
         #   - all requests already assigned to them (any status)
         #   - unassigned open requests they can still pick up
@@ -406,6 +411,13 @@ async def list_requests(
                 (BodyRepairRequest.assigned_vendor_id.is_(None))
                 & (BodyRepairRequest.status == BodyRepairRequestStatus.PENDING_QUOTES.value)
             )
+        )
+    else:
+        # Mechanical vendor / technician / vendor_viewer / etc. land here.
+        # Body repair is a body_repair_vendor surface — no work to show.
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "body repair is handled by body_repair_vendor orgs — not a mechanical vendor surface",
         )
 
     if status_filter is not None:
@@ -451,24 +463,20 @@ async def get_request(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
 
     # Tenancy.
-    if current.role == UserRole.DSP_OWNER and req.dsp_id != current.organization_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
-    if current.role == UserRole.VENDOR_ADMIN or current.role == UserRole.SERVICE_WRITER:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "not a body repair surface")
-    # Body repair vendor — must be assigned OR request is still open.
-    if current.role not in (UserRole.DSP_OWNER, UserRole.SITE_ADMIN):
-        org = (
-            await session.execute(
-                select(Organization).where(Organization.id == current.organization_id)
-            )
-        ).scalar_one_or_none()
-        if org is None or org.org_type != OrgType.BODY_REPAIR_VENDOR:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "not a body repair vendor")
+    if current.role == UserRole.DSP_OWNER:
+        if req.dsp_id != current.organization_id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    elif current.role == UserRole.SITE_ADMIN:
+        pass
+    elif await _is_body_repair_vendor_user(current, session):
+        # Body repair vendor — must be assigned OR request is still open.
         if (
             req.assigned_vendor_id != current.organization_id
             and req.status != BodyRepairRequestStatus.PENDING_QUOTES
         ):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    else:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not a body repair surface")
 
     return await _build_response(session, req)
 
@@ -1244,23 +1252,20 @@ async def _require_request_scope(
 ) -> None:
     """Shared tenancy gate for PAVE endpoints. Same rules as
     get_request — cross-tenant returns 404 (no existence leak)."""
-    if current.role == UserRole.DSP_OWNER and req.dsp_id != current.organization_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
-    if current.role in (UserRole.VENDOR_ADMIN, UserRole.SERVICE_WRITER):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "not a body repair surface")
-    if current.role not in (UserRole.DSP_OWNER, UserRole.SITE_ADMIN):
-        org = (
-            await session.execute(
-                select(Organization).where(Organization.id == current.organization_id)
-            )
-        ).scalar_one_or_none()
-        if org is None or org.org_type != OrgType.BODY_REPAIR_VENDOR:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "not a body repair vendor")
+    if current.role == UserRole.DSP_OWNER:
+        if req.dsp_id != current.organization_id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+        return
+    if current.role == UserRole.SITE_ADMIN:
+        return
+    if await _is_body_repair_vendor_user(current, session):
         if (
             req.assigned_vendor_id != current.organization_id
             and req.status != BodyRepairRequestStatus.PENDING_QUOTES
         ):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+        return
+    raise HTTPException(status.HTTP_403_FORBIDDEN, "not a body repair surface")
 
 
 def _pave_response(r: BodyRepairPaveReport, req: BodyRepairRequest) -> "PaveReportResponse":
