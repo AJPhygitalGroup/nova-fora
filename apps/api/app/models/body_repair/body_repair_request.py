@@ -131,6 +131,12 @@ class BodyRepairRequest(SQLModel, table=True):
     # Phase 1 forward-compat:
     target_grade: str | None = Field(default=None, max_length=20)  # 'mint' / 'excellent' / ...
     picked_components_json: dict | None = Field(default=None, sa_column=Column("picked_components_json", sa.JSON, nullable=True))
+    # 2026-06-06 Jorge — pickup logistics blob. Vendor stores
+    # { duration_days, pickup_window } at propose-pickup; customer
+    # appends { van_location, key_location, contact_name,
+    # contact_phone, access_notes } at confirm-pickup. Alembic
+    # 20260606_0200.
+    pickup_blob: dict | None = Field(default=None, sa_column=Column("pickup_blob", sa.JSON, nullable=True))
 
     # ── Lifecycle ──────────────────────────────────────────
     status: BodyRepairRequestStatus = Field(

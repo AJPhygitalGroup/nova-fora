@@ -466,6 +466,14 @@ function RequestRow({ req, user, isBodyRepairVendor, expanded, onToggle, onReloa
             isBodyRepairVendor={isBodyRepairVendor}
             onChanged={onReload}
           />
+
+          {/* Pickup scheduling — appears once a quote is selected. */}
+          <PickupPanel
+            req={req}
+            user={user}
+            isBodyRepairVendor={isBodyRepairVendor}
+            onChanged={onReload}
+          />
         </div>
       )}
     </div>
@@ -628,6 +636,332 @@ function QuotesPanel({ req, user, isBodyRepairVendor, onChanged }) {
 }
 
 // ─────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────
+// PickupPanel — pickup scheduling handshake. Mirrors the demo's
+// pickup.py flow (propose → confirm) trimmed to the MVP shape. Phase 4
+// will add counter-propose, reschedule, and the day-of reminder ladder.
+//
+// Visible per-role + status:
+//   vendor + status=quote_selected  → "Propose pickup" form
+//   vendor + status=pickup_proposed → "Re-propose pickup" form +
+//                                    customer-still-to-confirm hint
+//   customer + status=pickup_proposed → "Confirm pickup" form
+//                                       (van/key/contact/access)
+//   anyone + status >= pickup_confirmed → read-only summary
+//   otherwise → null (hidden)
+// ─────────────────────────────────────────────────────
+const PICKUP_WINDOWS = [
+  '7:00am – 9:00am', '8:00am – 10:00am', '8:00am – 11:00am',
+  '9:00am – 12:00pm', '12:00pm – 3:00pm', '1:00pm – 4:00pm',
+  '3:00pm – 6:00pm', 'Flexible (8:00am – 6:00pm)',
+];
+
+function PickupPanel({ req, user, isBodyRepairVendor, onChanged }) {
+  const status = req.status;
+  // Only meaningful from quote_selected onward.
+  const visibleStatuses = new Set([
+    'quote_selected', 'pickup_proposed', 'pickup_confirmed',
+    'in_repair', 'repair_complete', 'pending_signoff', 'returned', 'paid',
+  ]);
+  if (!visibleStatuses.has(status)) return null;
+
+  const isCustomer = user?.role === 'dsp_owner' || user?.role === 'site_admin';
+  const isVendor = isBodyRepairVendor;
+  const blob = req.pickupBlob || {};
+  const proposedDate = req.pickupProposedDate ? String(req.pickupProposedDate).slice(0, 10) : null;
+  const pickupWindow = req.pickupWindow || blob.pickupWindow;
+  const expectedReturn = blob.expectedReturnDate ? String(blob.expectedReturnDate).slice(0, 10) : null;
+  const durationDays = blob.durationDays;
+
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wider text-navy-500 font-semibold mb-1.5 flex items-center gap-1">
+        <Calendar size={10} /> Pickup
+      </div>
+      {/* Read-only summary panel — always shown when a proposal exists. */}
+      {proposedDate && (
+        <div className={`rounded-lg border px-3 py-2.5 mb-2 ${
+          status === 'pickup_confirmed' || status === 'in_repair' || status === 'repair_complete'
+            ? 'bg-accent-green/5 border-accent-green/40'
+            : 'bg-accent-blue/5 border-accent-blue/40'
+        }`}>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            <div className="flex items-center gap-1.5 text-white font-semibold">
+              <Calendar size={12} className="text-accent-blue" />
+              {proposedDate}
+            </div>
+            {pickupWindow && (
+              <div className="text-navy-300">· {pickupWindow}</div>
+            )}
+            {durationDays && (
+              <div className="text-navy-400">· {durationDays} day{durationDays === 1 ? '' : 's'} in shop</div>
+            )}
+            {expectedReturn && (
+              <div className="text-navy-400">· return ~{expectedReturn}</div>
+            )}
+          </div>
+          {(blob.vanLocation || blob.keyLocation) && (
+            <div className="mt-2 pt-2 border-t border-navy-700/40 space-y-0.5 text-[11px]">
+              {blob.vanLocation && (
+                <div>
+                  <span className="text-navy-500">Van:</span>{' '}
+                  <span className="text-navy-200">{blob.vanLocation}</span>
+                </div>
+              )}
+              {blob.keyLocation && (
+                <div>
+                  <span className="text-navy-500">Key:</span>{' '}
+                  <span className="text-navy-200">{blob.keyLocation}</span>
+                </div>
+              )}
+              {(blob.contactName || blob.contactPhone) && (
+                <div>
+                  <span className="text-navy-500">Contact:</span>{' '}
+                  <span className="text-navy-200">
+                    {[blob.contactName, blob.contactPhone].filter(Boolean).join(' · ')}
+                  </span>
+                </div>
+              )}
+              {blob.accessNotes && (
+                <div>
+                  <span className="text-navy-500">Notes:</span>{' '}
+                  <span className="text-navy-200">{blob.accessNotes}</span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      {/* Vendor-side action: propose / re-propose */}
+      {isVendor && (status === 'quote_selected' || status === 'pickup_proposed') && (
+        <ProposePickupForm
+          req={req}
+          initial={{
+            proposedDate: proposedDate || '',
+            pickupWindow: pickupWindow || PICKUP_WINDOWS[1],
+            durationDays: durationDays || 3,
+          }}
+          onDone={onChanged}
+          reproposing={status === 'pickup_proposed'}
+        />
+      )}
+      {/* Customer-side action: confirm */}
+      {isCustomer && status === 'pickup_proposed' && (
+        <ConfirmPickupForm req={req} initial={blob} onDone={onChanged} />
+      )}
+      {/* Status hints */}
+      {isVendor && status === 'pickup_proposed' && !isCustomer && (
+        <div className="text-[11px] text-navy-400 italic">
+          Awaiting the customer to confirm with van + key drop details.
+        </div>
+      )}
+      {status === 'pickup_confirmed' && (
+        <div className="text-[11px] text-accent-green italic">
+          Pickup confirmed — vendor will collect on the scheduled date.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProposePickupForm({ req, initial, onDone, reproposing }) {
+  const [proposedDate, setProposedDate] = useState(initial.proposedDate || '');
+  const [pickupWindow, setPickupWindow] = useState(initial.pickupWindow || PICKUP_WINDOWS[1]);
+  const [durationDays, setDurationDays] = useState(initial.durationDays || 3);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const submit = async () => {
+    setErr(null);
+    if (!proposedDate) {
+      setErr('Pick a date.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await bodyRepairApi.proposePickup(req.id, {
+        proposedDate,
+        pickupWindow,
+        durationDays: Number(durationDays) || undefined,
+      });
+      onDone?.();
+    } catch (e) {
+      setErr(e?.detail || e?.message || 'failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const today = new Date().toISOString().slice(0, 10);
+
+  return (
+    <div className="rounded-lg border border-navy-800 bg-navy-900/40 p-3 space-y-2">
+      <div className="text-xs font-semibold text-text-strong mb-1">
+        {reproposing ? 'Re-propose pickup' : 'Propose a pickup date'}
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        <div>
+          <label className="text-[10px] text-navy-400 block mb-1">Date</label>
+          <input
+            type="date"
+            min={today}
+            value={proposedDate}
+            onChange={(e) => setProposedDate(e.target.value)}
+            className="w-full px-2 py-1.5 rounded-md bg-navy-800 border border-navy-700 text-sm text-white outline-none focus:border-accent-blue"
+          />
+        </div>
+        <div>
+          <label className="text-[10px] text-navy-400 block mb-1">Window</label>
+          <select
+            value={pickupWindow}
+            onChange={(e) => setPickupWindow(e.target.value)}
+            className="w-full px-2 py-1.5 rounded-md bg-navy-800 border border-navy-700 text-sm text-white outline-none focus:border-accent-blue"
+          >
+            {PICKUP_WINDOWS.map((w) => <option key={w} value={w}>{w}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-[10px] text-navy-400 block mb-1">Duration (days)</label>
+          <input
+            type="number"
+            min={1}
+            max={60}
+            value={durationDays}
+            onChange={(e) => setDurationDays(e.target.value)}
+            className="w-full px-2 py-1.5 rounded-md bg-navy-800 border border-navy-700 text-sm text-white outline-none focus:border-accent-blue"
+          />
+        </div>
+      </div>
+      {err && (
+        <div className="text-[11px] text-accent-red flex items-center gap-1">
+          <AlertTriangle size={11} /> {err}
+        </div>
+      )}
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={submit}
+          disabled={busy || !proposedDate}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-accent-blue text-white text-xs font-semibold hover:bg-accent-blue/85 disabled:opacity-40 cursor-pointer"
+        >
+          {busy ? <Loader2 size={11} className="animate-spin" /> : <Calendar size={11} />}
+          {reproposing ? 'Re-propose' : 'Propose pickup'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmPickupForm({ req, initial, onDone }) {
+  const [vanLocation, setVanLocation] = useState(initial.vanLocation || '');
+  const [keyLocation, setKeyLocation] = useState(initial.keyLocation || '');
+  const [contactName, setContactName] = useState(initial.contactName || '');
+  const [contactPhone, setContactPhone] = useState(initial.contactPhone || '');
+  const [accessNotes, setAccessNotes] = useState(initial.accessNotes || '');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const submit = async () => {
+    setErr(null);
+    if (!vanLocation.trim() || !keyLocation.trim()) {
+      setErr('Van location and key location are required.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await bodyRepairApi.confirmPickup(req.id, {
+        vanLocation: vanLocation.trim(),
+        keyLocation: keyLocation.trim(),
+        contactName: contactName.trim() || undefined,
+        contactPhone: contactPhone.trim() || undefined,
+        accessNotes: accessNotes.trim() || undefined,
+      });
+      onDone?.();
+    } catch (e) {
+      setErr(e?.detail || e?.message || 'failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-navy-800 bg-navy-900/40 p-3 space-y-2">
+      <div className="text-xs font-semibold text-text-strong mb-1">Confirm pickup logistics</div>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="text-[10px] text-navy-400 block mb-1">Where is the van parked? *</label>
+          <input
+            type="text"
+            value={vanLocation}
+            onChange={(e) => setVanLocation(e.target.value)}
+            placeholder="e.g. Front lot near gate B"
+            maxLength={400}
+            className="w-full px-2 py-1.5 rounded-md bg-navy-800 border border-navy-700 text-sm text-white outline-none focus:border-accent-blue placeholder:text-navy-500"
+          />
+        </div>
+        <div>
+          <label className="text-[10px] text-navy-400 block mb-1">Where are the keys? *</label>
+          <input
+            type="text"
+            value={keyLocation}
+            onChange={(e) => setKeyLocation(e.target.value)}
+            placeholder="e.g. Lockbox by side door, code 4827"
+            maxLength={400}
+            className="w-full px-2 py-1.5 rounded-md bg-navy-800 border border-navy-700 text-sm text-white outline-none focus:border-accent-blue placeholder:text-navy-500"
+          />
+        </div>
+        <div>
+          <label className="text-[10px] text-navy-400 block mb-1">Contact name (optional)</label>
+          <input
+            type="text"
+            value={contactName}
+            onChange={(e) => setContactName(e.target.value)}
+            maxLength={120}
+            className="w-full px-2 py-1.5 rounded-md bg-navy-800 border border-navy-700 text-sm text-white outline-none focus:border-accent-blue"
+          />
+        </div>
+        <div>
+          <label className="text-[10px] text-navy-400 block mb-1">Contact phone (optional)</label>
+          <input
+            type="tel"
+            value={contactPhone}
+            onChange={(e) => setContactPhone(e.target.value)}
+            maxLength={40}
+            className="w-full px-2 py-1.5 rounded-md bg-navy-800 border border-navy-700 text-sm text-white outline-none focus:border-accent-blue"
+          />
+        </div>
+        <div className="col-span-2">
+          <label className="text-[10px] text-navy-400 block mb-1">Access notes (optional)</label>
+          <textarea
+            value={accessNotes}
+            onChange={(e) => setAccessNotes(e.target.value)}
+            rows={2}
+            maxLength={1000}
+            placeholder="Gate code, after-hours notes, etc."
+            className="w-full px-2 py-1.5 rounded-md bg-navy-800 border border-navy-700 text-sm text-white outline-none focus:border-accent-blue resize-none placeholder:text-navy-500"
+          />
+        </div>
+      </div>
+      {err && (
+        <div className="text-[11px] text-accent-red flex items-center gap-1">
+          <AlertTriangle size={11} /> {err}
+        </div>
+      )}
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={submit}
+          disabled={busy || !vanLocation.trim() || !keyLocation.trim()}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-accent-green text-white text-xs font-semibold hover:bg-accent-green/85 disabled:opacity-40 cursor-pointer"
+        >
+          {busy ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle2 size={11} />}
+          Confirm pickup
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
 // QuoteRow — one quote line in the QuotesPanel.
 // Renders role-specific labels and money. The customer sees the
 // list_cents headline; the vendor sees their raw + headline.

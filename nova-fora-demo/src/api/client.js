@@ -2292,6 +2292,32 @@ export const bodyRepair = {
       body: JSON.stringify({}),
     });
   },
+
+  // ── Pickup scheduling ──────────────────────────────
+
+  /**
+   * POST /body-repair/requests/{id}/propose-pickup — vendor proposes
+   * pickup date + window. status → pickup_proposed.
+   * body: { proposedDate: 'YYYY-MM-DD', durationDays?, pickupWindow? }
+   */
+  proposePickup(id, body) {
+    return apiFetch(`/body-repair/requests/${encodeURIComponent(id)}/propose-pickup`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /**
+   * POST /body-repair/requests/{id}/confirm-pickup — customer confirms
+   * with logistics. status → pickup_confirmed.
+   * body: { vanLocation, keyLocation, contactName?, contactPhone?, accessNotes? }
+   */
+  confirmPickup(id, body) {
+    return apiFetch(`/body-repair/requests/${encodeURIComponent(id)}/confirm-pickup`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
 };
 
 export { APIError };

@@ -110,6 +110,12 @@ class BodyRepairRequestResponse(BaseModel):
     # and .issues. None when the customer used text mode without any
     # repeating issues.
     scope_blob: dict | None = None
+    # Pickup logistics blob — vendor's proposed window + duration; the
+    # customer adds van/key/contact details at confirm. See body_repair
+    # _request.pickup_blob.
+    pickup_blob: dict | None = None
+    pickup_proposed_date: datetime | None = None
+    pickup_window: str | None = None
     status: str
     selected_quote_id: int | None
     quote_selected_at: datetime | None
@@ -185,6 +191,9 @@ async def _build_response(
         text_description=req.text_description,
         target_grade=req.target_grade,
         scope_blob=req.picked_components_json,
+        pickup_blob=req.pickup_blob,
+        pickup_proposed_date=req.pickup_proposed_date,
+        pickup_window=req.pickup_window,
         status=req.status.value if hasattr(req.status, "value") else req.status,
         selected_quote_id=req.selected_quote_id,
         quote_selected_at=req.quote_selected_at,
@@ -2171,3 +2180,202 @@ async def renew_quote(
         ).scalars().all()
     )
     return {"quote": _quote_response(quote, items, vendor_org.name, view="vendor")}
+
+
+# ═════════════════════════════════════════════════════
+# Pickup scheduling — port of demo's pickup.py (slice 4a)
+# ═════════════════════════════════════════════════════
+# Vendor proposes a date + time window once their quote is accepted.
+# Customer confirms with logistics (van + key location, contact,
+# access notes). Counter-propose + reschedule + reminder ladder land
+# with Phase 4 — for now this is the happy-path handshake.
+
+# Reusing the same windows the demo offered so localized copy + future
+# operator filters stay aligned.
+PICKUP_WINDOWS = (
+    "7:00am – 9:00am", "8:00am – 10:00am", "8:00am – 11:00am",
+    "9:00am – 12:00pm", "12:00pm – 3:00pm", "1:00pm – 4:00pm",
+    "3:00pm – 6:00pm", "Flexible (8:00am – 6:00pm)",
+)
+DEFAULT_PICKUP_WINDOW = "8:00am – 11:00am"
+
+
+class ProposePickupBody(BaseModel):
+    proposed_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    duration_days: int | None = Field(default=None, ge=1, le=60)
+    pickup_window: str = Field(default=DEFAULT_PICKUP_WINDOW, max_length=60)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ConfirmPickupBody(BaseModel):
+    van_location: str = Field(..., min_length=1, max_length=400)
+    key_location: str = Field(..., min_length=1, max_length=400)
+    contact_name: str | None = Field(default=None, max_length=120)
+    contact_phone: str | None = Field(default=None, max_length=40)
+    access_notes: str | None = Field(default=None, max_length=1000)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.post(
+    "/requests/{req_id}/propose-pickup",
+    response_model=BodyRepairRequestResponse,
+    summary="Vendor proposes a pickup date + window (status → pickup_proposed)",
+    responses={
+        403: {"description": "Not the assigned body repair vendor."},
+        404: {"description": "Request not found."},
+        409: {"description": "Request is not in a pickup-proposal state."},
+    },
+)
+async def propose_pickup(
+    body: ProposePickupBody,
+    req_id: str = Path(..., examples=["BRR-00001"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> BodyRepairRequestResponse:
+    """Vendor side: lock in the pickup date + window the customer will
+    confirm against. Mirrors the demo's BodyRepairProposePickupAPI."""
+    if body.pickup_window not in PICKUP_WINDOWS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"pickup_window must be one of: {', '.join(PICKUP_WINDOWS)}",
+        )
+    int_id = _parse_req_id(req_id)
+    if int_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    req = (
+        await session.execute(select(BodyRepairRequest).where(BodyRepairRequest.id == int_id))
+    ).scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+
+    vendor_org = await _require_body_repair_vendor(current, session)
+    if vendor_org is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not a body repair vendor")
+    if req.assigned_vendor_id != vendor_org.id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "you are not the assigned body repair vendor for this request",
+        )
+
+    # Valid states to propose from: just-accepted quote, or re-propose
+    # a pickup that was already proposed (vendor tweaks the date) /
+    # confirmed (customer asked for a change in advance).
+    if req.status not in (
+        BodyRepairRequestStatus.QUOTE_SELECTED,
+        BodyRepairRequestStatus.PICKUP_PROPOSED,
+        BodyRepairRequestStatus.PICKUP_CONFIRMED,
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"request is in status '{req.status.value if hasattr(req.status, 'value') else req.status}'; "
+            "pickup proposal requires quote_selected / pickup_proposed / pickup_confirmed",
+        )
+
+    from datetime import date, timedelta
+    try:
+        proposed = date.fromisoformat(body.proposed_date)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"invalid date: {e}") from e
+
+    # Default duration from the selected quote, else 3 days.
+    duration = body.duration_days
+    if duration is None and req.selected_quote_id is not None:
+        sel_q = (
+            await session.execute(
+                select(BodyRepairQuote).where(BodyRepairQuote.id == req.selected_quote_id)
+            )
+        ).scalar_one_or_none()
+        if sel_q is not None:
+            duration = sel_q.duration_days
+    duration = duration or 3
+
+    blob = dict(req.pickup_blob or {})
+    blob.update({
+        "duration_days": duration,
+        "pickup_window": body.pickup_window,
+        "expected_return_date": (proposed + timedelta(days=duration)).isoformat(),
+        "proposed_by_vendor_org_id": vendor_org.id,
+        "proposed_at": utc_now().isoformat(),
+        # A fresh proposal supersedes any prior counter.
+        "counter_date": None,
+        "counter_reason": None,
+        "counter_proposed_at": None,
+    })
+
+    from datetime import datetime as _dt, timezone as _tz
+    req.pickup_proposed_date = _dt.combine(proposed, _dt.min.time()).replace(tzinfo=_tz.utc)
+    req.pickup_window = body.pickup_window
+    req.pickup_blob = blob
+    req.pickup_proposed_at = utc_now()
+    req.status = BodyRepairRequestStatus.PICKUP_PROPOSED
+    # Clear any prior confirmation timestamp — the customer needs to
+    # re-confirm against the new proposal.
+    req.pickup_confirmed_at = None
+    session.add(req)
+    await session.commit()
+    await session.refresh(req)
+    return await _build_response(session, req)
+
+
+@router.post(
+    "/requests/{req_id}/confirm-pickup",
+    response_model=BodyRepairRequestResponse,
+    summary="Customer confirms pickup logistics (status → pickup_confirmed)",
+    responses={
+        403: {"description": "Caller is not the customer DSP owner."},
+        404: {"description": "Request not found."},
+        409: {"description": "Request is not in pickup_proposed state."},
+    },
+)
+async def confirm_pickup(
+    body: ConfirmPickupBody,
+    req_id: str = Path(..., examples=["BRR-00001"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> BodyRepairRequestResponse:
+    """Customer side: van/key location + contact + access notes. Locks
+    the request to pickup_confirmed so the vendor knows when + where."""
+    if current.role not in (UserRole.DSP_OWNER, UserRole.SITE_ADMIN):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "customer-only action")
+    int_id = _parse_req_id(req_id)
+    if int_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    req = (
+        await session.execute(select(BodyRepairRequest).where(BodyRepairRequest.id == int_id))
+    ).scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    if current.role == UserRole.DSP_OWNER and req.dsp_id != current.organization_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+
+    if req.status != BodyRepairRequestStatus.PICKUP_PROPOSED:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"request is in status '{req.status.value if hasattr(req.status, 'value') else req.status}'; "
+            "confirm requires pickup_proposed",
+        )
+    if req.pickup_proposed_date is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "no pickup has been proposed by the vendor yet",
+        )
+
+    blob = dict(req.pickup_blob or {})
+    blob.update({
+        "van_location": body.van_location.strip(),
+        "key_location": body.key_location.strip(),
+        "contact_name": (body.contact_name or "").strip() or None,
+        "contact_phone": (body.contact_phone or "").strip() or None,
+        "access_notes": (body.access_notes or "").strip() or None,
+        "logistics_confirmed_at": utc_now().isoformat(),
+    })
+
+    req.pickup_blob = blob
+    req.pickup_confirmed_at = utc_now()
+    req.status = BodyRepairRequestStatus.PICKUP_CONFIRMED
+    session.add(req)
+    await session.commit()
+    await session.refresh(req)
+    return await _build_response(session, req)
