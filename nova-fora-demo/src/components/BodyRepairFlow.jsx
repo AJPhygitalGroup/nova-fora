@@ -312,23 +312,91 @@ function RequestRow({ req, user, isBodyRepairVendor, expanded, onToggle, onReloa
             </div>
           )}
 
-          {/* Picked parts — shown for parts mode. */}
+          {/* Picked parts — shown for parts mode.
+              2026-06-05 Jorge — when paveRows has a parsed components
+              tree, enrich each picked item with damage_type + severity
+              + side from the underlying damage row so the vendor can
+              scope the quote without flipping back to the PAVE card. */}
           {Array.isArray(req.scopeBlob?.pickedComponents) && req.scopeBlob.pickedComponents.length > 0 && (
             <div>
               <div className="text-[10px] uppercase tracking-wider text-navy-500 font-semibold mb-1 flex items-center gap-1">
                 <FileBadge size={10} /> Picked damages ({req.scopeBlob.pickedComponents.length})
               </div>
-              <div className="flex flex-wrap gap-1.5">
-                {req.scopeBlob.pickedComponents.map((p, i) => (
-                  <span
-                    key={`${p.itemNo}-${i}`}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] bg-accent-purple/10 text-accent-purple border border-accent-purple/40"
-                  >
-                    <span className="font-mono text-[9px] opacity-70">#{p.itemNo}</span>
-                    <span>{p.componentName || 'Component'}</span>
-                  </span>
-                ))}
-              </div>
+              {(() => {
+                // Build an item_no → damage lookup from the parsed PAVE
+                // components (across all PAVE rows attached to this req).
+                const damageByItemNo = new Map();
+                for (const pave of (paveRows || [])) {
+                  for (const c of (pave.components || [])) {
+                    for (const d of (c.damages || [])) {
+                      if (d.itemNo != null && !damageByItemNo.has(d.itemNo)) {
+                        damageByItemNo.set(d.itemNo, { d, componentName: c.name, priority: c.priority });
+                      }
+                    }
+                  }
+                }
+                const firstPaveKey = paveRows?.[0]?.storageKey;
+                const firstPaveDamageCount = paveRows?.[0]?.damageImageCount || 0;
+                return (
+                  <div className="space-y-1.5">
+                    {req.scopeBlob.pickedComponents.map((p, i) => {
+                      const hit = damageByItemNo.get(p.itemNo);
+                      const d = hit?.d;
+                      const showThumb = firstPaveKey
+                        && d
+                        && typeof d.photoIndex === 'number'
+                        && d.photoIndex < firstPaveDamageCount;
+                      return (
+                        <div
+                          key={`${p.itemNo}-${i}`}
+                          className={`flex items-center gap-2 px-2 py-1.5 rounded-md border ${
+                            hit?.priority
+                              ? 'bg-accent-red/5 border-accent-red/40'
+                              : 'bg-accent-purple/5 border-accent-purple/30'
+                          }`}
+                        >
+                          {showThumb ? (
+                            <AuthImg
+                              src={paveImageUrl(firstPaveKey, 'damage', d.photoIndex)}
+                              alt={`Damage ${p.itemNo}`}
+                              className="w-10 h-10 rounded border border-navy-700 object-cover shrink-0"
+                            />
+                          ) : (
+                            <div className="w-10 h-10 rounded border border-navy-800 bg-navy-900 shrink-0" />
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono text-[9px] text-navy-500">#{p.itemNo}</span>
+                              <span className="text-sm font-medium text-white truncate">
+                                {p.componentName || hit?.componentName || 'Component'}
+                              </span>
+                              {hit?.priority && (
+                                <span className="text-[9px] px-1 py-0.5 rounded bg-accent-red/20 text-accent-red font-semibold">
+                                  Priority
+                                </span>
+                              )}
+                              {d?.fleetScore != null && (
+                                <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold ${
+                                  d.isPriority ? 'bg-accent-red text-white' : 'bg-navy-700 text-white'
+                                }`}>
+                                  {d.fleetScore}
+                                </span>
+                              )}
+                            </div>
+                            {d && (
+                              <div className="text-[11px] text-navy-300 truncate">
+                                {d.damageType ? d.damageType.replace(/_/g, ' ') : '—'}
+                                {d.severity ? <span className="text-navy-500"> · {d.severity}</span> : null}
+                                {d.side ? <span className="text-navy-500"> · {d.side}</span> : null}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -359,7 +427,12 @@ function RequestRow({ req, user, isBodyRepairVendor, expanded, onToggle, onReloa
                 <FileBadge size={10} /> PAVE reports ({paveRows.length})
               </div>
               <div className="space-y-1.5">
-                {paveRows.map((p) => <PaveSummary key={p.id} pave={p} />)}
+                {/* 2026-06-05 Jorge — the vendor needs the SAME rich
+                    PAVE card the customer saw (damages by side,
+                    priority components table with thumbnails, grade
+                    badge) so they can scope a quote. Was a tiny chip
+                    before — only VIN/score/count. */}
+                {paveRows.map((p) => <PaveSummaryCard key={p.id} pave={p} />)}
               </div>
             </div>
           )}
@@ -2019,13 +2092,15 @@ function PaveSummaryCard({ pave, onChange }) {
             <h4 className="font-semibold text-white truncate">
               {pave.year ? `${pave.year} ${pave.make || ''} ${pave.model || ''}`.trim() : 'Vehicle'}
             </h4>
-            <button
-              type="button"
-              onClick={onChange}
-              className="text-[11px] text-navy-400 hover:text-white shrink-0 cursor-pointer"
-            >
-              ← Change PAVE
-            </button>
+            {onChange && (
+              <button
+                type="button"
+                onClick={onChange}
+                className="text-[11px] text-navy-400 hover:text-white shrink-0 cursor-pointer"
+              >
+                ← Change PAVE
+              </button>
+            )}
           </div>
           {pave.vin && (
             <div className="text-[11px] text-navy-400 font-mono">VIN {pave.vin}</div>

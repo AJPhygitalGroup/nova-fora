@@ -1160,6 +1160,7 @@ async def get_pave_image(
     category: str = Query(..., pattern="^(panel|damage)$"),
     idx: int = Query(..., ge=0, le=999),
     current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
 ) -> Response:
     """Serve an extracted PAVE thumbnail (JPEG) from MinIO.
 
@@ -1168,11 +1169,15 @@ async def get_pave_image(
     bucket private (no public presigned URL needed) and the auth
     surface narrow.
     """
-    if current.role not in (UserRole.DSP_OWNER, UserRole.SITE_ADMIN):
+    # Allow: DSP owner (customer side), site_admin (operator), or any
+    # user bound to a body_repair_vendor org (the assigned vendor +
+    # any vendor browsing the open queue). The path-prefix guard
+    # below stops cross-tenant key probing.
+    is_brv = await _is_body_repair_vendor_user(current, session)
+    if current.role not in (UserRole.DSP_OWNER, UserRole.SITE_ADMIN) and not is_brv:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "not allowed")
     # Same path-prefix guard as parse_pave_preview — only previews
-    # are reachable here. Phase 2c will add an attached variant for
-    # post-create PAVE images.
+    # are reachable here.
     if not storage_key.startswith("photos/body_repair_previews/"):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
@@ -1223,6 +1228,11 @@ class PaveReportResponse(BaseModel):
     request_id: str
     phase: str
     storage_path: str
+    # 2026-06-05 — alias used by the frontend to build thumbnail URLs.
+    # Same value as storage_path; kept as a separate field so the demo
+    # frontend can swap between attached + preview rows without a code
+    # change on the consumer side.
+    storage_key: str
     file_size_bytes: int | None
     parse_status: str
     vin: str | None
@@ -1232,6 +1242,26 @@ class PaveReportResponse(BaseModel):
     inspection_date_utc: datetime | None
     total_score: int | None
     damage_count: int
+
+    # Rich summary fields — same shape the preview endpoint returns so
+    # the frontend can render the FULL PaveSummaryCard from an attached
+    # row (not just the small chip). Computed from r.parsed_json via
+    # _build_pave_summary.
+    grade: int | None = None
+    grade_label: str | None = None
+    grade_definition: str | None = None
+    current_fcs: int | None = None
+    current_grade: int | None = None
+    side_counts: dict | None = None
+    side_counts_total: int | None = None
+    all_damages_count: int | None = None
+    priority_detected: bool = False
+    at_risk_of_grounding: bool = False
+    components: list[dict] | None = None
+    priority_components_top: list[dict] | None = None
+    panel_image_count: int = 0
+    damage_image_count: int = 0
+
     parsed_warnings: list[str] | None = None
     source: str | None
     created_at: datetime
@@ -1269,12 +1299,31 @@ async def _require_request_scope(
 
 
 def _pave_response(r: BodyRepairPaveReport, req: BodyRepairRequest) -> "PaveReportResponse":
-    warnings = ((r.parsed_json or {}).get("parse_warnings") or None)
+    parsed = r.parsed_json or {}
+    warnings = parsed.get("parse_warnings") or None
+
+    # Derive the rich summary so the vendor sees the SAME PaveSummaryCard
+    # the customer saw at intake (components grid, priority damages,
+    # side counts, thumbnails). Empty dict shortcuts to defaults.
+    summary = _build_pave_summary(parsed) if parsed else {}
+
+    # Image counts — best-effort; we don't re-extract here, just count
+    # how many would be available by probing storage. For simplicity
+    # the frontend will tolerate counts that overshoot reality (the
+    # thumbnail load just fails to render). Storing counts on the row
+    # at attach time will land in a follow-up; for now we re-derive
+    # from the parsed damages' photo_index range.
+    damages = parsed.get("damages") or []
+    max_damage_idx = max(
+        (d.get("photo_index") for d in damages if isinstance(d.get("photo_index"), int)),
+        default=-1,
+    )
     return PaveReportResponse(
         id=r.id_str,
         request_id=req.id_str,
         phase=r.phase.value if hasattr(r.phase, "value") else r.phase,
         storage_path=r.storage_path,
+        storage_key=r.storage_path,
         file_size_bytes=r.file_size_bytes,
         parse_status=r.parse_status.value if hasattr(r.parse_status, "value") else r.parse_status,
         vin=r.vin,
@@ -1284,6 +1333,20 @@ def _pave_response(r: BodyRepairPaveReport, req: BodyRepairRequest) -> "PaveRepo
         inspection_date_utc=r.inspection_date_utc,
         total_score=r.total_score,
         damage_count=r.damage_count,
+        grade=summary.get("grade"),
+        grade_label=summary.get("grade_label"),
+        grade_definition=summary.get("grade_definition"),
+        current_fcs=summary.get("current_fcs"),
+        current_grade=summary.get("current_grade"),
+        side_counts=summary.get("side_counts"),
+        side_counts_total=summary.get("side_counts_total"),
+        all_damages_count=summary.get("all_damages_count") or r.damage_count,
+        priority_detected=bool(summary.get("priority_detected")),
+        at_risk_of_grounding=bool(summary.get("at_risk_of_grounding")),
+        components=summary.get("components"),
+        priority_components_top=summary.get("priority_components_top"),
+        panel_image_count=1 if r.storage_path else 0,
+        damage_image_count=(max_damage_idx + 1) if max_damage_idx >= 0 else 0,
         parsed_warnings=warnings,
         source=r.source,
         created_at=r.created_at,
