@@ -4566,10 +4566,17 @@ export default function RealDVIC({ user }) {
   // nf-card-heartbeat (orange pulse) or nf-card-calm (green static) based
   // on their key. Jorge 2026-06-03.
   const [searchHighlights, setSearchHighlights] = useState({});
+  // True while the search has narrowed focus to at least one KPI tile.
+  // Used to dim + disable the unrelated cards so the user's eye lands
+  // on the matching tile(s) and they can't accidentally drill into
+  // unrelated lists. Jorge 2026-06-06.
+  const searchIsActive = Object.keys(searchHighlights).length > 0;
   const cardHighlightClass = (key) => {
     const tone = searchHighlights[key];
     if (tone === 'orange') return 'nf-card-heartbeat';
     if (tone === 'green') return 'nf-card-calm';
+    // Dim + non-interactive for cards outside the search hit set.
+    if (searchIsActive) return 'opacity-40 grayscale pointer-events-none';
     return '';
   };
   useEffect(() => {
@@ -4714,7 +4721,7 @@ export default function RealDVIC({ user }) {
                 + label + rush-orders badge. */}
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
               onClick={() => setOpenCard('reported')}
-              className="relative bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl p-5 hover:border-navy-600/60 transition-all cursor-pointer h-full flex flex-col">
+              className={`relative bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl p-5 hover:border-navy-600/60 transition-all cursor-pointer h-full flex flex-col ${cardHighlightClass('reported')}`}>
               {/* Jorge 2026-06-03: spacer reserves the same 40px + mb-3
                   that MetricCard reserves for its icon row, so this
                   card's number lines up vertically with the four
@@ -4736,7 +4743,7 @@ export default function RealDVIC({ user }) {
             {/* Vans Inspected — 23 of 30, next inspection date below */}
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05, duration: 0.4 }}
               onClick={() => setOpenCard('inspected')}
-              className="bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl p-5 hover:border-navy-600/60 transition-all cursor-pointer h-full flex flex-col">
+              className={`bg-navy-900/60 backdrop-blur border border-navy-700/40 rounded-xl p-5 hover:border-navy-600/60 transition-all cursor-pointer h-full flex flex-col ${cardHighlightClass('inspected')}`}>
               {/* min-h-10 + items-center match MetricCard's icon row height
                   so the number below sits at the same vertical position
                   as siblings. */}
