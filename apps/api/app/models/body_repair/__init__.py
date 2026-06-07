@@ -20,6 +20,7 @@ Iteration plan (Jorge confirmed):
 All entities exported here for Alembic autogenerate visibility.
 """
 
+from .body_repair_message import BodyRepairMessage
 from .body_repair_pave_report import (
     BodyRepairPaveReport,
     PaveParseStatus,
@@ -52,4 +53,5 @@ __all__ = [
     "BodyRepairQuoteRevisionLineItem",
     "BodyRepairQuoteStatus",
     "BodyRepairRevisionStatus",
+    "BodyRepairMessage",
 ]

@@ -2366,6 +2366,32 @@ export const bodyRepair = {
       body: JSON.stringify(camelToSnake(body)),
     });
   },
+
+  // ── Phase 5 — Messages + activity timeline ────────
+
+  /** GET /body-repair/requests/{id}/messages */
+  listMessages(id) {
+    return apiFetch(`/body-repair/requests/${encodeURIComponent(id)}/messages`);
+  },
+
+  /**
+   * POST /body-repair/requests/{id}/messages
+   * body: { body }
+   */
+  postMessage(id, body) {
+    return apiFetch(`/body-repair/requests/${encodeURIComponent(id)}/messages`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /**
+   * GET /body-repair/requests/{id}/activity — synthesized timeline.
+   * Returns interleaved events + messages sorted by occurredAt asc.
+   */
+  getActivity(id) {
+    return apiFetch(`/body-repair/requests/${encodeURIComponent(id)}/activity`);
+  },
 };
 
 export { APIError };

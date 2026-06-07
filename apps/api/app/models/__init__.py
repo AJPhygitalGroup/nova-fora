@@ -12,6 +12,7 @@ WO V2.0 note (branch `wo-v2-rebuild`):
 from app.models.auth_audit_log import AuthAuditEvent, AuthAuditLog
 from app.models.base import timestamp_column, utc_now
 from app.models.body_repair import (
+    BodyRepairMessage,
     BodyRepairPaveReport,
     BodyRepairQuote,
     BodyRepairQuoteLineItem,

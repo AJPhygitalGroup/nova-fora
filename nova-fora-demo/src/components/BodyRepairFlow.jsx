@@ -485,6 +485,9 @@ function RequestRow({ req, user, isBodyRepairVendor, expanded, onToggle, onReloa
             isBodyRepairVendor={isBodyRepairVendor}
             onChanged={onReload}
           />
+
+          {/* Phase 5 — activity timeline + messages thread. */}
+          <ActivityPanel req={req} user={user} />
         </div>
       )}
     </div>
@@ -1060,6 +1063,166 @@ function CompleteRepairModal({ req, onClose, onCompleted }) {
         </div>
       </motion.div>
     </motion.div>
+  );
+}
+
+
+// ─────────────────────────────────────────────────────
+// ActivityPanel — Phase 5. Synthesized timeline (events + messages
+// interleaved) + a "send message" composer at the bottom. Polls every
+// 30s so customer and vendor see each other's posts without a manual
+// refresh.
+// ─────────────────────────────────────────────────────
+function ActivityPanel({ req, user }) {
+  const [entries, setEntries] = useState(null);
+  const [err, setErr] = useState(null);
+  const [draft, setDraft] = useState('');
+  const [posting, setPosting] = useState(false);
+  const [tick, setTick] = useState(0);
+
+  const load = useCallback(() => {
+    setErr(null);
+    bodyRepairApi
+      .getActivity(req.id)
+      .then((rows) => setEntries(Array.isArray(rows) ? rows : []))
+      .catch((e) => setErr(e?.detail || e?.message || 'failed'));
+  }, [req.id]);
+
+  useEffect(() => { load(); }, [load, tick]);
+  useEffect(() => {
+    // Light polling — every 30s is enough for the demo's message
+    // bursts. Stops while the tab is hidden so we don't burn quota.
+    const handler = () => setTick((t) => t + 1);
+    const id = setInterval(handler, 30000);
+    return () => clearInterval(id);
+  }, []);
+
+  const submit = async () => {
+    const text = draft.trim();
+    if (!text) return;
+    setPosting(true);
+    try {
+      await bodyRepairApi.postMessage(req.id, { body: text });
+      setDraft('');
+      load();
+    } catch (e) {
+      setErr(e instanceof APIError ? (e.detail || e.message) : (e?.message || 'send failed'));
+    } finally {
+      setPosting(false);
+    }
+  };
+
+  const onKeyDown = (e) => {
+    // Enter sends; Shift+Enter inserts a newline.
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      submit();
+    }
+  };
+
+  const roleColor = {
+    customer: 'text-accent-green',
+    vendor: 'text-accent-blue',
+    system: 'text-navy-400',
+  };
+
+  return (
+    <div className="rounded-xl border border-navy-800 bg-navy-900/50 p-3">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <FileText size={12} className="text-accent-purple" />
+          <span className="text-xs font-semibold text-white">Activity & messages</span>
+        </div>
+        <button
+          type="button"
+          onClick={load}
+          className="text-[10px] text-navy-400 hover:text-white cursor-pointer flex items-center gap-1"
+          title="Refresh"
+        >
+          <RefreshCw size={10} /> Refresh
+        </button>
+      </div>
+
+      {err && (
+        <div className="mb-2 rounded-md border border-accent-red/40 bg-accent-red/10 px-3 py-1.5 text-[11px] text-accent-red flex items-start gap-1.5">
+          <AlertTriangle size={11} className="shrink-0 mt-0.5" />
+          <span>{String(err)}</span>
+        </div>
+      )}
+
+      {/* Timeline list */}
+      {entries === null ? (
+        <div className="flex items-center gap-2 text-xs text-navy-400 py-2">
+          <Loader2 size={12} className="animate-spin" /> Loading…
+        </div>
+      ) : entries.length === 0 ? (
+        <div className="text-xs text-navy-500 py-3 text-center">
+          No activity yet — events and messages will land here.
+        </div>
+      ) : (
+        <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+          {entries.map((e, i) => {
+            const ts = e.occurredAt ? relativeTime(e.occurredAt) : '';
+            if (e.kind === 'event') {
+              return (
+                <div key={i} className="flex items-start gap-2 text-[11px] py-1">
+                  <span className={`mt-1 w-1.5 h-1.5 rounded-full bg-current ${roleColor[e.actorRole || 'system'] || 'text-navy-500'}`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-navy-200">
+                      {e.title}
+                      {e.detail && <span className="text-navy-500"> · {e.detail}</span>}
+                    </div>
+                    <div className="text-[10px] text-navy-500">{ts}</div>
+                  </div>
+                </div>
+              );
+            }
+            // message
+            return (
+              <div key={i} className="rounded-lg bg-navy-800/40 border border-navy-700 px-2.5 py-1.5">
+                <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                  <span className={`text-[10px] font-semibold uppercase tracking-wide ${roleColor[e.actorRole || 'system'] || 'text-navy-400'}`}>
+                    {e.actorRole}
+                  </span>
+                  {e.actorName && (
+                    <span className="text-[10px] text-navy-300">{e.actorName}</span>
+                  )}
+                  <span className="text-[9px] text-navy-500 ml-auto">{ts}</span>
+                </div>
+                <div className="text-xs text-white whitespace-pre-wrap break-words">
+                  {e.messageBody}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Composer — anyone scoped to the request can post. */}
+      <div className="mt-3 pt-3 border-t border-navy-800">
+        <div className="flex items-end gap-2">
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={onKeyDown}
+            rows={2}
+            maxLength={2000}
+            placeholder="Send a message to the other side…"
+            className="flex-1 rounded-md px-2 py-1.5 text-xs bg-navy-800 border border-navy-700 text-white placeholder:text-navy-500 outline-none focus:border-accent-purple resize-none"
+          />
+          <button
+            type="button"
+            onClick={submit}
+            disabled={posting || !draft.trim()}
+            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-accent-purple text-white text-xs font-semibold hover:bg-accent-purple/85 disabled:opacity-40 cursor-pointer"
+          >
+            {posting ? <Loader2 size={11} className="animate-spin" /> : <ArrowRight size={11} />}
+            Send
+          </button>
+        </div>
+        <div className="text-[9px] text-navy-500 mt-1">Enter to send · Shift+Enter for newline</div>
+      </div>
+    </div>
   );
 }
 

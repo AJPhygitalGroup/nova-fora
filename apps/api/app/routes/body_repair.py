@@ -32,6 +32,7 @@ from app.auth.dependencies import get_current_user
 from app.db import get_session
 from app.models.base import utc_now
 from app.models.body_repair import (
+    BodyRepairMessage,
     BodyRepairPaveReport,
     BodyRepairQuote,
     BodyRepairQuoteLineItem,
@@ -2722,3 +2723,265 @@ async def mark_paid(
     await session.commit()
     await session.refresh(req)
     return await _build_response(session, req)
+
+
+# ═════════════════════════════════════════════════════
+# PHASE 5 — Activity timeline + messages thread
+# ═════════════════════════════════════════════════════
+#
+# Two read endpoints, one write endpoint. The timeline derives events
+# from the request's existing timestamps + completion_blob + the
+# messages thread. No new fact tables required — messages is the only
+# new entity.
+# ─────────────────────────────────────────────────────
+
+
+def _author_role_for(current: User, req: BodyRepairRequest) -> str:
+    """Determine the cached author_role at write time. Site admins
+    impersonating as either side appear as the side they're acting
+    for via simple heuristic: if assigned vendor of request, 'vendor';
+    if dsp owner of the dsp, 'customer'; else 'system'."""
+    if current.role == UserRole.SITE_ADMIN:
+        return "system"
+    if current.role == UserRole.DSP_OWNER and req.dsp_id == current.organization_id:
+        return "customer"
+    if (
+        req.assigned_vendor_id is not None
+        and req.assigned_vendor_id == current.organization_id
+    ):
+        return "vendor"
+    return "system"
+
+
+class MessageResponse(BaseModel):
+    id: str
+    author_id: int | None
+    author_name: str | None
+    author_role: str
+    body: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PostMessageBody(BaseModel):
+    body: str = Field(..., min_length=1, max_length=2000)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+async def _messages_for(
+    req: BodyRepairRequest, session: AsyncSession
+) -> list[MessageResponse]:
+    """Load the message thread with author names joined in one batch."""
+    rows = list(
+        (
+            await session.execute(
+                select(BodyRepairMessage)
+                .where(BodyRepairMessage.request_id == req.id)
+                .order_by(BodyRepairMessage.created_at.asc(), BodyRepairMessage.id.asc())
+            )
+        ).scalars().all()
+    )
+    author_ids = [r.author_id for r in rows if r.author_id is not None]
+    name_by_id: dict[int, str] = {}
+    if author_ids:
+        users = (
+            await session.execute(select(User).where(User.id.in_(author_ids)))
+        ).scalars().all()
+        name_by_id = {u.id: u.full_name for u in users}
+    return [
+        MessageResponse(
+            id=r.id_str,
+            author_id=r.author_id,
+            author_name=name_by_id.get(r.author_id) if r.author_id else None,
+            author_role=r.author_role,
+            body=r.body,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
+
+
+@router.get(
+    "/requests/{req_id}/messages",
+    response_model=list[MessageResponse],
+    summary="List messages on a body repair request",
+)
+async def list_messages(
+    req_id: str = Path(..., examples=["BRR-00012"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[MessageResponse]:
+    int_id = _parse_req_id(req_id)
+    if int_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    req = (
+        await session.execute(select(BodyRepairRequest).where(BodyRepairRequest.id == int_id))
+    ).scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    await _require_request_scope(req, current, session)
+    return await _messages_for(req, session)
+
+
+@router.post(
+    "/requests/{req_id}/messages",
+    response_model=MessageResponse,
+    summary="Post a message to the body repair thread",
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_message(
+    body: PostMessageBody,
+    req_id: str = Path(..., examples=["BRR-00012"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> MessageResponse:
+    """Customer or vendor adds a message to the thread. author_role
+    cached at write time so the UI doesn't have to re-derive it on
+    every read."""
+    int_id = _parse_req_id(req_id)
+    if int_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    req = (
+        await session.execute(select(BodyRepairRequest).where(BodyRepairRequest.id == int_id))
+    ).scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    await _require_request_scope(req, current, session)
+
+    text = body.body.strip()
+    if not text:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "message body cannot be empty")
+
+    role = _author_role_for(current, req)
+    if role == "system":
+        # Site admins land here; treat them as a customer-side note.
+        role = "system" if current.role == UserRole.SITE_ADMIN else role
+
+    msg = BodyRepairMessage(
+        request_id=req.id,
+        author_id=current.id,
+        author_role=role,
+        body=text,
+    )
+    session.add(msg)
+    await session.commit()
+    await session.refresh(msg)
+    return MessageResponse(
+        id=msg.id_str,
+        author_id=msg.author_id,
+        author_name=current.full_name,
+        author_role=msg.author_role,
+        body=msg.body,
+        created_at=msg.created_at,
+    )
+
+
+class TimelineEntry(BaseModel):
+    """One row in the synthesized activity timeline."""
+
+    kind: str  # 'event' | 'message'
+    occurred_at: datetime
+    title: str | None = None     # event headline
+    detail: str | None = None    # event sub-text
+    actor_role: str | None = None  # 'customer' | 'vendor' | 'system'
+    actor_name: str | None = None
+    # Populated when kind == 'message'
+    message_body: str | None = None
+    message_id: str | None = None
+
+
+@router.get(
+    "/requests/{req_id}/activity",
+    response_model=list[TimelineEntry],
+    summary="Synthesized activity timeline for a body repair request",
+)
+async def get_activity(
+    req_id: str = Path(..., examples=["BRR-00012"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[TimelineEntry]:
+    """Interleaves state-change events (derived from the request's
+    timestamps + completion_blob) with the messages thread, sorted by
+    occurred_at ascending. No new tables — pure read computation."""
+    int_id = _parse_req_id(req_id)
+    if int_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    req = (
+        await session.execute(select(BodyRepairRequest).where(BodyRepairRequest.id == int_id))
+    ).scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    await _require_request_scope(req, current, session)
+
+    entries: list[TimelineEntry] = []
+
+    # Synthetic events from the request's lifecycle timestamps. We
+    # only emit an event for stamps that exist — null timestamps mean
+    # the step hasn't happened yet.
+    def _push(ts: datetime | None, title: str, detail: str | None = None, actor: str | None = None) -> None:
+        if ts is None:
+            return
+        entries.append(TimelineEntry(
+            kind="event",
+            occurred_at=ts,
+            title=title,
+            detail=detail,
+            actor_role=actor or "system",
+        ))
+
+    _push(req.created_at, "Request submitted", actor="customer")
+    _push(req.quote_selected_at, "Quote selected", actor="customer")
+    _push(req.pickup_proposed_at, "Pickup proposed", actor="vendor")
+    _push(req.pickup_confirmed_at, "Pickup confirmed", actor="customer")
+    _push(req.picked_up_at, "Vehicle picked up", actor="vendor")
+    _push(req.repair_started_at, "Repair started", actor="vendor")
+    _push(req.repair_completed_at, "Repair completed", actor="vendor")
+    _push(req.returned_at, "Vehicle returned", actor="vendor")
+
+    # completion_blob carries signed_off + paid timestamps in ISO form.
+    blob = req.completion_blob or {}
+    for key, title, actor in (
+        ("signed_off_at", "Customer signed off", "customer"),
+        ("paid_at", "Marked as paid", "customer"),
+    ):
+        raw = blob.get(key)
+        if raw:
+            try:
+                ts = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                ts = None
+            if ts is not None:
+                _push(ts, title, actor=actor)
+
+    # Messages — interleaved as their own kind so the UI can render
+    # bubbles next to events.
+    msg_rows = list(
+        (
+            await session.execute(
+                select(BodyRepairMessage)
+                .where(BodyRepairMessage.request_id == req.id)
+                .order_by(BodyRepairMessage.created_at.asc())
+            )
+        ).scalars().all()
+    )
+    author_ids = [m.author_id for m in msg_rows if m.author_id is not None]
+    name_by_id: dict[int, str] = {}
+    if author_ids:
+        users = (
+            await session.execute(select(User).where(User.id.in_(author_ids)))
+        ).scalars().all()
+        name_by_id = {u.id: u.full_name for u in users}
+    for m in msg_rows:
+        entries.append(TimelineEntry(
+            kind="message",
+            occurred_at=m.created_at,
+            actor_role=m.author_role,
+            actor_name=name_by_id.get(m.author_id) if m.author_id else None,
+            message_body=m.body,
+            message_id=m.id_str,
+        ))
+
+    entries.sort(key=lambda e: e.occurred_at)
+    return entries
