@@ -26,6 +26,13 @@ class UploadKind(str, Enum):
     # 2026-06-03 Jorge — body repair PAVE PDF upload. Path scoped to
     # body_repair_requests/<id>/pave/<bag>.pdf in MinIO.
     BODY_REPAIR_PAVE = "body_repair_pave"
+    # 2026-06-03 Jorge — PAVE preview before a request is created.
+    # Path scoped to body_repair_previews/<bag>.pdf.
+    BODY_REPAIR_PAVE_PREVIEW = "body_repair_pave_preview"
+    # 2026-06-06 Jorge — completion photos uploaded by the body repair
+    # vendor when finishing a job. Path scoped to
+    # body_repair_requests/<id>/completion/<bag>.jpg in MinIO.
+    BODY_REPAIR_COMPLETION = "body_repair_completion"
     # 2026-06-05 Jorge — PAVE-first flow. Customer uploads + parses
     # the PDF BEFORE the request is created (the parsed VIN drives
     # the vehicle picker, the damages drive the parts picker). No

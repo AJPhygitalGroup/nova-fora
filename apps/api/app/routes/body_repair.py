@@ -116,6 +116,13 @@ class BodyRepairRequestResponse(BaseModel):
     pickup_blob: dict | None = None
     pickup_proposed_date: datetime | None = None
     pickup_window: str | None = None
+    # Completion blob — vendor stores notes + photo storage keys at
+    # complete-repair; customer signoff timestamp lands here too.
+    completion_blob: dict | None = None
+    picked_up_at: datetime | None = None
+    repair_started_at: datetime | None = None
+    repair_completed_at: datetime | None = None
+    returned_at: datetime | None = None
     status: str
     selected_quote_id: int | None
     quote_selected_at: datetime | None
@@ -194,6 +201,7 @@ async def _build_response(
         pickup_blob=req.pickup_blob,
         pickup_proposed_date=req.pickup_proposed_date,
         pickup_window=req.pickup_window,
+        completion_blob=req.completion_blob,
         status=req.status.value if hasattr(req.status, "value") else req.status,
         selected_quote_id=req.selected_quote_id,
         quote_selected_at=req.quote_selected_at,
@@ -2375,6 +2383,341 @@ async def confirm_pickup(
     req.pickup_blob = blob
     req.pickup_confirmed_at = utc_now()
     req.status = BodyRepairRequestStatus.PICKUP_CONFIRMED
+    session.add(req)
+    await session.commit()
+    await session.refresh(req)
+    return await _build_response(session, req)
+
+
+# ═════════════════════════════════════════════════════
+# PHASE 4 — repair lifecycle (post-pickup)
+# ═════════════════════════════════════════════════════
+#
+# Five status transitions after pickup_confirmed:
+#   pickup_confirmed → in_repair         (vendor picks up + starts work)
+#   in_repair        → repair_complete   (vendor finishes; notes + photos)
+#   repair_complete  → pending_signoff   (vendor drops van back at DSP)
+#   pending_signoff  → returned          (customer confirms van received)
+#   returned         → paid              (customer marks payment done)
+#
+# Each transition has a focused endpoint with role + status guards.
+# All 5 update completion_blob with the relevant timestamp + payload.
+# ─────────────────────────────────────────────────────
+
+
+async def _require_assigned_vendor_for_pickup(
+    req: BodyRepairRequest, current: User, session: AsyncSession
+) -> Organization:
+    """Auth helper: caller must be the assigned body repair vendor (or
+    site_admin) AND the org_type must be BODY_REPAIR_VENDOR."""
+    if current.role == UserRole.SITE_ADMIN:
+        # site_admin can act on any request; resolve the assigned org
+        # if present for downstream logging.
+        if req.assigned_vendor_id is None:
+            return None  # type: ignore[return-value]
+        org = (
+            await session.execute(
+                select(Organization).where(Organization.id == req.assigned_vendor_id)
+            )
+        ).scalar_one_or_none()
+        return org  # type: ignore[return-value]
+    if req.assigned_vendor_id is None or req.assigned_vendor_id != current.organization_id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "only the assigned body repair vendor can act on this request",
+        )
+    org = (
+        await session.execute(
+            select(Organization).where(Organization.id == current.organization_id)
+        )
+    ).scalar_one_or_none()
+    if org is None or org.org_type != OrgType.BODY_REPAIR_VENDOR:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not a body repair vendor")
+    return org
+
+
+@router.post(
+    "/requests/{req_id}/start-repair",
+    response_model=BodyRepairRequestResponse,
+    summary="Vendor records pickup + transitions to in_repair",
+    responses={
+        403: {"description": "Caller is not the assigned vendor."},
+        404: {"description": "Request not found."},
+        409: {"description": "Status not pickup_confirmed."},
+    },
+)
+async def start_repair(
+    req_id: str = Path(..., examples=["BRR-00012"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> BodyRepairRequestResponse:
+    """Vendor confirms they have physical custody of the van and work
+    has started. Sets picked_up_at + repair_started_at + advances
+    status to IN_REPAIR. Idempotent: a second call from the same
+    state is a no-op success."""
+    int_id = _parse_req_id(req_id)
+    if int_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    req = (
+        await session.execute(
+            select(BodyRepairRequest).where(BodyRepairRequest.id == int_id)
+        )
+    ).scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    await _require_assigned_vendor_for_pickup(req, current, session)
+    if req.status not in (
+        BodyRepairRequestStatus.PICKUP_CONFIRMED,
+        BodyRepairRequestStatus.IN_REPAIR,
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"start-repair requires status=pickup_confirmed (current: {req.status.value})",
+        )
+    if req.status == BodyRepairRequestStatus.IN_REPAIR:
+        # Already started — return current state without bumping.
+        return await _build_response(session, req)
+    now = utc_now()
+    req.picked_up_at = req.picked_up_at or now
+    req.repair_started_at = req.repair_started_at or now
+    req.status = BodyRepairRequestStatus.IN_REPAIR
+    session.add(req)
+    await session.commit()
+    await session.refresh(req)
+    return await _build_response(session, req)
+
+
+class CompletionPhotoBody(BaseModel):
+    """One completion photo already uploaded to MinIO under
+    body_repair_completion kind."""
+
+    storage_key: str = Field(..., min_length=1, max_length=500)
+    caption: str | None = Field(default=None, max_length=200)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class CompleteRepairBody(BaseModel):
+    """Vendor's payload when wrapping up the work."""
+
+    notes: str | None = Field(default=None, max_length=2000)
+    photos: list[CompletionPhotoBody] = Field(default_factory=list, max_length=20)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.post(
+    "/requests/{req_id}/complete-repair",
+    response_model=BodyRepairRequestResponse,
+    summary="Vendor records repair completion + uploads photos/notes",
+    responses={
+        403: {"description": "Caller is not the assigned vendor."},
+        404: {"description": "Request not found."},
+        409: {"description": "Status not in_repair."},
+    },
+)
+async def complete_repair(
+    body: CompleteRepairBody,
+    req_id: str = Path(..., examples=["BRR-00012"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> BodyRepairRequestResponse:
+    """Vendor wraps up the work. Stores notes + photo storage_keys in
+    completion_blob, stamps repair_completed_at, advances status to
+    REPAIR_COMPLETE."""
+    int_id = _parse_req_id(req_id)
+    if int_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    req = (
+        await session.execute(
+            select(BodyRepairRequest).where(BodyRepairRequest.id == int_id)
+        )
+    ).scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    await _require_assigned_vendor_for_pickup(req, current, session)
+    if req.status != BodyRepairRequestStatus.IN_REPAIR:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"complete-repair requires status=in_repair (current: {req.status.value})",
+        )
+    now = utc_now()
+    blob = dict(req.completion_blob or {})
+    if body.notes and body.notes.strip():
+        blob["notes"] = body.notes.strip()
+    existing_photos = list(blob.get("photos") or [])
+    for p in body.photos:
+        existing_photos.append({
+            "storage_key": p.storage_key,
+            "caption": p.caption,
+            "uploaded_at": now.isoformat(),
+            "uploaded_by_id": current.id,
+        })
+    blob["photos"] = existing_photos
+    blob["completed_at"] = now.isoformat()
+    blob["completed_by_id"] = current.id
+
+    req.completion_blob = blob
+    req.repair_completed_at = now
+    req.status = BodyRepairRequestStatus.REPAIR_COMPLETE
+    session.add(req)
+    await session.commit()
+    await session.refresh(req)
+    return await _build_response(session, req)
+
+
+@router.post(
+    "/requests/{req_id}/drop-off",
+    response_model=BodyRepairRequestResponse,
+    summary="Vendor confirms van returned to DSP — awaiting signoff",
+    responses={
+        403: {"description": "Caller is not the assigned vendor."},
+        404: {"description": "Request not found."},
+        409: {"description": "Status not repair_complete."},
+    },
+)
+async def drop_off(
+    req_id: str = Path(..., examples=["BRR-00012"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> BodyRepairRequestResponse:
+    """Vendor confirms the van is back at the DSP lot. Sets returned_at
+    + advances status to PENDING_SIGNOFF (customer's turn)."""
+    int_id = _parse_req_id(req_id)
+    if int_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    req = (
+        await session.execute(
+            select(BodyRepairRequest).where(BodyRepairRequest.id == int_id)
+        )
+    ).scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    await _require_assigned_vendor_for_pickup(req, current, session)
+    if req.status != BodyRepairRequestStatus.REPAIR_COMPLETE:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"drop-off requires status=repair_complete (current: {req.status.value})",
+        )
+    now = utc_now()
+    req.returned_at = now
+    blob = dict(req.completion_blob or {})
+    blob["returned_at"] = now.isoformat()
+    blob["returned_by_id"] = current.id
+    req.completion_blob = blob
+    req.status = BodyRepairRequestStatus.PENDING_SIGNOFF
+    session.add(req)
+    await session.commit()
+    await session.refresh(req)
+    return await _build_response(session, req)
+
+
+@router.post(
+    "/requests/{req_id}/signoff",
+    response_model=BodyRepairRequestResponse,
+    summary="Customer confirms van received — moves to awaiting payment",
+    responses={
+        403: {"description": "Caller is not the customer DSP owner."},
+        404: {"description": "Request not found."},
+        409: {"description": "Status not pending_signoff."},
+    },
+)
+async def signoff(
+    req_id: str = Path(..., examples=["BRR-00012"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> BodyRepairRequestResponse:
+    """Customer confirms they got the van back in acceptable shape.
+    Stamps signed_off_at in completion_blob + advances status to
+    RETURNED."""
+    int_id = _parse_req_id(req_id)
+    if int_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    req = (
+        await session.execute(
+            select(BodyRepairRequest).where(BodyRepairRequest.id == int_id)
+        )
+    ).scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    if current.role not in (UserRole.DSP_OWNER, UserRole.SITE_ADMIN):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "customer-only action")
+    if current.role == UserRole.DSP_OWNER and req.dsp_id != current.organization_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    if req.status != BodyRepairRequestStatus.PENDING_SIGNOFF:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"signoff requires status=pending_signoff (current: {req.status.value})",
+        )
+    now = utc_now()
+    blob = dict(req.completion_blob or {})
+    blob["signed_off_at"] = now.isoformat()
+    blob["signed_off_by_id"] = current.id
+    req.completion_blob = blob
+    req.status = BodyRepairRequestStatus.RETURNED
+    session.add(req)
+    await session.commit()
+    await session.refresh(req)
+    return await _build_response(session, req)
+
+
+class MarkPaidBody(BaseModel):
+    """Optional payment amount in cents for the audit trail."""
+
+    paid_amount_cents: int | None = Field(default=None, ge=0)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.post(
+    "/requests/{req_id}/mark-paid",
+    response_model=BodyRepairRequestResponse,
+    summary="Customer or site_admin marks the request paid — closes it",
+    responses={
+        403: {"description": "Caller is not the customer DSP owner."},
+        404: {"description": "Request not found."},
+        409: {"description": "Status not returned."},
+    },
+)
+async def mark_paid(
+    body: MarkPaidBody,
+    req_id: str = Path(..., examples=["BRR-00012"]),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> BodyRepairRequestResponse:
+    """Final lifecycle transition — customer confirms they've paid the
+    vendor. Stamps paid_at + paid_amount_cents on the request and on
+    completion_blob, then PAID."""
+    int_id = _parse_req_id(req_id)
+    if int_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    req = (
+        await session.execute(
+            select(BodyRepairRequest).where(BodyRepairRequest.id == int_id)
+        )
+    ).scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    if current.role not in (UserRole.DSP_OWNER, UserRole.SITE_ADMIN):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "customer-only action")
+    if current.role == UserRole.DSP_OWNER and req.dsp_id != current.organization_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+    if req.status != BodyRepairRequestStatus.RETURNED:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"mark-paid requires status=returned (current: {req.status.value})",
+        )
+    now = utc_now()
+    req.paid_at = now
+    if body.paid_amount_cents is not None:
+        req.paid_amount_cents = body.paid_amount_cents
+    blob = dict(req.completion_blob or {})
+    blob["paid_at"] = now.isoformat()
+    blob["paid_by_id"] = current.id
+    if body.paid_amount_cents is not None:
+        blob["paid_amount_cents"] = body.paid_amount_cents
+    req.completion_blob = blob
+    req.status = BodyRepairRequestStatus.PAID
     session.add(req)
     await session.commit()
     await session.refresh(req)

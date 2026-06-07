@@ -474,6 +474,17 @@ function RequestRow({ req, user, isBodyRepairVendor, expanded, onToggle, onReloa
             isBodyRepairVendor={isBodyRepairVendor}
             onChanged={onReload}
           />
+
+          {/* Repair lifecycle — start-repair → complete-repair →
+              drop-off → signoff → mark-paid. Each step is a status-
+              aware button visible only to the right role at the right
+              time. */}
+          <RepairLifecyclePanel
+            req={req}
+            user={user}
+            isBodyRepairVendor={isBodyRepairVendor}
+            onChanged={onReload}
+          />
         </div>
       )}
     </div>
@@ -655,6 +666,403 @@ const PICKUP_WINDOWS = [
   '9:00am – 12:00pm', '12:00pm – 3:00pm', '1:00pm – 4:00pm',
   '3:00pm – 6:00pm', 'Flexible (8:00am – 6:00pm)',
 ];
+
+// ─────────────────────────────────────────────────────
+// RepairLifecyclePanel — Phase 4. Status-aware buttons drive the
+// 5 post-pickup transitions:
+//   pickup_confirmed → in_repair     (vendor "Start repair")
+//   in_repair        → repair_complete (vendor "Complete repair" + photos)
+//   repair_complete  → pending_signoff (vendor "Drop off")
+//   pending_signoff  → returned         (customer "Confirm receipt")
+//   returned         → paid             (customer "Mark as paid")
+// Each transition is a one-click button except complete-repair which
+// opens a modal for notes + photo uploads.
+// ─────────────────────────────────────────────────────
+function RepairLifecyclePanel({ req, user, isBodyRepairVendor, onChanged }) {
+  const status = req.status;
+  // Only render once we're past pickup_confirmed (PickupPanel handles
+  // earlier states).
+  const inLifecycle = ['pickup_confirmed', 'in_repair', 'repair_complete',
+    'pending_signoff', 'returned', 'paid'].includes(status);
+  if (!inLifecycle) return null;
+
+  const isCustomer = user?.role === 'dsp_owner' || user?.role === 'site_admin';
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const [showComplete, setShowComplete] = useState(false);
+
+  const run = async (action, label) => {
+    setErr(null);
+    setBusy(true);
+    try {
+      await action();
+      onChanged?.();
+    } catch (e) {
+      setErr(e instanceof APIError ? (e.detail || e.message) : (e?.message || `${label} failed`));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Cards per status — each row is a step in the lifecycle ladder.
+  // Done rows just show a check + timestamp; the current row gets the
+  // action button.
+  const blob = req.completionBlob || {};
+  const Row = ({ icon: Icon, label, done, doneTs, active, action }) => (
+    <div className={`flex items-center gap-3 px-3 py-2 rounded-lg border ${
+      done ? 'bg-accent-green/5 border-accent-green/30'
+        : active ? 'bg-accent-purple/5 border-accent-purple/40'
+        : 'bg-navy-900/30 border-navy-800'
+    }`}>
+      <Icon size={14} className={done ? 'text-accent-green' : active ? 'text-accent-purple' : 'text-navy-500'} />
+      <div className="flex-1 min-w-0">
+        <div className="text-xs font-semibold text-white">{label}</div>
+        {done && doneTs && (
+          <div className="text-[10px] text-navy-400">{relativeTime(doneTs)}</div>
+        )}
+      </div>
+      {active && action}
+      {done && <CheckCircle2 size={14} className="text-accent-green" />}
+    </div>
+  );
+
+  return (
+    <div className="rounded-xl border border-navy-800 bg-navy-900/50 p-3">
+      <div className="flex items-center gap-2 mb-2">
+        <Truck size={12} className="text-accent-purple" />
+        <span className="text-xs font-semibold text-white">Repair lifecycle</span>
+      </div>
+      {err && (
+        <div className="mb-2 rounded-md border border-accent-red/40 bg-accent-red/10 px-3 py-1.5 text-[11px] text-accent-red flex items-start gap-1.5">
+          <AlertTriangle size={11} className="shrink-0 mt-0.5" />
+          <span>{String(err)}</span>
+        </div>
+      )}
+      <div className="space-y-1.5">
+        {/* Start repair — vendor */}
+        <Row
+          icon={Wrench}
+          label="Start repair (van picked up)"
+          done={['in_repair', 'repair_complete', 'pending_signoff', 'returned', 'paid'].includes(status)}
+          doneTs={req.repairStartedAt}
+          active={status === 'pickup_confirmed' && isBodyRepairVendor}
+          action={
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => run(() => bodyRepairApi.startRepair(req.id), 'Start')}
+              className="inline-flex items-center gap-1 px-3 py-1 rounded-md bg-accent-purple text-white text-[11px] font-semibold hover:bg-accent-purple/85 disabled:opacity-40 cursor-pointer"
+            >
+              {busy ? <Loader2 size={11} className="animate-spin" /> : <ArrowRight size={11} />}
+              Start
+            </button>
+          }
+        />
+        {/* Complete repair — vendor */}
+        <Row
+          icon={CheckCircle2}
+          label="Complete repair (notes + photos)"
+          done={['repair_complete', 'pending_signoff', 'returned', 'paid'].includes(status)}
+          doneTs={req.repairCompletedAt}
+          active={status === 'in_repair' && isBodyRepairVendor}
+          action={
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setShowComplete(true)}
+              className="inline-flex items-center gap-1 px-3 py-1 rounded-md bg-accent-blue text-white text-[11px] font-semibold hover:bg-accent-blue/85 disabled:opacity-40 cursor-pointer"
+            >
+              <ArrowRight size={11} /> Complete…
+            </button>
+          }
+        />
+        {/* Drop off — vendor */}
+        <Row
+          icon={Truck}
+          label="Drop van back at DSP lot"
+          done={['pending_signoff', 'returned', 'paid'].includes(status)}
+          doneTs={req.returnedAt}
+          active={status === 'repair_complete' && isBodyRepairVendor}
+          action={
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => run(() => bodyRepairApi.dropOff(req.id), 'Drop off')}
+              className="inline-flex items-center gap-1 px-3 py-1 rounded-md bg-accent-purple text-white text-[11px] font-semibold hover:bg-accent-purple/85 disabled:opacity-40 cursor-pointer"
+            >
+              {busy ? <Loader2 size={11} className="animate-spin" /> : <ArrowRight size={11} />}
+              Confirm drop-off
+            </button>
+          }
+        />
+        {/* Signoff — customer */}
+        <Row
+          icon={ThumbsUp}
+          label="Customer confirms receipt"
+          done={['returned', 'paid'].includes(status)}
+          doneTs={blob.signedOffAt}
+          active={status === 'pending_signoff' && isCustomer}
+          action={
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => run(() => bodyRepairApi.signoff(req.id), 'Signoff')}
+              className="inline-flex items-center gap-1 px-3 py-1 rounded-md bg-accent-green text-white text-[11px] font-semibold hover:bg-accent-green/85 disabled:opacity-40 cursor-pointer"
+            >
+              {busy ? <Loader2 size={11} className="animate-spin" /> : <ThumbsUp size={11} />}
+              Confirm receipt
+            </button>
+          }
+        />
+        {/* Mark paid — customer */}
+        <Row
+          icon={DollarSign}
+          label="Mark as paid"
+          done={status === 'paid'}
+          doneTs={req.paidAt}
+          active={status === 'returned' && isCustomer}
+          action={
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => run(() => bodyRepairApi.markPaid(req.id, {}), 'Pay')}
+              className="inline-flex items-center gap-1 px-3 py-1 rounded-md bg-accent-gold text-navy-950 text-[11px] font-semibold hover:bg-accent-gold/85 disabled:opacity-40 cursor-pointer"
+            >
+              {busy ? <Loader2 size={11} className="animate-spin" /> : <DollarSign size={11} />}
+              Mark paid
+            </button>
+          }
+        />
+      </div>
+
+      {/* Notes + photos display once the vendor has completed. */}
+      {(blob.notes || (Array.isArray(blob.photos) && blob.photos.length > 0)) && (
+        <div className="mt-3 pt-3 border-t border-navy-800">
+          <div className="text-[10px] uppercase tracking-wider text-navy-500 font-semibold mb-1.5">
+            Completion details
+          </div>
+          {blob.notes && (
+            <div className="text-xs text-navy-200 whitespace-pre-wrap mb-2">{blob.notes}</div>
+          )}
+          {Array.isArray(blob.photos) && blob.photos.length > 0 && (
+            <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
+              {blob.photos.map((p, i) => (
+                <CompletionPhoto key={p.storageKey || i} photo={p} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {showComplete && (
+        <CompleteRepairModal
+          req={req}
+          onClose={() => setShowComplete(false)}
+          onCompleted={() => { setShowComplete(false); onChanged?.(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Compact thumbnail of an already-uploaded completion photo.
+// Reuses AuthImg with the body-repair-completion endpoint we don't
+// have yet — for now we fall back to the existing presigned download
+// URL pattern via /uploads/download.
+function CompletionPhoto({ photo }) {
+  // Build a backend-routed image URL via the same /pave/image-style
+  // proxy. For completion we don't have a dedicated endpoint yet;
+  // present the storage_key path as a tooltip until that lands.
+  return (
+    <div
+      className="aspect-square rounded border border-navy-700 bg-navy-900 flex items-center justify-center text-[8px] text-navy-500 px-1 text-center"
+      title={`${photo.storageKey}${photo.caption ? `\n${photo.caption}` : ''}`}
+    >
+      {photo.caption || '📷'}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// CompleteRepairModal — vendor enters notes + uploads photos.
+// Photos go through presigned upload (kind='body_repair_completion'),
+// then the final POST /complete-repair carries the storage_keys.
+// ─────────────────────────────────────────────────────
+function CompleteRepairModal({ req, onClose, onCompleted }) {
+  const [notes, setNotes] = useState('');
+  const [photos, setPhotos] = useState([]); // [{file, storageKey?, uploading, error?}]
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const fileInputRef = useRef(null);
+
+  const onPick = async (e) => {
+    const files = Array.from(e.target.files || []).slice(0, 20 - photos.length);
+    e.target.value = '';
+    for (const f of files) {
+      setPhotos((cur) => [...cur, { file: f, uploading: true }]);
+      try {
+        const { uploadUrl, storageKey } = await uploadsApi.presigned({
+          kind: 'body_repair_completion',
+          parentId: req.id,
+          filename: f.name,
+          contentType: f.type || 'image/jpeg',
+          sizeBytes: f.size,
+        });
+        await uploadsApi.putToPresigned(uploadUrl, f, f.type || 'image/jpeg');
+        setPhotos((cur) => cur.map((p) => p.file === f ? { ...p, uploading: false, storageKey } : p));
+      } catch (e2) {
+        const msg = e2 instanceof APIError ? (e2.detail || e2.message) : (e2?.message || 'upload failed');
+        setPhotos((cur) => cur.map((p) => p.file === f ? { ...p, uploading: false, error: msg } : p));
+      }
+    }
+  };
+
+  const submit = async () => {
+    if (photos.some((p) => p.uploading)) {
+      setErr('Wait for all photos to finish uploading.');
+      return;
+    }
+    const ready = photos.filter((p) => p.storageKey).map((p) => ({ storageKey: p.storageKey }));
+    setBusy(true);
+    setErr(null);
+    try {
+      await bodyRepairApi.completeRepair(req.id, {
+        notes: notes.trim() || undefined,
+        photos: ready,
+      });
+      onCompleted?.();
+    } catch (e) {
+      setErr(e instanceof APIError ? (e.detail || e.message) : (e?.message || 'failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-navy-900 border border-navy-700 rounded-xl w-full max-w-xl shadow-2xl flex flex-col max-h-[calc(100vh-2rem)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between px-5 py-4 border-b border-navy-700 shrink-0">
+          <div>
+            <h3 className="text-base font-semibold text-white">Complete repair</h3>
+            <p className="text-[11px] text-navy-400">
+              Add notes + photos of the finished work. Customer will see these on signoff.
+            </p>
+          </div>
+          <button onClick={onClose} className="text-navy-400 hover:text-white p-2 -mr-2">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="px-5 py-4 space-y-4 overflow-y-auto flex-1 min-h-0">
+          <div>
+            <label className="text-xs font-semibold text-text-strong block mb-1.5">
+              Repair notes <span className="text-navy-500 text-[10px]">(optional)</span>
+            </label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={4}
+              maxLength={2000}
+              placeholder="What was done, parts replaced, anything the customer should know…"
+              className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white placeholder:text-navy-500 outline-none focus:border-accent-purple resize-none"
+            />
+            <div className="text-[10px] text-navy-500 mt-1 text-right">{notes.length} / 2000</div>
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs font-semibold text-text-strong">
+                Photos <span className="text-navy-500 text-[10px]">({photos.length} / 20)</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={photos.length >= 20}
+                className="text-[10px] text-accent-blue hover:underline disabled:opacity-40 cursor-pointer"
+              >
+                + Add photos
+              </button>
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+              multiple
+              onChange={onPick}
+              className="hidden"
+            />
+            {photos.length === 0 ? (
+              <div className="rounded-lg border-2 border-dashed border-navy-700 px-3 py-4 text-center text-xs text-navy-400">
+                No photos yet — click "Add photos" to attach JPEGs / PNGs (max 20).
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                {photos.map((p, i) => (
+                  <div key={i} className="relative aspect-square rounded-lg border border-navy-700 bg-navy-800 overflow-hidden">
+                    <img
+                      src={URL.createObjectURL(p.file)}
+                      alt={p.file.name}
+                      className="absolute inset-0 w-full h-full object-cover"
+                    />
+                    {p.uploading && (
+                      <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                        <Loader2 size={16} className="text-white animate-spin" />
+                      </div>
+                    )}
+                    {p.error && (
+                      <div className="absolute inset-0 bg-accent-red/40 flex items-center justify-center text-[9px] text-white text-center px-1">
+                        {p.error}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setPhotos((cur) => cur.filter((_, j) => j !== i))}
+                      className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 hover:bg-black/90 text-white flex items-center justify-center cursor-pointer"
+                      title="Remove"
+                    >
+                      <X size={10} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          {err && (
+            <div className="px-3 py-2 rounded-md bg-accent-red/10 border border-accent-red/40 text-xs text-accent-red flex items-center gap-2">
+              <AlertTriangle size={12} /> {err}
+            </div>
+          )}
+        </div>
+        <div className="px-5 py-3 border-t border-navy-700 flex justify-end gap-2 shrink-0">
+          <button
+            onClick={onClose}
+            disabled={busy}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-navy-800 hover:bg-navy-700 text-white border border-navy-700 disabled:opacity-50 cursor-pointer"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={submit}
+            disabled={busy || photos.some((p) => p.uploading)}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-accent-blue text-white hover:bg-accent-blue/85 disabled:opacity-40 cursor-pointer"
+          >
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+            Complete repair
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 
 function PickupPanel({ req, user, isBodyRepairVendor, onChanged }) {
   const status = req.status;

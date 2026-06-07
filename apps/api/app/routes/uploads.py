@@ -192,6 +192,59 @@ async def _check_parent_access(
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
         return ("body_repair_requests", req.id)
 
+    if kind == UploadKind.BODY_REPAIR_COMPLETION:
+        # Vendor completion photos. Only the assigned body repair
+        # vendor (or site_admin) can upload. The request must be in
+        # one of the in-flight statuses where completion photos make
+        # sense (in_repair / repair_complete / pending_signoff).
+        from app.models.body_repair import (
+            BodyRepairRequest,
+            BodyRepairRequestStatus,
+        )
+        raw = str(parent_id).strip()
+        int_id = None
+        if raw.upper().startswith("BRR-"):
+            tail = raw[4:]
+            if tail.isdigit():
+                int_id = int(tail)
+        elif raw.isdigit():
+            int_id = int(raw)
+        if int_id is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+        req = (
+            await session.execute(
+                select(BodyRepairRequest).where(BodyRepairRequest.id == int_id)
+            )
+        ).scalar_one_or_none()
+        if req is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+        if current.role == UserRole.SITE_ADMIN:
+            return ("body_repair_requests", req.id)
+        # Otherwise must be the assigned body repair vendor.
+        org = (
+            await session.execute(
+                select(Organization).where(Organization.id == current.organization_id)
+            )
+        ).scalar_one_or_none()
+        if org is None or org.org_type != OrgType.BODY_REPAIR_VENDOR:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "not a body repair vendor")
+        if req.assigned_vendor_id != current.organization_id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+        # Status gate — completion photos are only meaningful once the
+        # vehicle is actually in/past repair.
+        allowed = {
+            BodyRepairRequestStatus.IN_REPAIR,
+            BodyRepairRequestStatus.REPAIR_COMPLETE,
+            BodyRepairRequestStatus.PENDING_SIGNOFF,
+            BodyRepairRequestStatus.RETURNED,
+        }
+        if req.status not in allowed:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"completion photos require the request to be in repair or later (current: {req.status.value})",
+            )
+        return ("body_repair_requests", req.id)
+
     raise HTTPException(status.HTTP_400_BAD_REQUEST, f"unknown kind: {kind}")
 
 

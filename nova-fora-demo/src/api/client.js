@@ -2318,6 +2318,54 @@ export const bodyRepair = {
       body: JSON.stringify(camelToSnake(body)),
     });
   },
+
+  // ── Phase 4 — Repair lifecycle ─────────────────────
+
+  /** POST /body-repair/requests/{id}/start-repair — vendor → in_repair */
+  startRepair(id) {
+    return apiFetch(`/body-repair/requests/${encodeURIComponent(id)}/start-repair`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  },
+
+  /**
+   * POST /body-repair/requests/{id}/complete-repair — vendor → repair_complete
+   * body: { notes?, photos: [{ storageKey, caption? }] }
+   */
+  completeRepair(id, body) {
+    return apiFetch(`/body-repair/requests/${encodeURIComponent(id)}/complete-repair`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
+
+  /** POST /body-repair/requests/{id}/drop-off — vendor → pending_signoff */
+  dropOff(id) {
+    return apiFetch(`/body-repair/requests/${encodeURIComponent(id)}/drop-off`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  },
+
+  /** POST /body-repair/requests/{id}/signoff — customer → returned */
+  signoff(id) {
+    return apiFetch(`/body-repair/requests/${encodeURIComponent(id)}/signoff`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  },
+
+  /**
+   * POST /body-repair/requests/{id}/mark-paid — customer → paid
+   * body: { paidAmountCents? } — optional final invoice number
+   */
+  markPaid(id, body = {}) {
+    return apiFetch(`/body-repair/requests/${encodeURIComponent(id)}/mark-paid`, {
+      method: 'POST',
+      body: JSON.stringify(camelToSnake(body)),
+    });
+  },
 };
 
 export { APIError };

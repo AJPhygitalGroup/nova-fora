@@ -137,6 +137,11 @@ class BodyRepairRequest(SQLModel, table=True):
     # contact_phone, access_notes } at confirm-pickup. Alembic
     # 20260606_0200.
     pickup_blob: dict | None = Field(default=None, sa_column=Column("pickup_blob", sa.JSON, nullable=True))
+    # 2026-06-06 Jorge — completion blob. Vendor stores
+    # { notes, photos: [{ storage_key, uploaded_at, caption? }],
+    #   signed_off_at, paid_at, paid_amount_cents }. Alembic
+    # 20260606_0300.
+    completion_blob: dict | None = Field(default=None, sa_column=Column("completion_blob", sa.JSON, nullable=True))
 
     # ── Lifecycle ──────────────────────────────────────────
     status: BodyRepairRequestStatus = Field(
