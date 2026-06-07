@@ -107,6 +107,11 @@ class BodyRepairRequestResponse(BaseModel):
     submission_mode: str
     text_description: str | None
     target_grade: str | None = None
+    # When the customer used mode='grade' AND there's a PAVE attached,
+    # the backend computes which damages must be repaired to reach the
+    # target grade and surfaces it here so the vendor sees the spec
+    # without re-running the math. Null in other modes / no PAVE.
+    grade_recommendation: dict | None = None
     # Combined "parts + issues" blob — frontend reads .pickedComponents
     # and .issues. None when the customer used text mode without any
     # repeating issues.
@@ -177,6 +182,55 @@ async def _is_body_repair_vendor_user(
     return org is not None and org.org_type == OrgType.BODY_REPAIR_VENDOR
 
 
+async def _grade_recommendation_for(
+    session: AsyncSession, req: BodyRepairRequest
+) -> dict | None:
+    """Load the most recent PRE PAVE for `req` + run
+    fca_scoring.recommend_for_target against its current damages.
+
+    Returns None if no PAVE attached or parsing failed. Tolerant of
+    missing fields — only meaningful damages with fleet_score feed
+    the math, so a sparse parse just yields a small breakdown.
+
+    The target_grade column stores the label ('Great'/'Good'/'Fair');
+    we reverse-map it to the int (5/4/3) the recommender expects.
+    Falls back to 4 / Good when the label is unrecognized."""
+    from app.services.fca_scoring import recommend_for_target
+
+    target_grade_int = None
+    label_to_int = {"Great": 5, "Good": 4, "Fair": 3}
+    if req.target_grade:
+        # Accept either a bare int-like string or one of the label
+        # values used by the demo's column convention.
+        raw = str(req.target_grade).strip()
+        if raw.isdigit():
+            target_grade_int = int(raw)
+        else:
+            target_grade_int = label_to_int.get(raw)
+    if target_grade_int is None or target_grade_int < 3 or target_grade_int > 5:
+        return None
+
+    # Pick the most recent PRE pave row (the customer's intake snapshot).
+    pave = (
+        await session.execute(
+            select(BodyRepairPaveReport)
+            .where(BodyRepairPaveReport.request_id == req.id)
+            .where(BodyRepairPaveReport.phase == PavePhase.PRE.value)
+            .order_by(BodyRepairPaveReport.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if pave is None or not pave.parsed_json:
+        return None
+
+    parsed = pave.parsed_json
+    damages = _current_damage_rows(parsed)
+    if not damages:
+        return None
+
+    return recommend_for_target(damages, target_grade_int)
+
+
 async def _build_response(
     session: AsyncSession, req: BodyRepairRequest
 ) -> BodyRepairRequestResponse:
@@ -190,6 +244,17 @@ async def _build_response(
                 select(Organization).where(Organization.id == req.assigned_vendor_id)
             )
         ).scalar_one_or_none()
+    # Grade recommendation — when mode=='grade' AND the request has a
+    # parsed PAVE, surface what to fix to reach the target. The vendor
+    # reads recommended_item_nos + components to scope their quote.
+    grade_rec = None
+    if (req.submission_mode == BodyRepairSubmissionMode.GRADE
+            and req.target_grade):
+        try:
+            grade_rec = await _grade_recommendation_for(session, req)
+        except Exception:  # noqa: BLE001
+            grade_rec = None
+
     return BodyRepairRequestResponse(
         id=req.id_str,
         dsp_id=dsp.id_str if dsp else f"DSP-{req.dsp_id:04d}",
@@ -198,6 +263,7 @@ async def _build_response(
         submission_mode=req.submission_mode.value if hasattr(req.submission_mode, "value") else req.submission_mode,
         text_description=req.text_description,
         target_grade=req.target_grade,
+        grade_recommendation=grade_rec,
         scope_blob=req.picked_components_json,
         pickup_blob=req.pickup_blob,
         pickup_proposed_date=req.pickup_proposed_date,

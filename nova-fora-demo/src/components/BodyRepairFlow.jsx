@@ -310,6 +310,17 @@ function RequestRow({ req, user, isBodyRepairVendor, expanded, onToggle, onReloa
             )}
           </div>
 
+          {/* Grade recommendation — auto-computed when mode='grade' AND
+              there's a parsed PAVE. Vendor reads this to know what
+              must be fixed to reach the customer's target. */}
+          {req.gradeRecommendation && (
+            <GradeRecommendationPanel
+              rec={req.gradeRecommendation}
+              firstPaveKey={paveRows?.[0]?.storageKey}
+              firstPaveDamageCount={paveRows?.[0]?.damageImageCount || 0}
+            />
+          )}
+
           {/* Repeating Notes issues — shown when the customer used the
               "A · Notes" list (text or alongside parts/grade). */}
           {Array.isArray(req.scopeBlob?.issues) && req.scopeBlob.issues.length > 0 && (
@@ -1063,6 +1074,131 @@ function CompleteRepairModal({ req, onClose, onCompleted }) {
         </div>
       </motion.div>
     </motion.div>
+  );
+}
+
+
+// ─────────────────────────────────────────────────────
+// GradeRecommendationPanel — surfaces the auto-computed "what must
+// be repaired to reach the target grade" so the vendor can scope
+// their quote at a glance. Mandatory rows (priority + over-cap)
+// render with a red border; greedy-FCS picks with purple.
+// ─────────────────────────────────────────────────────
+function GradeRecommendationPanel({ rec, firstPaveKey, firstPaveDamageCount }) {
+  if (!rec) return null;
+  const selected = (rec.components || []).filter((c) => c.selected);
+  const skipped = (rec.components || []).filter((c) => !c.selected);
+  const reasonLabel = {
+    priority: 'Priority',
+    over_cap: 'Above cap',
+    reduce_fcs: 'Lower FCS',
+  };
+
+  return (
+    <div className="rounded-lg border border-accent-gold/40 bg-accent-gold/5 p-3">
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
+        <CheckCircle2 size={12} className="text-accent-gold" />
+        <span className="text-xs font-semibold text-white">
+          Required to reach {rec.targetLabel} ({rec.targetGrade})
+        </span>
+        <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
+          rec.reachesTarget
+            ? 'bg-accent-green/15 text-accent-green border border-accent-green/40'
+            : 'bg-accent-red/15 text-accent-red border border-accent-red/40'
+        }`}>
+          {rec.reachesTarget ? 'Reachable' : 'Cannot reach in scope'}
+        </span>
+      </div>
+      <div className="grid grid-cols-3 gap-2 text-center mb-3">
+        <div className="rounded-md bg-navy-900/60 border border-navy-700 py-1.5">
+          <div className="text-[9px] uppercase tracking-wider text-navy-500">Current</div>
+          <div className="text-sm font-bold text-white">
+            {rec.currentLabel} ({rec.currentGrade})
+          </div>
+          <div className="text-[10px] text-navy-400">FCS {rec.currentFcs}</div>
+        </div>
+        <div className="rounded-md bg-navy-900/60 border border-navy-700 py-1.5">
+          <div className="text-[9px] uppercase tracking-wider text-navy-500">After repair</div>
+          <div className="text-sm font-bold text-white">
+            {rec.projectedLabel} ({rec.projectedGrade})
+          </div>
+          <div className="text-[10px] text-navy-400">FCS {rec.projectedFcs}</div>
+        </div>
+        <div className="rounded-md bg-accent-gold/10 border border-accent-gold/40 py-1.5">
+          <div className="text-[9px] uppercase tracking-wider text-navy-500">Target</div>
+          <div className="text-sm font-bold text-accent-gold">
+            {rec.targetLabel} ({rec.targetGrade})
+          </div>
+          <div className="text-[10px] text-navy-400">FCS ≤ {rec.ceilingFcs}</div>
+        </div>
+      </div>
+
+      {/* Components to repair */}
+      {selected.length > 0 ? (
+        <div className="space-y-1">
+          <div className="text-[10px] uppercase tracking-wider text-navy-500 font-semibold mb-1">
+            Must repair ({selected.length})
+          </div>
+          {selected.map((c, i) => {
+            const isMandatory = c.reason === 'priority' || c.reason === 'over_cap';
+            const firstItemNo = c.itemNos?.[0];
+            // We don't have per-damage thumbnails here — the components
+            // breakdown doesn't carry photoIndex. The vendor can drill
+            // into the PAVE summary card above to see thumbnails per
+            // item_no if needed.
+            return (
+              <div
+                key={`${c.component}-${i}`}
+                className={`flex items-center gap-2 px-2 py-1.5 rounded-md border text-xs ${
+                  isMandatory
+                    ? 'bg-accent-red/5 border-accent-red/40'
+                    : 'bg-accent-purple/5 border-accent-purple/30'
+                }`}
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold text-white">{c.component}</span>
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-semibold ${
+                      isMandatory
+                        ? 'bg-accent-red/20 text-accent-red'
+                        : 'bg-accent-purple/20 text-accent-purple'
+                    }`}>
+                      {reasonLabel[c.reason] || c.reason}
+                    </span>
+                    {c.scoredTotal > 0 && (
+                      <span className="text-[10px] text-navy-400">
+                        FCS contribution: <span className="text-white font-semibold">−{c.scoredTotal}</span>
+                      </span>
+                    )}
+                  </div>
+                  {(c.itemNos || []).length > 0 && (
+                    <div className="text-[10px] text-navy-500 font-mono mt-0.5">
+                      items {c.itemNos.join(', ')}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="text-xs text-navy-400 italic text-center py-2">
+          No repairs required — the van already meets the target.
+        </div>
+      )}
+
+      {/* Skipped components — quick collapsed list so the vendor sees
+          what was deliberately left out and why. */}
+      {skipped.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-navy-800">
+          <div className="text-[10px] text-navy-500">
+            <span className="font-semibold text-navy-400">{skipped.length} component{skipped.length === 1 ? '' : 's'} left as-is</span>
+            {' — '}
+            keeping them is within the target's FCS budget.
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
