@@ -336,81 +336,77 @@ function VehicleStatusSearch({ dspId, onHighlightsChange }) {
     setBusy(true);
     (async () => {
       try {
-        // Parse "VAN_ID rest of phrase" → vehicle token + part query.
-        // Strip leading "van" / "vehicle" / "veh" so users typing
-        // "Van 11 brakes" still get the right vehicle token.
+        // 2026-06-06 Jorge — query parsing supports 3 modes:
+        //   (a) "11"          → solo van  → all WOs on that van
+        //   (b) "brakes"      → solo defect → fleet-wide hits
+        //   (c) "11 brakes"   → van + defect → narrowed combo
+        //
+        // The dispatcher is empirical: strip the optional "van"/"veh"
+        // prefix, then try to resolve the FIRST token as a vehicle.
+        // If we get a match the search is van-mode (with the rest as
+        // optional part query). If we don't, fall through to fleet-
+        // wide defect search.
         const stripped = debounced.replace(/^\s*(van|vehicle|veh)\s+/i, '');
         const tokens = stripped.split(/\s+/).filter(Boolean);
         const vanToken = tokens[0];
-        const partQuery = tokens.slice(1).join(' ').toLowerCase();
+        const restTokens = tokens.slice(1);
 
-        // 1) Lookup the vehicle. Two-pass:
-        //    - first try the parsed `vanToken` (typical: "11", "CV1")
-        //    - if 0 results, try the full debounced phrase (handles
-        //      multi-word fleet_ids like "TJ55 339811")
-        // Backend `search` hits fleet_id / vin / plate via ILIKE %x%,
-        // and scopes to current.dsp_id for dsp_owners (so the dspId
-        // param is belt-and-suspenders).
         const { vehicles: vehApi, workOrders: woApi, defectReviews: drApi } = await import('../api/client');
-        // dspId only matters for site_admin (they can scope to any DSP).
-        // For DSP_OWNER the backend already filters to current.org_id and
-        // overrides the param, so passing it is redundant. Drop it to
-        // avoid masking unrelated bugs.
-        let vehRes = await vehApi.list({
-          search: vanToken,
-          perPage: 5,
-        });
-        if (cancelled) return;
-        let vehItems = vehRes?.items || [];
-        if (vehItems.length === 0 && tokens.length > 1) {
-          vehRes = await vehApi.list({
-            search: stripped,
+
+        // ── 1. Vehicle lookup on the first token ────────
+        // Skip if the token looks too generic to be a fleet id (>15
+        // chars is almost certainly a defect description).
+        let vehItems = [];
+        if (vanToken && vanToken.length <= 15) {
+          const vehRes = await vehApi.list({
+            search: vanToken,
             perPage: 5,
           });
           if (cancelled) return;
           vehItems = vehRes?.items || [];
         }
-        // Prefer exact fleet_id match (case-insensitive); fall back to first.
         const exact = vehItems.find((v) =>
           (v.fleetId || '').toLowerCase() === vanToken.toLowerCase()
           || (v.id || '').toLowerCase() === vanToken.toLowerCase()
         );
         const vehicle = exact || vehItems[0] || null;
-        if (!vehicle) {
-          setVehicleMatch(null); setResults([]); setNotFound(true);
-          onHighlightsChange?.({});
-          return;
-        }
-        setVehicleMatch(vehicle); setNotFound(false);
 
-        // 2) Pull active WOs for that vehicle. Backend's
-        //    list_work_orders expects vehicle_id: int — so strip the
-        //    "VAN-" prefix off vehicle.id ("VAN-0131" → 131). Without
-        //    this conversion the call 422s and the search silently
-        //    falls into the catch → notFound branch.
-        const vehicleIntId = (() => {
-          const raw = vehicle.id;
-          if (typeof raw === 'number') return raw;
-          const m = String(raw || '').match(/(\d+)/);
-          return m ? Number(m[1]) : null;
-        })();
-        if (vehicleIntId == null) {
-          setResults([]); return;
-        }
-        // Run WO list + pending defect-review queue in parallel — the
-        // queue covers the PRE-WO state where the DSP hasn't yet
-        // approved/rejected the defect's scope. That's the bucket that
-        // shows up on the "Defects for approval" tile and is the most
-        // common reason a search for "17 wiper blade" should surface
-        // an action even though no WO exists yet.
-        const [woRes, drRes] = await Promise.all([
-          woApi.list({ vehicleId: vehicleIntId, limit: 50 }),
-          drApi.queue({ limit: 200 }).catch(() => ({ items: [] })),
-        ]);
+        // The active part query depends on the mode.
+        //   Vehicle matched → remaining tokens are the part filter
+        //   No vehicle      → whole query is the part filter
+        const partQuery = vehicle
+          ? restTokens.join(' ').toLowerCase()
+          : stripped.toLowerCase();
+
+        // ── 2. Pull data based on the mode ──────────────
+        const drRes = await drApi.queue({ limit: 200 }).catch(() => ({ items: [] }));
         if (cancelled) return;
-        let wos = woRes?.items || [];
 
-        // 3) Filter by part substring if user typed one.
+        let wos = [];
+        if (vehicle) {
+          // Van-mode: WOs for that specific vehicle.
+          const vehicleIntId = (() => {
+            const raw = vehicle.id;
+            if (typeof raw === 'number') return raw;
+            const m = String(raw || '').match(/(\d+)/);
+            return m ? Number(m[1]) : null;
+          })();
+          if (vehicleIntId == null) {
+            setResults([]); return;
+          }
+          const woRes = await woApi.list({ vehicleId: vehicleIntId, limit: 50 });
+          if (cancelled) return;
+          wos = woRes?.items || [];
+        } else {
+          // Fleet-mode: pull every active WO for the DSP and filter by
+          // defect substring client-side. 200 is enough for typical
+          // fleet sizes (~50 vans × ~3 active WOs each = 150 ceiling).
+          const woRes = await woApi.list({ limit: 200 });
+          if (cancelled) return;
+          wos = woRes?.items || [];
+        }
+
+        // ── 3. Filter WOs by part substring (if any) ────
         if (partQuery) {
           wos = wos.map((wo) => {
             const defs = (wo.defects || []).filter((d) => {
@@ -423,27 +419,36 @@ function VehicleStatusSearch({ dspId, onHighlightsChange }) {
           wos = wos.map((wo) => ({ ...wo, _matchingDefects: wo.defects || [] }));
         }
 
-        // 4) Filter the pending review queue to this vehicle (by fleetId)
-        // and optionally by part substring. The queue items don't have a
-        // numeric vehicle_id surfaced, so we match on fleetId — accurate
-        // enough for the DSP's own fleet.
-        const fleetIdLower = (vehicle.fleetId || '').toLowerCase();
+        // ── 4. Filter pending review queue by mode ──────
         const pendingReviews = (drRes?.items || []).filter((q) => {
-          if ((q.fleetId || '').toLowerCase() !== fleetIdLower) return false;
+          if (vehicle) {
+            // Van-mode: only show reviews for the matched van.
+            const fleetIdLower = (vehicle.fleetId || '').toLowerCase();
+            if ((q.fleetId || '').toLowerCase() !== fleetIdLower) return false;
+          }
           if (!partQuery) return true;
           const haystack = `${(q.part || '').replace(/_/g, ' ')} ${(q.defectType || '').replace(/_/g, ' ')}`.toLowerCase();
           return haystack.includes(partQuery);
         });
 
-        // 5) Build the unified result list. Pending reviews come FIRST
-        // (action required), then WOs. Each row carries
-        // status.actionRequired so the UI can paint the dot orange
-        // when the DSP needs to do something vs green for informational.
+        // Decide notFound: only if vehicle wasn't matched AND we got
+        // zero defect hits across the fleet.
+        const haveAny = wos.length > 0 || pendingReviews.length > 0;
+        if (!vehicle && !haveAny) {
+          setVehicleMatch(null); setResults([]); setNotFound(true);
+          onHighlightsChange?.({});
+          return;
+        }
+        setVehicleMatch(vehicle); setNotFound(false);
+
+        // ── 5. Build the unified result list ────────────
+        // Pending reviews come FIRST (DSP-actionable), then WOs. Each
+        // row carries the van label so fleet-wide hits show which van.
         const pendingRows = pendingReviews.map((pr) => ({
           kind: 'pending_review',
           key: `pr-${pr.id}`,
           status: { label: 'Pending defect approval', color: 'accent-orange', actionRequired: true },
-          primaryLabel: pr.fleetId ? `Van ${pr.fleetId}` : '—',
+          vanLabel: pr.fleetId ? `Van ${pr.fleetId}` : '—',
           subLabel: `${(pr.part || '').replace(/_/g, ' ')}${pr.defectType ? ' — ' + pr.defectType.replace(/_/g, ' ') : ''}`,
           meta: pr.hoursPending ? `${Math.round(pr.hoursPending)}h pending` : null,
         }));
@@ -451,6 +456,7 @@ function VehicleStatusSearch({ dspId, onHighlightsChange }) {
           kind: 'wo',
           key: `wo-${wo.id}`,
           wo,
+          vanLabel: wo.vehicleFleetId ? `Van ${wo.vehicleFleetId}` : '—',
           status: deriveVehicleStatus(wo),
         }));
         const merged = [...pendingRows, ...woRows];
@@ -495,7 +501,7 @@ function VehicleStatusSearch({ dspId, onHighlightsChange }) {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search by van + part (e.g. CV1 brakes)"
+          placeholder="Search by van, defect, or both (e.g. CV1, brakes, 11 brakes)"
           className="flex-1 bg-transparent outline-none text-sm text-white placeholder:text-navy-500"
         />
         {busy && <Loader2 size={14} className="text-navy-400 animate-spin shrink-0" />}
@@ -532,11 +538,25 @@ function VehicleStatusSearch({ dspId, onHighlightsChange }) {
                 {debounced.split(/\s+/).length > 1 ? ` matching "${debounced.split(/\s+/).slice(1).join(' ')}"` : ''}.
               </span>
             </div>
-          ) : vehicleMatch && (() => {
+          ) : results.length === 0 ? (
+            // Defect-mode and nothing hit — friendly empty state.
+            <div className="flex items-center gap-2 text-xs px-2 py-1.5 rounded-md bg-accent-green/10 border border-accent-green/30">
+              <span className="inline-block w-2 h-2 rounded-full bg-accent-green" />
+              <span className="font-semibold text-accent-green">No action required</span>
+              <span className="text-navy-400">— No fleet defects match "{debounced}".</span>
+            </div>
+          ) : (() => {
             // Action summary at the top — orange banner if any row needs
-            // DSP action, green if all are informational. This is the
-            // headline answer to "what do I do about Van 17?"
+            // DSP action, green if all are informational. Banner copy
+            // changes between van-mode (matched a specific van) and
+            // fleet-mode (defect search across the fleet).
             const anyAction = results.some((r) => r.status?.actionRequired);
+            const vanCount = new Set(results.map((r) =>
+              r.kind === 'pending_review' ? r.vanLabel : r.wo?.vehicleFleetId
+            ).filter(Boolean)).size;
+            const scopeLabel = vehicleMatch
+              ? `Van ${vehicleMatch.fleetId || vehicleMatch.id}${vehicleMatch.year ? ` · ${vehicleMatch.year} ${vehicleMatch.make || ''} ${vehicleMatch.model || ''}` : ''}`.trim()
+              : `${vanCount} van${vanCount === 1 ? '' : 's'} matching "${debounced}"`;
             return (
               <div className="space-y-1.5">
                 <div className={`flex items-center gap-2 text-xs px-2 py-1.5 rounded-md ${
@@ -549,19 +569,22 @@ function VehicleStatusSearch({ dspId, onHighlightsChange }) {
                     {anyAction ? 'Action required' : 'No action required'}
                   </span>
                   <span className="text-navy-400">
-                    — Van {vehicleMatch.fleetId || vehicleMatch.id}
-                    {vehicleMatch.year ? ` · ${vehicleMatch.year} ${vehicleMatch.make || ''} ${vehicleMatch.model || ''}`.trim() : ''}
+                    — {scopeLabel}
                     {' · '}{results.length} item{results.length === 1 ? '' : 's'}
                   </span>
                 </div>
                 {results.map((row) => {
                   const { kind, key, status } = row;
                   if (kind === 'pending_review') {
+                    const showVan = !vehicleMatch && row.vanLabel;
                     return (
                       <div key={key} className="flex items-start gap-2 text-xs">
                         <span className={`inline-block w-2 h-2 rounded-full bg-${status.color} shrink-0 mt-1.5`} />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
+                            {showVan && (
+                              <span className="text-white font-semibold text-[11px]">{row.vanLabel}</span>
+                            )}
                             <span className={`font-semibold text-${status.color}`}>{status.label}</span>
                             {row.meta && <span className="text-navy-500 text-[10px]">· {row.meta}</span>}
                           </div>
@@ -574,13 +597,18 @@ function VehicleStatusSearch({ dspId, onHighlightsChange }) {
                   }
                   // kind === 'wo'
                   const wo = row.wo;
+                  // Fleet-mode (vehicleMatch null) → show the van label
+                  // on each row so the user can tell which van.
+                  const showVan = !vehicleMatch && row.vanLabel;
                   return (
                     <div key={key} className="flex items-start gap-2 text-xs">
                       <span className={`inline-block w-2 h-2 rounded-full bg-${status.color} shrink-0 mt-1.5`} />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
+                          {showVan && (
+                            <span className="text-white font-semibold text-[11px]">{row.vanLabel}</span>
+                          )}
                           <span className={`font-semibold text-${status.color}`}>{status.label}</span>
-                          <span className="text-navy-500 font-mono text-[10px]">{primaryRoLabel(wo)}</span>
                           {wo.workshopName && (
                             <span className="text-navy-400 text-[10px]">· {wo.workshopName}</span>
                           )}
