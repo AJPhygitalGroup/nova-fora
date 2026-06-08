@@ -312,10 +312,14 @@ function RequestRow({ req, user, isBodyRepairVendor, expanded, onToggle, onReloa
 
           {/* Grade recommendation — auto-computed when mode='grade' AND
               there's a parsed PAVE. Vendor reads this to know what
-              must be fixed to reach the customer's target. */}
+              must be fixed to reach the customer's target. `paveRows`
+              is passed so the panel can render a thumbnail + damage
+              type per item_no (Jorge 2026-06-07: vendor wants to SEE
+              what's in each must-repair item, not just read numbers). */}
           {req.gradeRecommendation && (
             <GradeRecommendationPanel
               rec={req.gradeRecommendation}
+              paveRows={paveRows}
               firstPaveKey={paveRows?.[0]?.storageKey}
               firstPaveDamageCount={paveRows?.[0]?.damageImageCount || 0}
             />
@@ -1084,7 +1088,7 @@ function CompleteRepairModal({ req, onClose, onCompleted }) {
 // their quote at a glance. Mandatory rows (priority + over-cap)
 // render with a red border; greedy-FCS picks with purple.
 // ─────────────────────────────────────────────────────
-function GradeRecommendationPanel({ rec, firstPaveKey, firstPaveDamageCount }) {
+function GradeRecommendationPanel({ rec, paveRows, firstPaveKey, firstPaveDamageCount }) {
   if (!rec) return null;
   const selected = (rec.components || []).filter((c) => c.selected);
   const skipped = (rec.components || []).filter((c) => !c.selected);
@@ -1093,6 +1097,25 @@ function GradeRecommendationPanel({ rec, firstPaveKey, firstPaveDamageCount }) {
     over_cap: 'Above cap',
     reduce_fcs: 'Lower FCS',
   };
+
+  // Build item_no → damage lookup so each "Must repair" row can render
+  // a thumbnail strip for the items the customer wants fixed. Same
+  // pattern used by the picked-damages section above for parts mode.
+  // Jorge 2026-06-07 — vendor needs to SEE photos per item, not just
+  // read item numbers off a list.
+  const damageByItemNo = (() => {
+    const m = new Map();
+    for (const pave of (paveRows || [])) {
+      for (const c of (pave.components || [])) {
+        for (const d of (c.damages || [])) {
+          if (d.itemNo != null && !m.has(d.itemNo)) {
+            m.set(d.itemNo, { d, componentName: c.name });
+          }
+        }
+      }
+    }
+    return m;
+  })();
 
   return (
     <div className="rounded-lg border border-accent-gold/40 bg-accent-gold/5 p-3">
@@ -1141,42 +1164,88 @@ function GradeRecommendationPanel({ rec, firstPaveKey, firstPaveDamageCount }) {
           </div>
           {selected.map((c, i) => {
             const isMandatory = c.reason === 'priority' || c.reason === 'over_cap';
-            const firstItemNo = c.itemNos?.[0];
-            // We don't have per-damage thumbnails here — the components
-            // breakdown doesn't carry photoIndex. The vendor can drill
-            // into the PAVE summary card above to see thumbnails per
-            // item_no if needed.
+            const itemNos = c.itemNos || [];
             return (
               <div
                 key={`${c.component}-${i}`}
-                className={`flex items-center gap-2 px-2 py-1.5 rounded-md border text-xs ${
+                className={`px-2 py-1.5 rounded-md border text-xs ${
                   isMandatory
                     ? 'bg-accent-red/5 border-accent-red/40'
                     : 'bg-accent-purple/5 border-accent-purple/30'
                 }`}
               >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold text-white">{c.component}</span>
-                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-semibold ${
-                      isMandatory
-                        ? 'bg-accent-red/20 text-accent-red'
-                        : 'bg-accent-purple/20 text-accent-purple'
-                    }`}>
-                      {reasonLabel[c.reason] || c.reason}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold text-white">{c.component}</span>
+                  <span className={`text-[9px] px-1.5 py-0.5 rounded font-semibold ${
+                    isMandatory
+                      ? 'bg-accent-red/20 text-accent-red'
+                      : 'bg-accent-purple/20 text-accent-purple'
+                  }`}>
+                    {reasonLabel[c.reason] || c.reason}
+                  </span>
+                  {c.scoredTotal > 0 && (
+                    <span className="text-[10px] text-navy-400">
+                      FCS contribution: <span className="text-white font-semibold">−{c.scoredTotal}</span>
                     </span>
-                    {c.scoredTotal > 0 && (
-                      <span className="text-[10px] text-navy-400">
-                        FCS contribution: <span className="text-white font-semibold">−{c.scoredTotal}</span>
-                      </span>
-                    )}
-                  </div>
-                  {(c.itemNos || []).length > 0 && (
-                    <div className="text-[10px] text-navy-500 font-mono mt-0.5">
-                      items {c.itemNos.join(', ')}
-                    </div>
                   )}
+                  <span className="text-[10px] text-navy-500 font-mono ml-auto">
+                    {itemNos.length} item{itemNos.length === 1 ? '' : 's'}
+                  </span>
                 </div>
+
+                {/* Thumbnails per item_no — Jorge 2026-06-07. Each tile
+                    shows the PAVE damage photo (if available) + item #
+                    + damage type so the vendor can SEE what the
+                    customer wants repaired without flipping back to
+                    the PAVE summary card. Falls back to a placeholder
+                    tile when photoIndex is missing or out of range. */}
+                {itemNos.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-1.5">
+                    {itemNos.map((itemNo) => {
+                      const hit = damageByItemNo.get(itemNo);
+                      const d = hit?.d;
+                      const showThumb = firstPaveKey
+                        && d
+                        && typeof d.photoIndex === 'number'
+                        && d.photoIndex < firstPaveDamageCount;
+                      const damageLabel = d?.damageType
+                        ? d.damageType.replace(/_/g, ' ')
+                        : '';
+                      const titleAttr = d
+                        ? `#${itemNo} · ${damageLabel}${d.severity ? ` · ${d.severity}` : ''}${d.side ? ` · ${d.side}` : ''}`
+                        : `#${itemNo}`;
+                      return (
+                        <div
+                          key={itemNo}
+                          className="flex flex-col items-center gap-0.5 w-14"
+                          title={titleAttr}
+                        >
+                          {showThumb ? (
+                            <AuthImg
+                              src={paveImageUrl(firstPaveKey, 'damage', d.photoIndex)}
+                              alt={`Damage ${itemNo}`}
+                              className="w-14 h-14 rounded border border-navy-700 object-cover"
+                            />
+                          ) : (
+                            <div className="w-14 h-14 rounded border border-navy-800 bg-navy-900 flex items-center justify-center">
+                              <span className="text-[9px] text-navy-600 font-mono">
+                                no photo
+                              </span>
+                            </div>
+                          )}
+                          <span className="text-[9px] font-mono text-navy-400">
+                            #{itemNo}
+                          </span>
+                          {damageLabel && (
+                            <span className="text-[8px] text-navy-500 truncate w-full text-center leading-tight">
+                              {damageLabel}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })}
