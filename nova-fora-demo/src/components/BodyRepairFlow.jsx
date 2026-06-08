@@ -1962,15 +1962,21 @@ function SubmitQuoteModal({ req, onClose, onCreated }) {
             </div>
             <div className="space-y-2">
               {lineItems.map((li, idx) => (
-                <div key={idx} className="grid grid-cols-12 gap-2 items-start">
-                  <input
-                    type="text"
-                    value={li.description}
-                    onChange={(e) => setItem(idx, 'description', e.target.value)}
-                    placeholder="Description (e.g. Rear bumper replace)"
-                    maxLength={300}
-                    className="col-span-6 px-2 py-1.5 rounded-md bg-navy-800 border border-navy-700 text-sm text-white placeholder:text-navy-500 outline-none focus:border-accent-purple"
-                  />
+                <div key={idx} className="grid grid-cols-12 gap-2 items-end">
+                  {/* Description — same label+input vertical structure
+                      as CentsInput so all 4 columns line up at the
+                      input baseline (Jorge 2026-06-07 alignment fix). */}
+                  <label className="col-span-7 flex flex-col gap-0.5">
+                    <span className="text-[9px] uppercase tracking-wider text-navy-500">Description</span>
+                    <input
+                      type="text"
+                      value={li.description}
+                      onChange={(e) => setItem(idx, 'description', e.target.value)}
+                      placeholder="e.g. Rear bumper replace"
+                      maxLength={300}
+                      className="px-2 py-1.5 rounded-md bg-navy-800 border border-navy-700 text-sm text-white placeholder:text-navy-500 outline-none focus:border-accent-purple"
+                    />
+                  </label>
                   <CentsInput
                     label="Parts $"
                     value={li.partsCents}
@@ -1981,15 +1987,21 @@ function SubmitQuoteModal({ req, onClose, onCreated }) {
                     value={li.laborCents}
                     onChange={(v) => setItem(idx, 'laborCents', v)}
                   />
-                  <button
-                    type="button"
-                    onClick={() => removeItem(idx)}
-                    disabled={lineItems.length <= 1}
-                    className="col-span-1 text-navy-500 hover:text-accent-red disabled:opacity-30 p-1.5 cursor-pointer"
-                    title="Remove item"
-                  >
-                    <X size={14} />
-                  </button>
+                  {/* X button — wrapped to match the label+input height
+                      so the button aligns to the input row instead of
+                      jumping to the top of the row. */}
+                  <div className="col-span-1 flex flex-col gap-0.5">
+                    <span className="text-[9px]" aria-hidden>&nbsp;</span>
+                    <button
+                      type="button"
+                      onClick={() => removeItem(idx)}
+                      disabled={lineItems.length <= 1}
+                      className="text-navy-500 hover:text-accent-red disabled:opacity-30 p-1.5 cursor-pointer flex items-center justify-center"
+                      title="Remove item"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
