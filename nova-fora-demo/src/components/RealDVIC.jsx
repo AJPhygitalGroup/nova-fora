@@ -298,6 +298,12 @@ function cardKeyForStatus(label) {
     case 'Declined by vendor':
       return 'immediate';
     case 'Scheduled':
+    // 2026-06-07 Jorge — "Scheduled — confirm pickup" is the
+    // action-required variant set by deriveVehicleStatus when
+    // dspResponse is empty. Both labels map to the same KPI tile
+    // (Scheduled Repairs) so the orange heartbeat applies whether
+    // the DSP needs to confirm or just see the upcoming slot.
+    case 'Scheduled — confirm pickup':
     case 'Awaiting vendor accept':
     case 'Accepted by vendor':
       return 'scheduled';
