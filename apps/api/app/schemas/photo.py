@@ -38,6 +38,11 @@ class UploadKind(str, Enum):
     # vendor when finishing a job. Path scoped to
     # body_repair_requests/<id>/completion/<bag>.jpg in MinIO.
     BODY_REPAIR_COMPLETION = "body_repair_completion"
+    # 2026-06-07 Jorge — pickup photos uploaded by the body repair
+    # vendor when they physically pick up the van (Start repair). Same
+    # condition-baseline UX as WO V2's CheckoutModal — the customer
+    # sees these so any pre-existing damage isn't pinned on the shop.
+    BODY_REPAIR_PICKUP = "body_repair_pickup"
 
 
 class PresignedUploadRequest(BaseModel):

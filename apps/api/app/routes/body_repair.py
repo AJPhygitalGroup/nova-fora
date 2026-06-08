@@ -23,7 +23,7 @@ shoehorn it into the WorkOrder schema.
 from datetime import datetime
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -2499,6 +2499,32 @@ async def _require_assigned_vendor_for_pickup(
     return org
 
 
+class PickupPhotoBody(BaseModel):
+    """One pickup photo already uploaded to MinIO under
+    body_repair_pickup kind."""
+
+    storage_key: str = Field(..., min_length=1, max_length=500)
+    caption: str | None = Field(default=None, max_length=200)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class StartRepairBody(BaseModel):
+    """Vendor's payload when picking up the van (2026-06-07 Jorge).
+
+    Mirrors CompleteRepairBody — optional notes + photos array — but
+    captured at the OPPOSITE end of custody (pickup vs return). The
+    photos document the van's condition AT PICKUP so the customer
+    can't later blame the shop for pre-existing damage.
+
+    All fields optional so legacy callers without a body still work."""
+
+    notes: str | None = Field(default=None, max_length=2000)
+    photos: list[PickupPhotoBody] = Field(default_factory=list, max_length=20)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 @router.post(
     "/requests/{req_id}/start-repair",
     response_model=BodyRepairRequestResponse,
@@ -2510,6 +2536,7 @@ async def _require_assigned_vendor_for_pickup(
     },
 )
 async def start_repair(
+    body: StartRepairBody = Body(default_factory=StartRepairBody),
     req_id: str = Path(..., examples=["BRR-00012"]),
     current: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
@@ -2517,7 +2544,14 @@ async def start_repair(
     """Vendor confirms they have physical custody of the van and work
     has started. Sets picked_up_at + repair_started_at + advances
     status to IN_REPAIR. Idempotent: a second call from the same
-    state is a no-op success."""
+    state is a no-op success.
+
+    Optional pickup photos + notes land in pickup_blob.checkout_photos
+    and pickup_blob.checkout_notes — same shape as CompleteRepair's
+    completion_blob.photos so the lifecycle panel can render the
+    pickup-condition gallery alongside the completion one. The
+    customer sees both, eliminating the "was this dent there before?"
+    dispute that real-world auto-body work always generates."""
     int_id = _parse_req_id(req_id)
     if int_id is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
@@ -2537,8 +2571,33 @@ async def start_repair(
             status.HTTP_409_CONFLICT,
             f"start-repair requires status=pickup_confirmed (current: {req.status.value})",
         )
+
+    # Persist pickup photos + notes to pickup_blob regardless of status —
+    # a vendor who forgot a photo on the first call can amend during
+    # IN_REPAIR (the upload kind's status gate already enforces this).
+    if body.photos or body.notes:
+        blob = dict(req.pickup_blob or {})
+        if body.photos:
+            existing = list(blob.get("checkout_photos") or [])
+            existing.extend(
+                {"storage_key": p.storage_key, "caption": p.caption}
+                for p in body.photos
+            )
+            blob["checkout_photos"] = existing
+        if body.notes is not None:
+            cleaned = body.notes.strip()
+            if cleaned:
+                blob["checkout_notes"] = cleaned
+        if "checkout_recorded_at" not in blob:
+            blob["checkout_recorded_at"] = utc_now().isoformat()
+        req.pickup_blob = blob
+
     if req.status == BodyRepairRequestStatus.IN_REPAIR:
-        # Already started — return current state without bumping.
+        # Already started — commit any photo amendments and return.
+        if body.photos or body.notes:
+            session.add(req)
+            await session.commit()
+            await session.refresh(req)
         return await _build_response(session, req)
     now = utc_now()
     req.picked_up_at = req.picked_up_at or now

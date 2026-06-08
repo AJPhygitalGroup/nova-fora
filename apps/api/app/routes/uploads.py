@@ -245,6 +245,58 @@ async def _check_parent_access(
             )
         return ("body_repair_requests", req.id)
 
+    if kind == UploadKind.BODY_REPAIR_PICKUP:
+        # 2026-06-07 Jorge — pickup photos uploaded by the assigned body
+        # repair vendor when they physically pick up the van (Start
+        # repair). Same scope logic as COMPLETION but the status gate
+        # accepts PICKUP_CONFIRMED (the only state where this makes
+        # sense — the moment right before the lifecycle flips to
+        # IN_REPAIR). Idempotent: also allowed during IN_REPAIR so a
+        # vendor can add more pickup photos if they realize they forgot
+        # one (until completion locks the request).
+        from app.models.body_repair import (
+            BodyRepairRequest,
+            BodyRepairRequestStatus,
+        )
+        raw = str(parent_id).strip()
+        int_id = None
+        if raw.upper().startswith("BRR-"):
+            tail = raw[4:]
+            if tail.isdigit():
+                int_id = int(tail)
+        elif raw.isdigit():
+            int_id = int(raw)
+        if int_id is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+        req = (
+            await session.execute(
+                select(BodyRepairRequest).where(BodyRepairRequest.id == int_id)
+            )
+        ).scalar_one_or_none()
+        if req is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+        if current.role == UserRole.SITE_ADMIN:
+            return ("body_repair_requests", req.id)
+        org = (
+            await session.execute(
+                select(Organization).where(Organization.id == current.organization_id)
+            )
+        ).scalar_one_or_none()
+        if org is None or org.org_type != OrgType.BODY_REPAIR_VENDOR:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "not a body repair vendor")
+        if req.assigned_vendor_id != current.organization_id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "body repair request not found")
+        allowed = {
+            BodyRepairRequestStatus.PICKUP_CONFIRMED,
+            BodyRepairRequestStatus.IN_REPAIR,
+        }
+        if req.status not in allowed:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"pickup photos require status=pickup_confirmed (current: {req.status.value})",
+            )
+        return ("body_repair_requests", req.id)
+
     raise HTTPException(status.HTTP_400_BAD_REQUEST, f"unknown kind: {kind}")
 
 

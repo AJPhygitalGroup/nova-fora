@@ -2336,11 +2336,26 @@ export const bodyRepair = {
 
   // ── Phase 4 — Repair lifecycle ─────────────────────
 
-  /** POST /body-repair/requests/{id}/start-repair — vendor → in_repair */
-  startRepair(id) {
+  /**
+   * POST /body-repair/requests/{id}/start-repair — vendor → in_repair.
+   *
+   * 2026-06-07 Jorge — body is now { notes?, photos: [{storageKey,
+   * caption?}] } so the vendor can document the van's condition at
+   * pickup (same baseline-photo UX as WO V2's CheckoutModal). All
+   * fields optional; calling with no body still works.
+   */
+  startRepair(id, body = {}) {
+    const payload = {};
+    if (body.notes) payload.notes = body.notes;
+    if (Array.isArray(body.photos) && body.photos.length > 0) {
+      payload.photos = body.photos.map((p) => ({
+        storage_key: p.storageKey,
+        caption: p.caption || undefined,
+      }));
+    }
     return apiFetch(`/body-repair/requests/${encodeURIComponent(id)}/start-repair`, {
       method: 'POST',
-      body: JSON.stringify({}),
+      body: JSON.stringify(payload),
     });
   },
 

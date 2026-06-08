@@ -30,7 +30,7 @@ import { motion } from 'framer-motion';
 import {
   Wrench, Plus, X, Loader2, AlertTriangle, Truck, Calendar, FileText,
   CheckCircle2, ArrowRight, Upload, FileBadge, DollarSign, ThumbsUp, ThumbsDown,
-  RefreshCw, Trash2,
+  RefreshCw, Trash2, Camera,
 } from 'lucide-react';
 import {
   bodyRepair as bodyRepairApi,
@@ -723,6 +723,11 @@ function RepairLifecyclePanel({ req, user, isBodyRepairVendor, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [showComplete, setShowComplete] = useState(false);
+  // 2026-06-07 Jorge — "Start repair" now opens a checkout-photo modal
+  // (mirror of WO V2's CheckoutModal). Vendor documents the van's
+  // condition at pickup so any pre-existing damage isn't pinned on the
+  // shop later. Lives next to showComplete for symmetry.
+  const [showStart, setShowStart] = useState(false);
 
   const run = async (action, label) => {
     setErr(null);
@@ -772,7 +777,9 @@ function RepairLifecyclePanel({ req, user, isBodyRepairVendor, onChanged }) {
         </div>
       )}
       <div className="space-y-1.5">
-        {/* Start repair — vendor */}
+        {/* Start repair — vendor. Opens StartRepairModal so the vendor
+            documents the van's condition at pickup with up to 8 photos
+            + optional notes (Jorge 2026-06-07). */}
         <Row
           icon={Wrench}
           label="Start repair (van picked up)"
@@ -783,11 +790,10 @@ function RepairLifecyclePanel({ req, user, isBodyRepairVendor, onChanged }) {
             <button
               type="button"
               disabled={busy}
-              onClick={() => run(() => bodyRepairApi.startRepair(req.id), 'Start')}
+              onClick={() => setShowStart(true)}
               className="inline-flex items-center gap-1 px-3 py-1 rounded-md bg-accent-purple text-white text-[11px] font-semibold hover:bg-accent-purple/85 disabled:opacity-40 cursor-pointer"
             >
-              {busy ? <Loader2 size={11} className="animate-spin" /> : <ArrowRight size={11} />}
-              Start
+              <ArrowRight size={11} /> Start…
             </button>
           }
         />
@@ -868,6 +874,33 @@ function RepairLifecyclePanel({ req, user, isBodyRepairVendor, onChanged }) {
         />
       </div>
 
+      {/* Pickup details — vendor's photos + notes captured at "Start
+          repair" so the customer can see the van's condition at the
+          moment of handoff (mirror of Completion details below). */}
+      {(() => {
+        const pblob = req.pickupBlob || {};
+        const pickupPhotos = Array.isArray(pblob.checkoutPhotos) ? pblob.checkoutPhotos : [];
+        const pickupNotes = pblob.checkoutNotes;
+        if (!pickupNotes && pickupPhotos.length === 0) return null;
+        return (
+          <div className="mt-3 pt-3 border-t border-navy-800">
+            <div className="text-[10px] uppercase tracking-wider text-navy-500 font-semibold mb-1.5 flex items-center gap-1">
+              <Truck size={10} /> Pickup details
+            </div>
+            {pickupNotes && (
+              <div className="text-xs text-navy-200 whitespace-pre-wrap mb-2">{pickupNotes}</div>
+            )}
+            {pickupPhotos.length > 0 && (
+              <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
+                {pickupPhotos.map((p, i) => (
+                  <CompletionPhoto key={p.storageKey || i} photo={p} />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* Notes + photos display once the vendor has completed. */}
       {(blob.notes || (Array.isArray(blob.photos) && blob.photos.length > 0)) && (
         <div className="mt-3 pt-3 border-t border-navy-800">
@@ -885,6 +918,14 @@ function RepairLifecyclePanel({ req, user, isBodyRepairVendor, onChanged }) {
             </div>
           )}
         </div>
+      )}
+
+      {showStart && (
+        <StartRepairModal
+          req={req}
+          onClose={() => setShowStart(false)}
+          onStarted={() => { setShowStart(false); onChanged?.(); }}
+        />
       )}
 
       {showComplete && (
@@ -1089,6 +1130,205 @@ function CompleteRepairModal({ req, onClose, onCompleted }) {
           >
             {busy ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
             Complete repair
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+
+// ─────────────────────────────────────────────────────
+// StartRepairModal — vendor records the van's condition at pickup.
+// 2026-06-07 Jorge — mirror of WO V2's CheckoutModal, ported into the
+// body-repair flow so the assigned shop captures up to 8 photos +
+// optional notes BEFORE they start the work. Same upload-then-submit
+// pattern as CompleteRepairModal: presign per file → PUT to MinIO →
+// POST /start-repair with the storage_keys. Customer sees the gallery
+// on the request panel so a "was that scratch there before?" dispute
+// has photographic proof.
+// ─────────────────────────────────────────────────────
+function StartRepairModal({ req, onClose, onStarted }) {
+  const [notes, setNotes] = useState('');
+  const [photos, setPhotos] = useState([]); // [{file, storageKey?, uploading, error?}]
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const fileInputRef = useRef(null);
+
+  const MAX_PICKUP_PHOTOS = 8;
+
+  const onPick = async (e) => {
+    const files = Array.from(e.target.files || []).slice(0, MAX_PICKUP_PHOTOS - photos.length);
+    e.target.value = '';
+    for (const f of files) {
+      setPhotos((cur) => [...cur, { file: f, uploading: true }]);
+      try {
+        const { uploadUrl, storageKey } = await uploadsApi.presigned({
+          kind: 'body_repair_pickup',
+          parentId: req.id,
+          filename: f.name,
+          contentType: f.type || 'image/jpeg',
+          sizeBytes: f.size,
+        });
+        await uploadsApi.putToPresigned(uploadUrl, f, f.type || 'image/jpeg');
+        setPhotos((cur) => cur.map((p) => p.file === f ? { ...p, uploading: false, storageKey } : p));
+      } catch (e2) {
+        const msg = e2 instanceof APIError ? (e2.detail || e2.message) : (e2?.message || 'upload failed');
+        setPhotos((cur) => cur.map((p) => p.file === f ? { ...p, uploading: false, error: msg } : p));
+      }
+    }
+  };
+
+  const submit = async () => {
+    if (photos.some((p) => p.uploading)) {
+      setErr('Wait for all photos to finish uploading.');
+      return;
+    }
+    const ready = photos.filter((p) => p.storageKey).map((p) => ({ storageKey: p.storageKey }));
+    if (ready.length === 0) {
+      setErr('Attach at least one pickup photo so the customer sees the van\'s condition.');
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await bodyRepairApi.startRepair(req.id, {
+        notes: notes.trim() || undefined,
+        photos: ready,
+      });
+      onStarted?.();
+    } catch (e) {
+      setErr(e instanceof APIError ? (e.detail || e.message) : (e?.message || 'failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const allDone = photos.length > 0 && photos.every((p) => p.status !== 'uploading' && p.storageKey);
+  const canSubmit = !busy && allDone && !photos.some((p) => p.uploading);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-navy-900 border border-navy-700 rounded-xl w-full max-w-xl shadow-2xl flex flex-col max-h-[calc(100vh-2rem)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between px-5 py-4 border-b border-navy-700 shrink-0">
+          <div>
+            <h3 className="text-base font-semibold text-white flex items-center gap-2">
+              <Truck size={16} className="text-accent-purple" /> Pick up van (Start repair)
+            </h3>
+            <p className="text-[11px] text-navy-400 mt-0.5">
+              Snap photos of the vehicle's condition at handoff. The customer sees these so any pre-existing damage isn't pinned on the shop later.
+            </p>
+          </div>
+          <button onClick={onClose} className="text-navy-400 hover:text-white p-2 -mr-2">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="px-5 py-4 space-y-4 overflow-y-auto flex-1 min-h-0">
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs font-semibold text-text-strong">
+                Pickup photos <span className="text-navy-500 text-[10px]">({photos.length} / {MAX_PICKUP_PHOTOS})</span>
+                <span className="text-accent-red ml-1">*</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={photos.length >= MAX_PICKUP_PHOTOS}
+                className="text-[10px] text-accent-blue hover:underline disabled:opacity-40 cursor-pointer"
+              >
+                + Add photo
+              </button>
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+              multiple
+              onChange={onPick}
+              className="hidden"
+            />
+            {photos.length === 0 ? (
+              <div className="rounded-lg border-2 border-dashed border-navy-700 px-3 py-6 text-center text-xs text-navy-400">
+                <Camera size={20} className="mx-auto mb-1.5 text-navy-600" />
+                At least one photo required. Walk around the van — front, sides, rear, any visible damage.
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                {photos.map((p, i) => (
+                  <div key={i} className="relative aspect-square rounded-lg border border-navy-700 bg-navy-800 overflow-hidden">
+                    <img
+                      src={URL.createObjectURL(p.file)}
+                      alt={p.file.name}
+                      className="absolute inset-0 w-full h-full object-cover"
+                    />
+                    {p.uploading && (
+                      <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                        <Loader2 size={16} className="text-white animate-spin" />
+                      </div>
+                    )}
+                    {p.error && (
+                      <div className="absolute inset-0 bg-accent-red/40 flex items-center justify-center text-[9px] text-white text-center px-1">
+                        {p.error}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setPhotos((cur) => cur.filter((_, j) => j !== i))}
+                      className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 hover:bg-black/90 text-white flex items-center justify-center cursor-pointer"
+                      title="Remove"
+                    >
+                      <X size={10} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-text-strong block mb-1.5">
+              Pickup notes <span className="text-navy-500 text-[10px]">(optional)</span>
+            </label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              maxLength={2000}
+              placeholder="Any visible damage, missing items, parking spot, anything the customer should know about the van's state at pickup…"
+              className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white placeholder:text-navy-500 outline-none focus:border-accent-purple resize-none"
+            />
+            <div className="text-[10px] text-navy-500 mt-1 text-right">{notes.length} / 2000</div>
+          </div>
+          {err && (
+            <div className="px-3 py-2 rounded-md bg-accent-red/10 border border-accent-red/40 text-xs text-accent-red flex items-center gap-2">
+              <AlertTriangle size={12} /> {err}
+            </div>
+          )}
+        </div>
+        <div className="px-5 py-3 border-t border-navy-700 flex justify-end gap-2 shrink-0">
+          <button
+            onClick={onClose}
+            disabled={busy}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-navy-800 hover:bg-navy-700 text-white border border-navy-700 disabled:opacity-50 cursor-pointer"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={submit}
+            disabled={!canSubmit}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-accent-purple text-white hover:bg-accent-purple/85 disabled:opacity-40 cursor-pointer"
+          >
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <Wrench size={14} />}
+            Start repair
           </button>
         </div>
       </motion.div>
