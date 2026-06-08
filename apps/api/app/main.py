@@ -141,6 +141,18 @@ async def localized_http_exception_handler(request: Request, exc: HTTPException)
     )
 
 
+# ── Deploy diagnostic ─────────────────────────────────
+# Returns a marker so we can tell which commit the running container
+# is built from. Bump on each release so a stale-deploy mismatch is
+# visible at the first probe.
+@app.get("/_deploy/version", include_in_schema=False)
+async def _deploy_version():
+    return {
+        "build_marker": "d3de49f-dvic-confirm-2026-06-06",
+        "status": "ok",
+    }
+
+
 # ── Routes ────────────────────────────────────────────
 app.include_router(health.router)
 app.include_router(auth.router)
