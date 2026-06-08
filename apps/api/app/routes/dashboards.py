@@ -27,7 +27,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, func, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -851,6 +851,12 @@ class NextQcDvicRow(BaseModel):
     vendor_workshop_id: int
     vendor_workshop_name: str | None = None
     notes: str | None = None
+    # 2026-06-06 — DSP confirmation. When dsp_confirmed_at is null the
+    # banner reads "Action required"; once set, the banner flips to
+    # "Confirmed" with the key location chip.
+    dsp_confirmed_at: datetime | None = None
+    key_location: str | None = None
+    dsp_notes: str | None = None
 
 
 # Banner readiness window. Vendor schedule + DSP banner agree on this
@@ -1056,6 +1062,85 @@ async def dsp_next_qc_dvic(
         vendor_workshop_id=s.vendor_workshop_id,
         vendor_workshop_name=ws.name if ws else None,
         notes=s.notes,
+        dsp_confirmed_at=s.dsp_confirmed_at,
+        key_location=s.key_location,
+        dsp_notes=s.dsp_notes,
+    )
+
+
+class ConfirmQcDvicBody(BaseModel):
+    """DSP-side readiness confirmation payload."""
+
+    key_location: str = Field(..., min_length=1, max_length=500)
+    dsp_notes: str | None = Field(default=None, max_length=1000)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.post(
+    "/dvic-schedules/{schedule_id}/confirm",
+    response_model=NextQcDvicRow,
+    summary="DSP confirms readiness for an upcoming QC DVIC + key drop info",
+    responses={
+        403: {"description": "Caller is not the DSP owner of this schedule."},
+        404: {"description": "Schedule not found."},
+        409: {"description": "Schedule already cancelled."},
+    },
+)
+async def confirm_qc_dvic(
+    body: ConfirmQcDvicBody,
+    schedule_id: int = Path(..., ge=1),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> NextQcDvicRow:
+    """DSP customer confirms the inspection is good to go + tells the
+    vendor inspector where to find the keys. Mirrors the WO pickup
+    confirmation shape (key_location + free-text notes). Idempotent —
+    re-confirming overwrites the prior key_location / notes."""
+    from app.models.work_orders import VendorWorkshop  # import-cycle guard
+    row = (
+        await session.execute(
+            select(DvicSchedule).where(DvicSchedule.id == schedule_id)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "schedule not found")
+    if row.cancelled_at is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "schedule already cancelled")
+    # Auth: only the DSP owner of this row's DSP (or site_admin) can confirm.
+    if current.role != UserRole.SITE_ADMIN:
+        if current.organization_id != row.dsp_id:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "not your DSP")
+
+    row.dsp_confirmed_at = datetime.now(timezone.utc)
+    row.dsp_confirmed_by_id = current.id
+    row.key_location = body.key_location.strip()
+    if body.dsp_notes is not None:
+        row.dsp_notes = body.dsp_notes.strip() or None
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+
+    # Compute hours_until for the response (caller probably refetches
+    # /next-qc-dvic anyway but this saves a round-trip).
+    now = datetime.now(timezone.utc)
+    delta = row.scheduled_at - now
+    hours_until = max(0.0, delta.total_seconds() / 3600.0)
+    ws = (
+        await session.execute(
+            select(VendorWorkshop).where(VendorWorkshop.id == row.vendor_workshop_id)
+        )
+    ).scalar_one_or_none()
+    return NextQcDvicRow(
+        id=row.id,
+        scheduled_at=row.scheduled_at,
+        hours_until=round(hours_until, 2),
+        vendor_workshop_id=row.vendor_workshop_id,
+        vendor_workshop_name=ws.name if ws else None,
+        notes=row.notes,
+        dsp_confirmed_at=row.dsp_confirmed_at,
+        key_location=row.key_location,
+        dsp_notes=row.dsp_notes,
     )
 
 

@@ -1878,6 +1878,21 @@ export const dashboards = {
   },
 
   /**
+   * POST /dashboards/dvic-schedules/{id}/confirm — DSP-side
+   * confirmation flow. body: { keyLocation, dspNotes? }.
+   * Flips the readiness banner to "Confirmed".
+   */
+  confirmQcDvic(scheduleId, body) {
+    return apiFetch(
+      `/dashboards/dvic-schedules/${encodeURIComponent(scheduleId)}/confirm`,
+      {
+        method: 'POST',
+        body: JSON.stringify(camelToSnake(body)),
+      }
+    );
+  },
+
+  /**
    * GET /dashboards/dsp/{dspId}/counters — DSP-scoped.
    * Returns: { vansInService, approveCost, approveDefects, confirmPickup,
    *            inProgress }

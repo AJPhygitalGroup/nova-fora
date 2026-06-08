@@ -100,6 +100,25 @@ class DvicSchedule(SQLModel, table=True):
     )
     cancellation_reason: str | None = Field(default=None, max_length=200)
 
+    # 2026-06-06 Jorge — DSP-side confirmation. The customer clicks the
+    # readiness banner, fills in where they're leaving the keys + any
+    # notes, and we stamp these. Mirrors the WO pickup confirmation
+    # shape. Alembic 20260606_0500.
+    dsp_confirmed_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(
+            "dsp_confirmed_at",
+            sa.DateTime(timezone=True),
+            nullable=True,
+        ),
+    )
+    dsp_confirmed_by_id: int | None = Field(
+        default=None,
+        foreign_key="users.id",
+    )
+    key_location: str | None = Field(default=None, sa_column=Column("key_location", sa.Text, nullable=True))
+    dsp_notes: str | None = Field(default=None, sa_column=Column("dsp_notes", sa.Text, nullable=True))
+
     created_by_id: int = Field(
         foreign_key="users.id",
         nullable=False,

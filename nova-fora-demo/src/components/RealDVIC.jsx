@@ -2365,10 +2365,6 @@ const PREVIOUS_PENDING = [
 
 function InspectionReadinessBanner({ onClick, nextQcDvic }) {
   const { t } = useTranslation('dashboard');
-  // Render a friendly "in N hours" + the vendor workshop name + the local
-  // wall-clock time when a real schedule drives the banner. nextQcDvic is
-  // guaranteed non-null by the caller — RealDVIC only mounts this when
-  // /next-qc-dvic returned a row inside the 12-hour window.
   const dt = new Date(nextQcDvic.scheduledAt);
   const niceTime = dt.toLocaleString(undefined, {
     weekday: 'short', hour: 'numeric', minute: '2-digit',
@@ -2377,34 +2373,191 @@ function InspectionReadinessBanner({ onClick, nextQcDvic }) {
   const hoursLabel = hours < 1
     ? `${Math.max(1, Math.round(hours * 60))} min`
     : `${hours < 2 ? hours.toFixed(1) : Math.round(hours)} hr${hours < 1.5 ? '' : 's'}`;
+  // 2026-06-06 Jorge — banner state flips to "Confirmed" once the
+  // DSP has POSTed key drop info via the confirmation modal. Click is
+  // still allowed in both states (so the DSP can update keys/notes).
+  const isConfirmed = !!nextQcDvic.dspConfirmedAt;
   return (
     <motion.button
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
       onClick={onClick}
-      className="w-full mb-4 flex items-center gap-3 px-4 py-3 rounded-xl border border-accent-green/40 bg-gradient-to-r from-accent-green/15 via-accent-blue/10 to-accent-purple/10 hover:from-accent-green/20 hover:via-accent-blue/15 hover:to-accent-purple/15 transition-all cursor-pointer group text-left"
+      className={`w-full mb-4 flex items-center gap-3 px-4 py-3 rounded-xl border transition-all cursor-pointer group text-left ${
+        isConfirmed
+          ? 'border-accent-green/40 bg-gradient-to-r from-accent-green/20 via-accent-green/10 to-navy-900 hover:from-accent-green/25'
+          : 'border-accent-green/40 bg-gradient-to-r from-accent-green/15 via-accent-blue/10 to-accent-purple/10 hover:from-accent-green/20 hover:via-accent-blue/15 hover:to-accent-purple/15'
+      }`}
     >
-      <div className="w-10 h-10 rounded-lg bg-accent-green/20 border border-accent-green/40 flex items-center justify-center shrink-0">
-        <Calendar size={18} className="text-accent-green" />
+      <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
+        isConfirmed
+          ? 'bg-accent-green/30 border border-accent-green/60'
+          : 'bg-accent-green/20 border border-accent-green/40'
+      }`}>
+        {isConfirmed
+          ? <CheckCircle2 size={18} className="text-accent-green" />
+          : <Calendar size={18} className="text-accent-green" />}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-0.5 flex-wrap">
           <span className="text-sm font-semibold text-white">
             {t('readinessBanner.heading', 'QC DVIC scheduled in')} {hoursLabel}
           </span>
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-red/15 border border-accent-red/40 text-accent-red text-[10px] font-semibold">
-            {t('readinessBanner.actionRequired', 'Action Required')}
-          </span>
+          {isConfirmed ? (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-green/15 border border-accent-green/40 text-accent-green text-[10px] font-semibold">
+              <CheckCircle2 size={9} /> Confirmed
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-red/15 border border-accent-red/40 text-accent-red text-[10px] font-semibold">
+              {t('readinessBanner.actionRequired', 'Action Required')}
+            </span>
+          )}
         </div>
         <div className="text-xs text-navy-300">
           {nextQcDvic.vendorWorkshopName || t('readinessBanner.vendorFallback', 'Your vendor')} · {niceTime}
-          {nextQcDvic.notes ? ` · ${nextQcDvic.notes}` : ''}
+          {isConfirmed && nextQcDvic.keyLocation
+            ? ` · keys: ${nextQcDvic.keyLocation.length > 30 ? nextQcDvic.keyLocation.slice(0, 30) + '…' : nextQcDvic.keyLocation}`
+            : nextQcDvic.notes ? ` · ${nextQcDvic.notes}` : ''}
         </div>
       </div>
       <div className="hidden sm:flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs font-semibold text-white group-hover:bg-white/10 transition-all">
-        {t('readinessBanner.review', 'Review')} <ChevronRight size={12} />
+        {isConfirmed
+          ? t('readinessBanner.edit', 'Edit')
+          : t('readinessBanner.confirm', 'Confirm')}
+        <ChevronRight size={12} />
       </div>
     </motion.button>
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// ConfirmQcDvicModal — DSP confirms readiness for the upcoming
+// inspection + tells the inspector where the keys are. Mirrors the
+// WO ConfirmPickupCard shape. POSTs to /dvic-schedules/{id}/confirm.
+// ─────────────────────────────────────────────────────
+function ConfirmQcDvicModal({ nextQcDvic, onClose, onConfirmed }) {
+  const [keyLocation, setKeyLocation] = useState(nextQcDvic?.keyLocation || '');
+  const [notes, setNotes] = useState(nextQcDvic?.dspNotes || '');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const dt = new Date(nextQcDvic.scheduledAt);
+  const niceTime = dt.toLocaleString(undefined, {
+    weekday: 'short', month: 'short', day: 'numeric',
+    hour: 'numeric', minute: '2-digit',
+  });
+
+  const submit = async (e) => {
+    e?.preventDefault?.();
+    if (!keyLocation.trim()) {
+      setErr('Tell the inspector where to find the keys.');
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      const updated = await dashboardsApi.confirmQcDvic(nextQcDvic.id, {
+        keyLocation: keyLocation.trim(),
+        dspNotes: notes.trim() || undefined,
+      });
+      onConfirmed?.(updated);
+      onClose?.();
+    } catch (e2) {
+      setErr(e2?.detail || e2?.message || 'Confirmation failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-navy-900 border border-navy-700 rounded-xl w-full max-w-lg shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between px-5 py-4 border-b border-navy-700">
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 rounded-lg bg-accent-green/15 border border-accent-green/40 flex items-center justify-center">
+              <Calendar size={16} className="text-accent-green" />
+            </div>
+            <div>
+              <h3 className="text-base font-semibold text-white">Confirm inspection readiness</h3>
+              <p className="text-[11px] text-navy-400">
+                {nextQcDvic.vendorWorkshopName || 'Your vendor'} · {niceTime}
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-navy-400 hover:text-white p-2 -mr-2">
+            <X size={18} />
+          </button>
+        </div>
+        <form onSubmit={submit} className="px-5 py-4 space-y-3">
+          <div>
+            <label htmlFor="dvic-keys" className="text-xs font-semibold text-text-strong block mb-1.5">
+              Where are the keys? <span className="text-accent-red">*</span>
+            </label>
+            <textarea
+              id="dvic-keys"
+              value={keyLocation}
+              onChange={(e) => setKeyLocation(e.target.value)}
+              placeholder="e.g. Front office lockbox, code 4827. Drop keys in the blue bin after hours."
+              rows={3}
+              maxLength={500}
+              className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white placeholder:text-navy-500 outline-none focus:border-accent-green resize-none"
+              autoFocus
+            />
+            <div className="text-[10px] text-navy-500 mt-1 text-right">
+              {keyLocation.length} / 500
+            </div>
+          </div>
+          <div>
+            <label htmlFor="dvic-notes" className="text-xs font-semibold text-text-strong block mb-1.5">
+              Notes for the inspector (optional)
+            </label>
+            <textarea
+              id="dvic-notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Any access codes, parking instructions, vans to skip, etc."
+              rows={2}
+              maxLength={1000}
+              className="w-full rounded-lg px-3 py-2 text-sm bg-navy-800 border border-navy-700 text-white placeholder:text-navy-500 outline-none focus:border-accent-green resize-none"
+            />
+          </div>
+          {err && (
+            <div className="px-3 py-2 rounded-md bg-accent-red/10 border border-accent-red/40 text-xs text-accent-red flex items-center gap-2">
+              <AlertTriangle size={12} />
+              {err}
+            </div>
+          )}
+        </form>
+        <div className="px-5 py-3 border-t border-navy-700 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-navy-800 hover:bg-navy-700 text-white border border-navy-700 disabled:opacity-50 cursor-pointer"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={busy || !keyLocation.trim()}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-accent-green text-white hover:bg-accent-green/85 disabled:opacity-40 cursor-pointer"
+          >
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+            {nextQcDvic.dspConfirmedAt ? 'Update' : 'Confirm'}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -4560,6 +4713,11 @@ export default function RealDVIC({ user }) {
   // and "real upcoming inspection". `nextQcDvic` being non-null IS the
   // signal to render.
   const [nextQcDvic, setNextQcDvic] = useState(null);
+  // 2026-06-06 Jorge — the DSP banner click now opens the readiness
+  // confirmation modal (key drop + notes) instead of the inspector
+  // wizard. The wizard is the vendor / inspector workflow; the DSP
+  // just confirms + tells the inspector where the keys are.
+  const [showConfirmDvic, setShowConfirmDvic] = useState(false);
   // Highlights driven by the VehicleStatusSearch row → KPI tile mapping.
   // Shape: { immediate?: 'orange'|'green', scheduled?: ..., checkout?: ...,
   // feedback?: ... }. Empty when no query is active. Cards apply
@@ -4611,14 +4769,19 @@ export default function RealDVIC({ user }) {
       {(user?.role === 'dsp_owner' || user?.role === 'site_admin') && nextQcDvic && (
         <InspectionReadinessBanner
           nextQcDvic={nextQcDvic}
-          // 2026-06-02 bug 04 fix: was opening the MOCK
-          // InspectionReadinessModal which hardcoded "Pacific Northwest
-          // Logistics" vans (lines 1824-1834 + 1952). A real Ceiba
-          // tester clicking this saw zero matching vehicles. Reroute
-          // to the same `CreateInspectionWizard` the vendor uses —
-          // the wizard fetches real /vehicles and lets DSP own scope
-          // pick from the actual fleet.
-          onClick={() => setShowStartInspection(true)}
+          // 2026-06-06 Jorge — click opens the DSP-side readiness
+          // confirmation modal (key drop info + notes), NOT the
+          // inspector wizard. The wizard is the vendor / inspector
+          // workflow; the DSP just confirms the inspection is good
+          // to go and tells the inspector where to find the keys.
+          onClick={() => setShowConfirmDvic(true)}
+        />
+      )}
+      {showConfirmDvic && nextQcDvic && (
+        <ConfirmQcDvicModal
+          nextQcDvic={nextQcDvic}
+          onClose={() => setShowConfirmDvic(false)}
+          onConfirmed={(updated) => setNextQcDvic(updated)}
         />
       )}
 
