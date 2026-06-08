@@ -566,6 +566,15 @@ function QuotesPanel({ req, user, isBodyRepairVendor, onChanged }) {
   // Common action wrapper: clear prior action error, run, on any
   // failure surface it inline AND reload so the UI catches up to
   // backend state (e.g. "already selected" stale-cache cases).
+  //
+  // 2026-06-07 Jorge — gracefully handle "Failed to fetch" (browser
+  // TypeError when the connection drops mid-response). Backend may
+  // have already committed before the response was lost: we've seen
+  // select-quote succeed (activity log shows "Quote selected") while
+  // the POST never returned to the client. Treat NetworkError as
+  // ambiguous: trigger the reload, then show a soft "couldn't confirm"
+  // message instead of the raw URL. After reload the user can see
+  // the actual state in the activity log + quote status.
   const runAction = async (fn, label) => {
     setActionErr(null);
     setBusy(true);
@@ -574,13 +583,19 @@ function QuotesPanel({ req, user, isBodyRepairVendor, onChanged }) {
       onChanged?.();
       load();
     } catch (e) {
-      const msg = e?.detail || e?.message || `${label} failed`;
-      setActionErr(msg);
-      // Refresh anyway — the backend's "already selected" / "already
-      // declined" 409s mean the UI was stale; pulling new data makes
-      // the buttons disappear so the user can't keep retrying a
-      // no-op action.
+      const isNetworkError = e?.name === 'NetworkError';
+      // Refresh first — the backend's "already selected" / "already
+      // declined" 409s OR a dropped-response success both mean the UI
+      // was stale; pulling new data makes the buttons disappear so
+      // the user can't keep retrying a no-op action.
       load();
+      if (isNetworkError) {
+        setActionErr(
+          `Couldn't confirm the ${label.toLowerCase()} response — the activity log below shows the latest state. Refresh if needed.`,
+        );
+      } else {
+        setActionErr(e?.detail || e?.message || `${label} failed`);
+      }
     } finally {
       setBusy(false);
     }
