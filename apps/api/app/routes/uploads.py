@@ -23,6 +23,7 @@ from app.auth.dependencies import get_current_user
 from app.db import get_session
 from app.models.defect import Defect
 from app.models.inspection import Inspection
+from app.models.organization import Organization, OrgType
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
 from app.models.work_orders import VendorWorkshop, WorkOrder
@@ -154,7 +155,6 @@ async def _check_parent_access(
         # ownership check inline rather than via a helper since the
         # ruleset is small + body-repair-specific.
         from app.models.body_repair import BodyRepairRequest, BodyRepairRequestStatus
-        from app.models.organization import Organization, OrgType
         raw = str(parent_id).strip()
         int_id = None
         if raw.upper().startswith("BRR-"):
