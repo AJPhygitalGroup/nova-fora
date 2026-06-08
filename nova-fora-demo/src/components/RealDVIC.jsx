@@ -495,15 +495,22 @@ function VehicleStatusSearch({ dspId, onHighlightsChange }) {
         // Compose the highlights map for the parent. 'orange' wins over
         // 'green' for the same card — if any row mapping to that tile
         // needs DSP action, the tile pulses orange regardless of how
-        // many informational rows also point at it.
+        // many informational rows also point at it. `count` is the
+        // number of search-result rows that mapped to that card key
+        // (Jorge 2026-06-07): the KPI tile overrides its global value
+        // with this count while a search is active, so filtering by
+        // "57" makes "Defects for approval" read the per-van figure
+        // instead of the fleet-wide one.
         const highlights = {};
         for (const row of merged) {
           const card = cardKeyForStatus(row.status?.label);
           if (!card) continue;
+          if (!highlights[card]) highlights[card] = { tone: null, count: 0 };
+          highlights[card].count += 1;
           if (row.status?.actionRequired) {
-            highlights[card] = 'orange';
-          } else if (highlights[card] !== 'orange') {
-            highlights[card] = 'green';
+            highlights[card].tone = 'orange';
+          } else if (highlights[card].tone !== 'orange') {
+            highlights[card].tone = 'green';
           }
         }
         onHighlightsChange?.(highlights);
@@ -4773,10 +4780,12 @@ export default function RealDVIC({ user }) {
   // just confirms + tells the inspector where the keys are.
   const [showConfirmDvic, setShowConfirmDvic] = useState(false);
   // Highlights driven by the VehicleStatusSearch row → KPI tile mapping.
-  // Shape: { immediate?: 'orange'|'green', scheduled?: ..., checkout?: ...,
-  // feedback?: ... }. Empty when no query is active. Cards apply
-  // nf-card-heartbeat (orange pulse) or nf-card-calm (green static) based
-  // on their key. Jorge 2026-06-03.
+  // Shape: { [key]: { tone: 'orange'|'green', count: number } }. Empty
+  // when no query is active. Cards apply nf-card-heartbeat (orange
+  // pulse) or nf-card-calm (green static) based on their tone, and
+  // override their displayed value with `count` (Jorge 2026-06-07:
+  // filtering by van/defect makes each tile read the per-filter
+  // count instead of the global figure).
   const [searchHighlights, setSearchHighlights] = useState({});
   // True while the search has narrowed focus to at least one KPI tile.
   // Used to dim + disable the unrelated cards so the user's eye lands
@@ -4784,12 +4793,23 @@ export default function RealDVIC({ user }) {
   // unrelated lists. Jorge 2026-06-06.
   const searchIsActive = Object.keys(searchHighlights).length > 0;
   const cardHighlightClass = (key) => {
-    const tone = searchHighlights[key];
+    const tone = searchHighlights[key]?.tone;
     if (tone === 'orange') return 'nf-card-heartbeat';
     if (tone === 'green') return 'nf-card-calm';
     // Dim + non-interactive for cards outside the search hit set.
     if (searchIsActive) return 'opacity-40 grayscale pointer-events-none';
     return '';
+  };
+  // Returns the search-derived count for a card key, or undefined when
+  // the search isn't active or the card has no matching rows. KPI
+  // tiles use `?? globalValue` to fall back to their normal counter.
+  const cardSearchCount = (key) => {
+    if (!searchIsActive) return undefined;
+    const entry = searchHighlights[key];
+    // When the search IS active but this card has zero matches, show 0
+    // (the dim treatment already signals "not relevant"). Returning
+    // undefined here would leak the global count past the dim — wrong.
+    return entry?.count ?? 0;
   };
   useEffect(() => {
     if (!isDspRole(user) && user?.role !== 'site_admin') return;
@@ -5002,7 +5022,7 @@ export default function RealDVIC({ user }) {
               <MetricCard
                 icon={pendingApprovalCount > 0 ? AlertTriangle : undefined}
                 label={t('realDvic.metrics.defectsForApproval', 'Defects for approval')}
-                value={pendingApprovalCount}
+                value={cardSearchCount('immediate') ?? pendingApprovalCount}
                 color="accent-red"
                 delay={0.1}
               />
@@ -5012,7 +5032,7 @@ export default function RealDVIC({ user }) {
               <MetricCard
                 icon={AlertTriangle}
                 label={t('realDvic.metrics.scheduledRepairs', 'Scheduled Repairs')}
-                value={scheduledWoQueue.length}
+                value={cardSearchCount('scheduled') ?? scheduledWoQueue.length}
                 color="accent-red"
                 delay={0.15}
               />
@@ -5027,7 +5047,7 @@ export default function RealDVIC({ user }) {
               <MetricCard
                 icon={Camera}
                 label={t('realDvic.metrics.checkoutVehicles', 'Checkout Vehicles')}
-                value={checkedOutWoQueue.length}
+                value={cardSearchCount('checkout') ?? checkedOutWoQueue.length}
                 subtitle={checkedOutWoQueue.length > 0
                   ? t('realDvic.metrics.checkoutSubtitleFmt', { count: checkedOutWoQueue.length, defaultValue: `${checkedOutWoQueue.length} currently at shops` })
                   : t('realDvic.metrics.checkoutEmpty', 'Shop custody count')}
@@ -5050,7 +5070,7 @@ export default function RealDVIC({ user }) {
               <MetricCard
                 icon={repairsPendingFeedback > 0 ? AlertTriangle : CheckCheck}
                 label={t('realDvic.metrics.pendingFeedback', 'Pending Feedback')}
-                value={repairsPendingFeedback}
+                value={cardSearchCount('feedback') ?? repairsPendingFeedback}
                 subtitle={repairsPendingFeedback > 0
                   ? t('realDvic.metrics.repairedThisWeekFmt', { count: repairedThisWeekCount, defaultValue: `${repairedThisWeekCount} repaired this week` })
                   : t('realDvic.metrics.allRated', 'All caught up · click for history')}
