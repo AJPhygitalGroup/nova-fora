@@ -125,19 +125,15 @@ class BodyRepairRequestResponse(BaseModel):
     # Completion blob — vendor stores notes + photo storage keys at
     # complete-repair; customer signoff timestamp lands here too.
     completion_blob: dict | None = None
-    picked_up_at: datetime | None = None
-    repair_started_at: datetime | None = None
-    repair_completed_at: datetime | None = None
-    returned_at: datetime | None = None
     status: str
     selected_quote_id: int | None
     quote_selected_at: datetime | None
     pickup_proposed_at: datetime | None
     pickup_confirmed_at: datetime | None
-    picked_up_at: datetime | None
-    repair_started_at: datetime | None
-    repair_completed_at: datetime | None
-    returned_at: datetime | None
+    picked_up_at: datetime | None = None
+    repair_started_at: datetime | None = None
+    repair_completed_at: datetime | None = None
+    returned_at: datetime | None = None
     paid_at: datetime | None
     created_at: datetime
     updated_at: datetime
