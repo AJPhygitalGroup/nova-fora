@@ -38,7 +38,22 @@ from app.models.defect_catalog import (
     InspectionRuleTarget,
     VehicleClass,
 )
+from app.models.dsp_critical_defect import DspCriticalDefect
 from app.models.user import User, UserRole
+
+
+def _effective_dsp_id(current: User, dsp_id_query: int | None = None) -> int | None:
+    """Resolve which DSP id the 'critical' overlay should scope to.
+
+    - dsp_owner → their own org (query param ignored).
+    - site_admin → query param if provided, else None (no overlay applied).
+    - everyone else → None (vendors / techs see the global catalog as-is).
+    """
+    if current.role == UserRole.SITE_ADMIN:
+        return dsp_id_query
+    if current.role.value.startswith("dsp_"):
+        return current.organization_id
+    return None
 
 router = APIRouter(prefix="/inspection-rules", tags=["catalog"])
 
@@ -97,6 +112,10 @@ async def list_inspection_rules(
     source: str | None = Query(None, description="Amazon | DSP"),
     q: str | None = Query(None, description="ILIKE search on defect_text"),
     active_only: bool = Query(True),
+    dsp_id: int | None = Query(None,
+        description="Site_admin only — resolve the `is_critical` overlay for "
+                    "this DSP. DSP owners always see their own overlay; the "
+                    "param is ignored for them."),
     current: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -163,6 +182,22 @@ async def list_inspection_rules(
                 ),
             })
 
+    # Critical overlay — load the set of rule ids the effective DSP has
+    # marked as critical. Empty set when no DSP scope applies (vendor,
+    # tech, or site_admin without dsp_id query). `is_critical` stays
+    # False for everyone in that case.
+    effective_dsp = _effective_dsp_id(current, dsp_id)
+    critical_set: set[int] = set()
+    if effective_dsp is not None and rule_ids:
+        crit_rows = (
+            await session.execute(
+                select(DspCriticalDefect.inspection_rule_id)
+                .where(DspCriticalDefect.dsp_id == effective_dsp)
+                .where(DspCriticalDefect.inspection_rule_id.in_(rule_ids))
+            )
+        ).scalars().all()
+        critical_set = set(crit_rows)
+
     items = []
     for r in rules:
         items.append({
@@ -192,6 +227,7 @@ async def list_inspection_rules(
             "notion_id": r.notion_id,
             "vehicle_class": r.vehicle_class or [],
             "is_active": r.is_active,
+            "is_critical": r.id in critical_set,
             "targets": sorted(
                 targets_by_rule[r.id],
                 key=lambda t: (t["part"], t["defect_type"]),
@@ -302,6 +338,98 @@ async def get_inspection_rule(
         "template_item_count": template_count,
         "created_at": rule.created_at.isoformat() if rule.created_at else None,
         "updated_at": rule.updated_at.isoformat() if rule.updated_at else None,
+    }
+
+
+# ─────────────────────────────────────────────────────
+# PUT /inspection-rules/{rule_id}/critical — toggle critical-for-DSP
+# ─────────────────────────────────────────────────────
+class _ToggleCriticalBody(BaseModel):
+    """Whether the rule should be marked critical for the DSP. False
+    deletes the overlay row; True ensures one exists."""
+    critical: bool
+    # Site_admin only — toggle on behalf of a specific DSP. DSP owners
+    # always act on their own org and this field is ignored.
+    dsp_id: int | None = Field(default=None, ge=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.put(
+    "/{rule_id}/critical",
+    summary="Mark / unmark an inspection rule as critical for the caller's DSP",
+    responses={
+        403: {"description": "Caller is not a DSP owner or site_admin."},
+        404: {"description": "Rule not found."},
+    },
+)
+async def set_rule_critical(
+    rule_id: int,
+    body: _ToggleCriticalBody = Body(...),
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Toggle the DSP-side 'critical' overlay on an inspection rule.
+
+    Iter-1 (Jorge 2026-06-07): visual badge only. The wizard + reports
+    surface the badge but no downstream gate logic — the inspection
+    flow, work-order routing, and van service-readiness all behave
+    identically whether a rule is critical or not. Iter-2 may add a
+    'van quarantined' state if a critical rule fails."""
+    if current.role not in (UserRole.DSP_OWNER, UserRole.SITE_ADMIN):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "only DSP owners or site_admin can flip the critical overlay",
+        )
+    # Resolve target DSP — owner uses their own org; admin uses the body param.
+    target_dsp = _effective_dsp_id(current, body.dsp_id)
+    if target_dsp is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "site_admin must pass dsp_id in the body to scope the overlay",
+        )
+    # Confirm the rule exists — 404 instead of a silent no-op so the UI
+    # can surface "this rule was deleted" if needed.
+    rule = (
+        await session.execute(
+            select(InspectionRule).where(InspectionRule.id == rule_id)
+        )
+    ).scalar_one_or_none()
+    if rule is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"rule {rule_id} not found")
+
+    existing = (
+        await session.execute(
+            select(DspCriticalDefect)
+            .where(DspCriticalDefect.dsp_id == target_dsp)
+            .where(DspCriticalDefect.inspection_rule_id == rule_id)
+        )
+    ).scalar_one_or_none()
+
+    if body.critical:
+        if existing is None:
+            row = DspCriticalDefect(
+                dsp_id=target_dsp,
+                inspection_rule_id=rule_id,
+                set_by_id=current.id,
+                created_at=utc_now(),
+            )
+            session.add(row)
+            try:
+                await session.commit()
+            except IntegrityError:
+                # Race: another tab toggled it on between our lookup
+                # and our insert. Treat as success — desired state met.
+                await session.rollback()
+    else:
+        if existing is not None:
+            await session.delete(existing)
+            await session.commit()
+
+    return {
+        "rule_id": rule_id,
+        "dsp_id": target_dsp,
+        "is_critical": body.critical,
     }
 
 

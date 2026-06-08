@@ -27,6 +27,7 @@ from app.models.body_repair import (
     PavePhase,
 )
 from app.models.defect import Defect, DefectSource
+from app.models.dsp_critical_defect import DspCriticalDefect
 from app.models.defect_catalog import (
     DefectApplicability,
     DefectClassification,
@@ -119,6 +120,7 @@ __all__ = [
     "DefectType",
     "DvicSection",
     "DvicTemplateItem",
+    "DspCriticalDefect",
     # Inspections
     "Inspection",
     "InspectionPartMark",

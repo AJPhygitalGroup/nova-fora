@@ -1662,6 +1662,70 @@ const SOURCE_VARIANT = {
   Vendor: { bg: 'bg-accent-purple/15', border: 'border-accent-purple/40', text: 'text-accent-purple' },
 };
 
+// ============================================================
+// CriticalToggle — per-row red "Critical" pill button that flips
+// the per-DSP `dsp_critical_defects` overlay. Optimistic: parent
+// patches its cache via onChanged BEFORE the API call lands so the
+// click feels instant. On failure we revert + show an inline error
+// tooltip via title attribute (a full toast system would be overkill
+// for a 2-state pill). Jorge 2026-06-07 — visual badge only in
+// iter-1; no downstream gate behavior tied to the flag.
+// ============================================================
+function CriticalToggle({ ruleId, initialCritical, onChanged }) {
+  const { t } = useTranslation('admin');
+  const [critical, setCritical] = useState(!!initialCritical);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const handleClick = async (e) => {
+    e.stopPropagation();
+    if (busy) return;
+    const next = !critical;
+    const prev = critical;
+    setBusy(true);
+    setErr(null);
+    setCritical(next);
+    onChanged?.(next);
+    try {
+      await inspectionRulesApi.setCritical(ruleId, { critical: next });
+    } catch (e2) {
+      // Revert both local and parent state so the UI matches reality.
+      setCritical(prev);
+      onChanged?.(prev);
+      const msg = e2 instanceof APIError ? (e2.detail || e2.message) : (e2?.message || 'Toggle failed');
+      setErr(typeof msg === 'string' ? msg : 'Toggle failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={busy}
+      title={err
+        ? `Error: ${err}`
+        : (critical
+          ? t('dvicCatalog.criticalOnTitle', 'Critical for your fleet — click to clear')
+          : t('dvicCatalog.criticalOffTitle', 'Click to mark as critical for your fleet'))}
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-semibold transition-all cursor-pointer disabled:opacity-60 ${
+        critical
+          ? 'bg-accent-red/20 border-accent-red/50 text-accent-red hover:bg-accent-red/30'
+          : 'bg-navy-800/40 border-navy-700 text-navy-400 hover:border-accent-red/40 hover:text-accent-red/80'
+      } ${err ? 'ring-1 ring-accent-red/60' : ''}`}
+    >
+      {busy
+        ? <Loader2 size={9} className="animate-spin" />
+        : <AlertTriangle size={9} />
+      }
+      {critical
+        ? t('dvicCatalog.criticalOn', 'Critical')
+        : t('dvicCatalog.criticalOff', 'Mark')}
+    </button>
+  );
+}
+
 function DvicDefectCatalog() {
   const { t } = useTranslation('admin');
   // Active vehicle_class tab. Defaults to the most common one (Branded Cargo Van).
@@ -1757,6 +1821,7 @@ function DvicDefectCatalog() {
         <table className="w-full text-xs">
           <thead>
             <tr className="text-navy-400 text-[10px] uppercase tracking-wide border-b border-navy-800 bg-navy-950/30">
+              <th className="text-left px-3 py-2 font-semibold">{t('dvicCatalog.table.critical', 'Critical')}</th>
               <th className="text-left px-3 py-2 font-semibold">{t('dvicCatalog.table.source', 'Source')}</th>
               <th className="text-left px-3 py-2 font-semibold">{t('dvicCatalog.table.section', 'Section')}</th>
               <th className="text-left px-3 py-2 font-semibold">{t('dvicCatalog.table.part', 'Part')}</th>
@@ -1769,12 +1834,12 @@ function DvicDefectCatalog() {
           </thead>
           <tbody>
             {isLoading && (
-              <tr><td colSpan={8} className="px-3 py-12 text-center text-sm text-navy-400">
+              <tr><td colSpan={9} className="px-3 py-12 text-center text-sm text-navy-400">
                 <Loader2 size={16} className="inline mr-2 animate-spin" /> {t('dvicCatalog.loading', 'Loading inspection rules…')}
               </td></tr>
             )}
             {!isLoading && fetchError && (
-              <tr><td colSpan={8} className="px-3 py-8 text-center text-sm text-accent-red">
+              <tr><td colSpan={9} className="px-3 py-8 text-center text-sm text-accent-red">
                 <AlertTriangle size={14} className="inline mr-1.5" />
                 {fetchError}
               </td></tr>
@@ -1787,7 +1852,29 @@ function DvicDefectCatalog() {
                 .map((target) => `${target.part}/${target.defect_type}`)
                 .join(', ');
               return (
-                <tr key={d.id} className={`border-b border-navy-800/50 last:border-b-0 ${isAmazon ? 'bg-accent-gold/[0.03]' : 'hover:bg-navy-800/30'}`}>
+                <tr key={d.id} className={`border-b border-navy-800/50 last:border-b-0 ${
+                  d.is_critical
+                    ? 'bg-accent-red/[0.06] hover:bg-accent-red/[0.10]'
+                    : isAmazon
+                      ? 'bg-accent-gold/[0.03]'
+                      : 'hover:bg-navy-800/30'
+                }`}>
+                  <td className="px-3 py-2.5">
+                    <CriticalToggle
+                      ruleId={d.id}
+                      initialCritical={!!d.is_critical}
+                      onChanged={(next) => {
+                        // Optimistic update — patch the cached row so the
+                        // next render reflects the new state immediately.
+                        setRulesByClass((cur) => ({
+                          ...cur,
+                          [activeTemplate]: (cur[activeTemplate] || []).map((r) =>
+                            r.id === d.id ? { ...r, is_critical: next } : r
+                          ),
+                        }));
+                      }}
+                    />
+                  </td>
                   <td className="px-3 py-2.5">
                     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-semibold ${sv.bg} ${sv.border} ${sv.text}`}>
                       {isAmazon && <Lock size={8} />}
@@ -1815,7 +1902,7 @@ function DvicDefectCatalog() {
               );
             })}
             {!isLoading && !fetchError && currentItems.length === 0 && (
-              <tr><td colSpan={8} className="px-3 py-8 text-center text-sm text-navy-400">{t('dvicCatalog.noDefects', 'No defects configured for this template.')}</td></tr>
+              <tr><td colSpan={9} className="px-3 py-8 text-center text-sm text-navy-400">{t('dvicCatalog.noDefects', 'No defects configured for this template.')}</td></tr>
             )}
           </tbody>
         </table>

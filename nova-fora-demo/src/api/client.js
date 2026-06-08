@@ -996,6 +996,25 @@ export const inspectionRules = {
       body: JSON.stringify(camelToSnake(body)),
     });
   },
+
+  /**
+   * PUT /inspection-rules/{id}/critical — toggle the per-DSP "critical"
+   * overlay (Jorge 2026-06-07). When `critical: true`, the rule shows
+   * up with a red badge in the catalog + wizard for the caller's DSP.
+   * Iter-1 is visual only; no downstream gate behavior.
+   *
+   * Site_admin passes `dspId` to act on behalf of a specific DSP.
+   * DSP owners always act on their own org — the param is ignored.
+   */
+  setCritical(id, { critical, dspId } = {}) {
+    return apiFetch(`/inspection-rules/${encodeURIComponent(id)}/critical`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        critical: !!critical,
+        ...(dspId != null ? { dsp_id: Number(dspId) } : {}),
+      }),
+    });
+  },
 };
 
 
