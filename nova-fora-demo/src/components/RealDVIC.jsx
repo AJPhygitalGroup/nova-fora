@@ -649,8 +649,21 @@ function deriveVehicleStatus(wo) {
   if (wo.returnedAt)              return { label: 'Returned to lot', color: 'accent-green', actionRequired: false };
   if (wo.pickedUpAt)              return { label: 'At vendor', color: 'accent-blue', actionRequired: false };
   if (wo.status === 'in_progress') return { label: 'In repair', color: 'accent-blue', actionRequired: false };
-  if (wo.scheduledAt || wo?.primaryRo?.scheduledStartAt)
-    return { label: 'Scheduled', color: 'accent-blue', actionRequired: false };
+  if (wo.scheduledAt || wo?.primaryRo?.scheduledStartAt) {
+    // 2026-06-07 Jorge — a scheduled WO requires DSP action UNTIL they
+    // confirm the pickup (key location + Confirm button on the
+    // Scheduled Repairs card). `dspResponse === ''` means they
+    // haven't decided yet → action required. 'confirmed' or
+    // 'not_available' both mean the ball is back in the vendor's
+    // court → DSP is done.
+    const resp = wo.dspResponse || '';
+    const responded = resp === 'confirmed' || resp === 'not_available';
+    return {
+      label: responded ? 'Scheduled' : 'Scheduled — confirm pickup',
+      color: 'accent-blue',
+      actionRequired: !responded,
+    };
+  }
   if (wo.status === 'accepted')   return { label: 'Accepted by vendor', color: 'accent-blue', actionRequired: false };
   if (wo.status === 'pending')    return { label: 'Awaiting vendor accept', color: 'accent-blue', actionRequired: false };
   return { label: 'Pending task', color: 'accent-blue', actionRequired: false };
