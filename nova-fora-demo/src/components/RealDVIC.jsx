@@ -312,6 +312,10 @@ function cardKeyForStatus(label) {
     case 'Returned to lot':
       return 'checkout';
     case 'Completed':
+    // 2026-06-07 Jorge — action-required variant when the DSP still
+    // owes a rating. Same KPI tile (Pending Feedback) so the orange
+    // heartbeat lands on the right card.
+    case 'Completed — rate the work':
       return 'feedback';
     default:
       return null;
@@ -357,7 +361,7 @@ function VehicleStatusSearch({ dspId, onHighlightsChange }) {
         const vanToken = tokens[0];
         const restTokens = tokens.slice(1);
 
-        const { vehicles: vehApi, workOrders: woApi, defectReviews: drApi } = await import('../api/client');
+        const { vehicles: vehApi, workOrders: woApi, defectReviews: drApi, vendorScorecard: vsApi } = await import('../api/client');
 
         // ── 1. Vehicle lookup on the first token ────────
         // Skip if the token looks too generic to be a fleet id (>15
@@ -387,6 +391,19 @@ function VehicleStatusSearch({ dspId, onHighlightsChange }) {
         // ── 2. Pull data based on the mode ──────────────
         const drRes = await drApi.queue({ limit: 200 }).catch(() => ({ items: [] }));
         if (cancelled) return;
+
+        // Pending-feedback list — completed WOs the DSP hasn't rated.
+        // Drives the "Completed — rate the work" action-required state
+        // for the feedback KPI tile (Jorge 2026-06-07). No-op fail is
+        // fine: if this 404s or times out, completed WOs just stay
+        // "no action required" — same as before this change.
+        const pendingFbRes = await vsApi.pending({}).catch(() => []);
+        if (cancelled) return;
+        const pendingFbSet = new Set(
+          (Array.isArray(pendingFbRes) ? pendingFbRes : (pendingFbRes?.items || []))
+            .map((r) => r.workOrderIdStr || r.workOrderId)
+            .filter(Boolean),
+        );
 
         let wos = [];
         if (vehicle) {
@@ -458,13 +475,20 @@ function VehicleStatusSearch({ dspId, onHighlightsChange }) {
           subLabel: `${(pr.part || '').replace(/_/g, ' ')}${pr.defectType ? ' — ' + pr.defectType.replace(/_/g, ' ') : ''}`,
           meta: pr.hoursPending ? `${Math.round(pr.hoursPending)}h pending` : null,
         }));
-        const woRows = wos.map((wo) => ({
-          kind: 'wo',
-          key: `wo-${wo.id}`,
-          wo,
-          vanLabel: wo.vehicleFleetId ? `Van ${wo.vehicleFleetId}` : '—',
-          status: deriveVehicleStatus(wo),
-        }));
+        const woRows = wos.map((wo) => {
+          // Annotate the WO with whether it's awaiting customer feedback
+          // so deriveVehicleStatus can flip completed → action required.
+          // Match by id_str (e.g. "WO-00029") since that's what
+          // `vendorScorecard.pending()` returns.
+          const enriched = { ...wo, _pendingFeedback: pendingFbSet.has(wo.id) };
+          return {
+            kind: 'wo',
+            key: `wo-${wo.id}`,
+            wo,
+            vanLabel: wo.vehicleFleetId ? `Van ${wo.vehicleFleetId}` : '—',
+            status: deriveVehicleStatus(enriched),
+          };
+        });
         const merged = [...pendingRows, ...woRows];
         setResults(merged);
 
@@ -647,7 +671,18 @@ function deriveVehicleStatus(wo) {
   // green / informational.
   if (wo.status === 'declined')   return { label: 'Declined by vendor', color: 'accent-red', actionRequired: true };
   if (wo.status === 'cancelled')  return { label: 'Cancelled', color: 'accent-gold', actionRequired: false };
-  if (wo.status === 'completed')  return { label: 'Completed', color: 'accent-green', actionRequired: false };
+  if (wo.status === 'completed') {
+    // 2026-06-07 Jorge — DSP owes a thumbs-up/down rating on the
+    // Vendor Scorecard for every completed WO. Until they submit it,
+    // the row is action-required and the Pending Feedback KPI tile
+    // heartbeats. `_pendingFeedback` is annotated by the search effect
+    // from `vendorScorecard.pending()` so the label and the tile stay
+    // in sync with the modal's queue.
+    if (wo._pendingFeedback) {
+      return { label: 'Completed — rate the work', color: 'accent-orange', actionRequired: true };
+    }
+    return { label: 'Completed', color: 'accent-green', actionRequired: false };
+  }
   if ((wo.pendingCostCount || 0) > 0)
     return { label: 'Pending cost approval', color: 'accent-orange', actionRequired: true };
   if ((wo.pendingReviewCount || 0) > 0)
