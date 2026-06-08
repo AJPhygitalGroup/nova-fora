@@ -1,6 +1,7 @@
 #!/bin/sh
 # Production entrypoint — runs migrations, then starts uvicorn.
 # docker-compose.dev.yml overrides this with --reload for hot reload.
+# Deploy marker: d90c5b3 — DVIC DSP confirm endpoint (2026-06-06).
 set -e
 
 # Alembic migrations. Docker Swarm can run multiple replicas simultaneously;
