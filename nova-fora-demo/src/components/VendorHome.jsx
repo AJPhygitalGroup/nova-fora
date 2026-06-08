@@ -23,8 +23,7 @@
  * Upcoming DVIC + filters land in Phase 1b — placeholder shells with
  * TODO markers so the visual structure is in place from day one.
  */
-import { useState, useEffect, useMemo, useCallback } from 'react';
-import { motion } from 'framer-motion';
+import { useState, useEffect, useCallback } from 'react';
 import {
   ClipboardList, AlertTriangle, AlertCircle, Truck, Briefcase, CheckCircle2,
   CalendarCheck, Plus, RefreshCw, Loader2, Flame, PlayCircle, X,
@@ -61,6 +60,41 @@ export default function VendorHome({ user }) {
   const [showStartInspection, setShowStartInspection] = useState(
     userCanInspect && hasSavedWizardState,
   );
+  // 2026-06-07 Jorge — "Scheduled DVIC" launches the inspection wizard
+  // pre-selected to the soonest upcoming scheduled appointment's DSP
+  // (skipping the DSP picker step). `initialDspId` is numeric — we look
+  // it up server-side from the dvic_schedules list when the button is
+  // clicked, so the chip list and the launcher always agree on which
+  // appointment is "next". Null means "no scheduled inspection picked",
+  // i.e. the regular Start a QC DVIC flow runs.
+  const [initialDspId, setInitialDspId] = useState(null);
+  const [scheduledLaunchErr, setScheduledLaunchErr] = useState(null);
+  const [launching, setLaunching] = useState(false);
+
+  const launchScheduledDvic = useCallback(async () => {
+    if (!workshopId || launching) return;
+    setLaunching(true);
+    setScheduledLaunchErr(null);
+    try {
+      const rows = await dashboardsApi.listDvicSchedules(workshopId);
+      // Backend already sorts asc by scheduled_at and excludes cancelled,
+      // but be defensive — guard against a future API change.
+      const upcoming = (Array.isArray(rows) ? rows : [])
+        .filter((r) => !r.cancelledAt)
+        .sort((a, b) => new Date(a.scheduledAt) - new Date(b.scheduledAt));
+      if (upcoming.length === 0) {
+        setScheduledLaunchErr('No upcoming scheduled DVICs.');
+        return;
+      }
+      const next = upcoming[0];
+      setInitialDspId(Number(next.dspId));
+      setShowStartInspection(true);
+    } catch (e) {
+      setScheduledLaunchErr(e?.detail || e?.message || 'Failed to load schedules');
+    } finally {
+      setLaunching(false);
+    }
+  }, [workshopId, launching]);
 
   // Workshop bootstrap (mirrors ServiceWriterDashboard).
   useEffect(() => {
@@ -194,39 +228,54 @@ export default function VendorHome({ user }) {
         </button>
       </div>
 
-      {/* ── Start New Inspection banner — Vendor / Technician ── */}
-      {userCanInspect && (
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="w-full mb-4 flex items-center gap-3 px-4 py-3 rounded-xl border border-accent-green/40 bg-gradient-to-r from-accent-green/15 via-accent-blue/10 to-accent-purple/10"
-        >
-          <div className="w-10 h-10 rounded-lg bg-accent-green/20 border border-accent-green/40 flex items-center justify-center shrink-0">
-            <PlayCircle size={18} className="text-accent-green" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-0.5">
-              <span className="text-sm font-semibold text-text-strong">Start a new QC DVIC</span>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-blue/15 border border-accent-blue/40 text-accent-blue text-[10px] font-semibold">
-                Inspector workflow
-              </span>
-            </div>
-            <div className="text-xs text-text-muted">
-              Walk through the 5-section inspection and auto-create work orders for any defects found
-            </div>
-          </div>
+      {/* ── Compact action row — Jorge 2026-06-07 ──
+          Replaces the two full-width banners (Start a new QC DVIC +
+          QC DVIC Schedule). Tech / inspector lands on this screen and
+          should see both actions as compact side-by-side buttons, not
+          two stacked full-width prose cards. The upcoming-DVIC chip
+          list lives underneath (compact mode of DvicScheduleManager)
+          so the visibility of "you have an inspection tonight" is
+          preserved without the giant header. */}
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
+        {userCanInspect && (
           <button
             type="button"
             onClick={() => setShowStartInspection(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent-green text-white text-sm font-semibold hover:bg-accent-green/80 transition-all cursor-pointer shadow-lg shadow-accent-green/20"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent-green text-white text-sm font-semibold hover:bg-accent-green/80 transition-all cursor-pointer shadow shadow-accent-green/20"
           >
-            <PlayCircle size={14} /> Start Inspection
+            <PlayCircle size={14} /> Start a QC DVIC
           </button>
-        </motion.div>
+        )}
+        <button
+          type="button"
+          onClick={launchScheduledDvic}
+          disabled={launching}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg border border-accent-green/50 bg-accent-green/10 text-accent-green text-sm font-semibold hover:bg-accent-green/20 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Start the next scheduled inspection (skips DSP picker)"
+        >
+          {launching ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : (
+            <CalendarCheck size={14} />
+          )}
+          Scheduled DVIC
+        </button>
+      </div>
+
+      {scheduledLaunchErr && (
+        <div className="mb-2 px-3 py-1.5 rounded-md bg-accent-yellow/10 border border-accent-yellow/40 text-xs text-accent-yellow">
+          {scheduledLaunchErr}
+        </div>
       )}
 
-      {/* ── Upcoming DVIC banner (Phase 1b will wire chips) ── */}
-      <DvicScheduleManager workshopId={workshopId} availableDsps={availableDsps} />
+      {/* ── Upcoming DVIC list (compact: no header, manager owns its own
+           "Schedule new" toggle now — the top-row button is a launcher
+           for the soonest, not a form opener). ── */}
+      <DvicScheduleManager
+        workshopId={workshopId}
+        availableDsps={availableDsps}
+        compact
+      />
 
       {counterErr && (
         <div className="mb-3 px-3 py-2 rounded-md bg-accent-red/10 border border-accent-red/40 text-sm text-accent-red flex items-center gap-2">
@@ -334,13 +383,22 @@ export default function VendorHome({ user }) {
         />
       )}
 
-      {/* ── Create Inspection wizard (5-section walkaround) ── */}
+      {/* ── Create Inspection wizard (5-section walkaround) ──
+          When `initialDspId` is set (clicked "Scheduled DVIC"), the
+          wizard preselects the matching DSP and skips to step 2 (keys).
+          Always cleared on close so the next "Start a QC DVIC" click
+          lands on step 1 (DSP picker) as normal. */}
       {showStartInspection && (
         <CreateInspectionWizard
           user={user}
-          onClose={() => setShowStartInspection(false)}
+          initialDspId={initialDspId}
+          onClose={() => {
+            setShowStartInspection(false);
+            setInitialDspId(null);
+          }}
           onSubmitted={() => {
             setShowStartInspection(false);
+            setInitialDspId(null);
             loadCounters();
           }}
         />
@@ -357,7 +415,17 @@ export default function VendorHome({ user }) {
 // one `dvic_schedules` DB row; the DSP customer home reads its own
 // /next-qc-dvic endpoint to show the readiness banner 12hrs before.
 // ─────────────────────────────────────────────────────
-function DvicScheduleManager({ workshopId, availableDsps }) {
+function DvicScheduleManager({
+  workshopId,
+  availableDsps,
+  // 2026-06-07 Jorge — compact mode strips the green-banner header
+  // (icon + title + description + "Schedule QC DVIC" button) so the
+  // VendorHome top-row "Scheduled DVIC" launcher button can live there
+  // instead. A small "+ Schedule new" link below the chip list keeps
+  // the form accessible to vendor admins who want to add an appointment
+  // without leaving the page.
+  compact = false,
+}) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
@@ -388,32 +456,40 @@ function DvicScheduleManager({ workshopId, availableDsps }) {
   };
 
   return (
-    <section className="rounded-lg border border-accent-green/40 bg-accent-green/5 px-4 py-3 mb-4">
-      <div className="flex items-start gap-3 flex-wrap">
-        <PlayCircle className="w-5 h-5 text-accent-green shrink-0 mt-0.5" />
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold text-accent-green flex items-center gap-2">
-            QC DVIC Schedule
-            <span className="px-1.5 py-0.5 rounded-md bg-accent-green/20 text-[10px] font-mono uppercase">
-              Inspector workflow
-            </span>
+    <section className={compact
+      ? 'mb-4 space-y-2'
+      : 'rounded-lg border border-accent-green/40 bg-accent-green/5 px-4 py-3 mb-4'}>
+      {!compact && (
+        <div className="flex items-start gap-3 flex-wrap">
+          <PlayCircle className="w-5 h-5 text-accent-green shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-semibold text-accent-green flex items-center gap-2">
+              QC DVIC Schedule
+              <span className="px-1.5 py-0.5 rounded-md bg-accent-green/20 text-[10px] font-mono uppercase">
+                Inspector workflow
+              </span>
+            </div>
+            <div className="text-[11px] text-text-muted mt-0.5">
+              Schedule when your inspector visits each customer. The DSP sees a readiness banner 12 hours before each appointment.
+            </div>
+            {err && (
+              <div className="text-[10px] text-accent-red mt-1">{err}</div>
+            )}
           </div>
-          <div className="text-[11px] text-text-muted mt-0.5">
-            Schedule when your inspector visits each customer. The DSP sees a readiness banner 12 hours before each appointment.
-          </div>
-          {err && (
-            <div className="text-[10px] text-accent-red mt-1">{err}</div>
-          )}
+          <button
+            type="button"
+            onClick={() => setShowForm((v) => !v)}
+            className="px-3 py-1.5 rounded-md bg-accent-green text-navy-950 text-xs font-semibold hover:opacity-90 flex items-center gap-1 shrink-0"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            {showForm ? 'Close' : 'Schedule QC DVIC'}
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowForm((v) => !v)}
-          className="px-3 py-1.5 rounded-md bg-accent-green text-navy-950 text-xs font-semibold hover:opacity-90 flex items-center gap-1 shrink-0"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          {showForm ? 'Close' : 'Schedule QC DVIC'}
-        </button>
-      </div>
+      )}
+
+      {compact && err && (
+        <div className="text-[10px] text-accent-red">{err}</div>
+      )}
 
       {showForm && (
         <ScheduleDvicForm
@@ -425,13 +501,13 @@ function DvicScheduleManager({ workshopId, availableDsps }) {
       )}
 
       {/* Upcoming list — sorted asc by scheduled_at (server-side). */}
-      <div className="mt-3 space-y-1.5">
+      <div className={`${compact ? '' : 'mt-3'} space-y-1.5`}>
         {loading && (
           <div className="text-[11px] text-text-muted flex items-center gap-1.5">
             <Loader2 className="w-3 h-3 animate-spin" /> Loading…
           </div>
         )}
-        {!loading && rows.length === 0 && (
+        {!loading && rows.length === 0 && !compact && (
           <div className="text-[11px] text-text-muted italic">
             No QC DVICs scheduled yet. Use the button above to add one.
           </div>
@@ -467,6 +543,19 @@ function DvicScheduleManager({ workshopId, availableDsps }) {
           );
         })}
       </div>
+
+      {/* Compact mode: subtle "+ Schedule new" link so vendor admins can
+          still create an appointment without the giant green header.
+          Hidden while the inline form is already open. */}
+      {compact && !showForm && (
+        <button
+          type="button"
+          onClick={() => setShowForm(true)}
+          className="text-[11px] text-text-muted hover:text-accent-green flex items-center gap-1 mt-1"
+        >
+          <Plus className="w-3 h-3" /> Schedule new
+        </button>
+      )}
     </section>
   );
 }

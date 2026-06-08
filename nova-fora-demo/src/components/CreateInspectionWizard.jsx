@@ -94,7 +94,7 @@ export function clearSavedWizardState() {
 }
 
 // ─────────────────────────────────────────────────────
-export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
+export default function CreateInspectionWizard({ user, onClose, onSubmitted, initialDspId = null }) {
   const { t } = useTranslation('wizard');
 
   // Snapshot from the last session (if any) — used to lazily initialize
@@ -266,6 +266,33 @@ export default function CreateInspectionWizard({ user, onClose, onSubmitted }) {
     else setTodayInspections([]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dsp?.id]);
+
+  // 2026-06-07 Jorge — when launched from the VendorHome "Scheduled DVIC"
+  // button, the parent passes `initialDspId` (numeric int) of the DSP
+  // tied to the soonest upcoming scheduled appointment. We skip the DSP
+  // picker by setting `dsp` from `availableDsps` (derived from vehicles)
+  // and jumping straight to step 2 (key recorder). Short-circuits if:
+  //   - no initialDspId (normal Start a QC DVIC flow)
+  //   - vehicles still loading (availableDsps would be empty)
+  //   - dsp already set (saved wizard state restore wins)
+  useEffect(() => {
+    if (!initialDspId || vehiclesLoading || dsp) return;
+    const match = availableDsps.find((d) => d.numericId === initialDspId);
+    if (match) {
+      // Sync state transition is fine here — fires once per launch
+      // (gated by !dsp short-circuit on next render).
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setDsp(match);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setKeysConfirmed(false);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setStep(2);
+    }
+    // availableDsps is recomputed each render but only changes meaningfully
+    // when vehicles finishes loading — depending on vehiclesLoading covers
+    // the only transition that matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialDspId, vehiclesLoading]);
 
   // ─── Step transitions ───────────────────────────────
   const canGoNextStep1 = !!dsp;
