@@ -130,7 +130,11 @@ async function _raw(path, options = {}) {
     const method = options.method || 'GET';
     const reason = err?.message || String(err);
     const enriched = new Error(`Network error: ${method} ${fullUrl} — ${reason}`);
-    enriched.name = err?.name || 'NetworkError';
+    // Always 'NetworkError' — fetch() rejects with TypeError, so keeping
+    // err.name would defeat every `e?.name === 'NetworkError'` check
+    // downstream (BodyRepairFlow.runAction's soft-message path). The
+    // original error is preserved in `cause`.
+    enriched.name = 'NetworkError';
     enriched.cause = err;
     throw enriched;
   }

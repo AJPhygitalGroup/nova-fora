@@ -1848,12 +1848,14 @@ function DvicDefectCatalog() {
               const sv = SOURCE_VARIANT[d.source] || SOURCE_VARIANT.DSP;
               const isAmazon = d.source === 'Amazon';
               const partsDisplay = (d.parts || []).join(', ') || '—';
+              // keysToCamel flips the wire's snake_case — these rows carry
+              // defectText / defectType / isCritical, NOT the raw API keys.
               const targetsDisplay = (d.targets || [])
-                .map((target) => `${target.part}/${target.defect_type}`)
+                .map((target) => `${target.part}/${target.defectType}`)
                 .join(', ');
               return (
                 <tr key={d.id} className={`border-b border-navy-800/50 last:border-b-0 ${
-                  d.is_critical
+                  d.isCritical
                     ? 'bg-accent-red/[0.06] hover:bg-accent-red/[0.10]'
                     : isAmazon
                       ? 'bg-accent-gold/[0.03]'
@@ -1862,14 +1864,14 @@ function DvicDefectCatalog() {
                   <td className="px-3 py-2.5">
                     <CriticalToggle
                       ruleId={d.id}
-                      initialCritical={!!d.is_critical}
+                      initialCritical={!!d.isCritical}
                       onChanged={(next) => {
                         // Optimistic update — patch the cached row so the
                         // next render reflects the new state immediately.
                         setRulesByClass((cur) => ({
                           ...cur,
                           [activeTemplate]: (cur[activeTemplate] || []).map((r) =>
-                            r.id === d.id ? { ...r, is_critical: next } : r
+                            r.id === d.id ? { ...r, isCritical: next } : r
                           ),
                         }));
                       }}
@@ -1884,7 +1886,7 @@ function DvicDefectCatalog() {
                   <td className="px-3 py-2.5 text-white">{SECTION_LABEL[d.section] || d.section || '—'}</td>
                   <td className="px-3 py-2.5 text-white whitespace-nowrap">{partsDisplay}</td>
                   <td className="px-3 py-2.5 text-navy-200 max-w-md">
-                    <div className="line-clamp-2">{d.defect_text}</div>
+                    <div className="line-clamp-2">{d.defectText}</div>
                   </td>
                   <td className="px-3 py-2.5 text-navy-300">
                     {d.group || <span className="text-accent-gold italic">{t('dvicCatalog.pending', 'Pending')}</span>}
