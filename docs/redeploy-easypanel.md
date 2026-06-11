@@ -210,6 +210,40 @@ HTTP 200 en el PUT al presigned URL.
 Detectado 2026-05-26 cuando un inspector vio `Upload failed (403)` en el
 paso "Lectura del odómetro" del wizard.
 
+### 5.4.2 IMPORTANTE — Root de MinIO rotado (security fix 2026-06-10)
+
+El review de seguridad del 2026-06-08 encontró que, por el bug `_FILE` de
+arriba, MinIO seguía corriendo con el root default `minioadmin/minioadmin`
+**y el API S3 tiene dominio público** — cualquiera en internet con esas
+credenciales tenía lectura/escritura/borrado total del bucket de fotos.
+
+**Fix aplicado el 2026-06-10 directo sobre el Swarm service** (los 4 env
+`*_FILE` rotos se removieron y se agregó un root fuerte):
+
+```bash
+docker service update \
+  --env-rm MINIO_ROOT_USER_FILE --env-rm MINIO_ROOT_PASSWORD_FILE \
+  --env-rm MINIO_ACCESS_KEY_FILE --env-rm MINIO_SECRET_KEY_FILE \
+  --env-add MINIO_ROOT_USER=novaroot \
+  --env-add "MINIO_ROOT_PASSWORD=<en el password manager de Jorge>" \
+  --detach nova-fora_minio
+```
+
+Verificado post-fix: `minioadmin` rechazado, root nuevo OK, usuario IAM
+`admin` (el que firma los presigned del API) intacto en `/data`, y PUT
+presigned end-to-end por el dominio público → HTTP 200.
+
+⚠️ **CAVEAT — el cambio vive en el Swarm spec, NO en EasyPanel.** Si algún
+día le das **Deploy** al servicio `storage` desde la UI de EasyPanel,
+EasyPanel re-aplica SU spec (que aún tiene los `_FILE` rotos) y el root
+vuelve a `minioadmin/minioadmin`. Para hacerlo permanente: EasyPanel →
+servicio `storage` → **Environment** → borrar las 4 líneas `*_FILE` y
+agregar `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` con los valores nuevos
+→ Save (NO hace falta Deploy inmediato; queda para el próximo).
+
+Backup del spec anterior para revert de emergencia:
+`/root/minio-service-backup-20260610.json` en el VPS.
+
 ### 5.5 Web (frontend Vite)
 
 1. **+ Service** → **App**
