@@ -42,6 +42,7 @@ from app.db import get_session
 from app.models.organization import Organization
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
+from app.services.permissions import is_dsp_role, is_vendor_role
 from app.models.work_orders import (
     RepairFeedback,
     VendorWorkshop,
@@ -339,19 +340,37 @@ async def vendor_scorecard(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "workshop not found")
 
     if current.role != UserRole.SITE_ADMIN:
-        if current.role.value.startswith("vendor_") or current.role == UserRole.TECHNICIAN or current.role == UserRole.SERVICE_WRITER:
+        if is_vendor_role(current.role):
             if ws.organization_id != current.organization_id:
                 raise HTTPException(status.HTTP_403_FORBIDDEN, "not your workshop")
-        # DSP users can see anything they've reviewed (no extra gate).
+        elif not is_dsp_role(current.role):
+            # Unknown role — deny outright.
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "not your workshop")
+        # DSP callers are allowed but pinned to their own org's feedback
+        # below via dsp_scope_id (P0 #3) — no per-workshop gate needed.
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    # Base feedback filter shared by EVERY aggregate below. DSP callers
+    # are pinned to their own org's reviews so they can't read another
+    # DSP's feedback on this (or any) workshop — vehicle, org name,
+    # reviewer name (2026-06-08 review P0 #3). The old code gated only
+    # the aggregate's access and left the recent-feedback drilldown
+    # querying ALL DSPs. Vendor + site_admin keep the full cross-DSP
+    # reputation view (dsp_scope_id stays None).
+    dsp_scope_id = current.organization_id if is_dsp_role(current.role) else None
+    fb_conds = [
+        RepairFeedback.vendor_workshop_id == vendor_workshop_id,
+        RepairFeedback.created_at >= cutoff,
+    ]
+    if dsp_scope_id is not None:
+        fb_conds.append(RepairFeedback.dsp_id == dsp_scope_id)
 
     # ── Vote counts + escalations ─────────────────────────
     counts = dict(
         (await session.execute(
             select(RepairFeedback.vote, func.count(RepairFeedback.id))
-            .where(RepairFeedback.vendor_workshop_id == vendor_workshop_id)
-            .where(RepairFeedback.created_at >= cutoff)
+            .where(*fb_conds)
             .group_by(RepairFeedback.vote)
         )).all()
     )
@@ -363,8 +382,7 @@ async def vendor_scorecard(
     escalations = (
         await session.execute(
             select(func.count(RepairFeedback.id))
-            .where(RepairFeedback.vendor_workshop_id == vendor_workshop_id)
-            .where(RepairFeedback.created_at >= cutoff)
+            .where(*fb_conds)
             .where(RepairFeedback.escalate.is_(True))
         )
     ).scalar() or 0
@@ -373,8 +391,7 @@ async def vendor_scorecard(
     imp_rows = (
         await session.execute(
             select(RepairFeedback.impressive_attribute, func.count(RepairFeedback.id))
-            .where(RepairFeedback.vendor_workshop_id == vendor_workshop_id)
-            .where(RepairFeedback.created_at >= cutoff)
+            .where(*fb_conds)
             .where(RepairFeedback.impressive_attribute.is_not(None))
             .group_by(RepairFeedback.impressive_attribute)
         )
@@ -382,8 +399,7 @@ async def vendor_scorecard(
     neg_rows = (
         await session.execute(
             select(RepairFeedback.negative_attribute, func.count(RepairFeedback.id))
-            .where(RepairFeedback.vendor_workshop_id == vendor_workshop_id)
-            .where(RepairFeedback.created_at >= cutoff)
+            .where(*fb_conds)
             .where(RepairFeedback.negative_attribute.is_not(None))
             .group_by(RepairFeedback.negative_attribute)
         )
@@ -401,8 +417,7 @@ async def vendor_scorecard(
             .join(Vehicle, Vehicle.id == WorkOrder.vehicle_id, isouter=True)
             .join(Organization, Organization.id == RepairFeedback.dsp_id, isouter=True)
             .join(User, User.id == RepairFeedback.submitted_by_id, isouter=True)
-            .where(RepairFeedback.vendor_workshop_id == vendor_workshop_id)
-            .where(RepairFeedback.created_at >= cutoff)
+            .where(*fb_conds)
             .order_by(RepairFeedback.created_at.desc())
             .limit(20)
         )
@@ -461,7 +476,35 @@ async def benchmarks(
     (top satisfaction among workshops serving the same DSP), and
     best-in-class (top satisfaction across all workshops). Station
     is approximated by "DSPs this workshop serves" — pass dsp_id
-    to narrow if needed."""
+    to narrow if needed.
+
+    Tenancy (2026-06-08 review P0 #3): the endpoint had auth but no
+    per-workshop gate, so any authenticated user could read ANY
+    workshop's benchmarks AND its `station_dsp_ids` — i.e. the
+    vendor's full customer list. Now:
+      - vendor users → only their own org's workshop.
+      - DSP users    → allowed, but the station is forced to their own
+                       DSP and `station_dsp_ids` never leaks other DSPs.
+      - site_admin   → any workshop, full station list.
+    """
+    ws = (
+        await session.execute(
+            select(VendorWorkshop).where(VendorWorkshop.id == vendor_workshop_id)
+        )
+    ).scalar_one_or_none()
+    if ws is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "workshop not found")
+    if current.role != UserRole.SITE_ADMIN:
+        if is_vendor_role(current.role):
+            if ws.organization_id != current.organization_id:
+                raise HTTPException(status.HTTP_403_FORBIDDEN, "not your workshop")
+        elif is_dsp_role(current.role):
+            # Force the comparison station to the caller's own DSP so the
+            # response never exposes the vendor's other customers.
+            dsp_id = current.organization_id
+        else:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "not your workshop")
+
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     # Helper to compute a single workshop's satisfaction

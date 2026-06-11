@@ -27,6 +27,7 @@ from app.models.organization import OrgType, Organization
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
 from app.models.vehicle_note import VehicleNote
+from app.services.tenant_scope import resolve_dsp_scope
 from app.models.work_orders import (
     DefectResolution,
     DefectResolutionStatus,
@@ -96,17 +97,18 @@ async def list_vehicles(
     current: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> VehicleListResponse:
-    # Role-based scoping
+    # Role-based scoping — centralized so non-owner DSP roles + vendor
+    # roles can't read other tenants' fleets (2026-06-08 review P0 #1).
     stmt = select(Vehicle)
     count_stmt = select(func.count()).select_from(Vehicle)
 
-    if current.role == UserRole.DSP_OWNER:
-        # DSP owners only see their own org's vehicles (override any dsp_id param).
-        stmt = stmt.where(Vehicle.dsp_id == current.organization_id)
-        count_stmt = count_stmt.where(Vehicle.dsp_id == current.organization_id)
-    elif dsp_id is not None:
-        stmt = stmt.where(Vehicle.dsp_id == dsp_id)
-        count_stmt = count_stmt.where(Vehicle.dsp_id == dsp_id)
+    scope = await resolve_dsp_scope(session, current, dsp_id)
+    if scope.denies_everything:
+        return VehicleListResponse(items=[], total=0, page=page, per_page=per_page)
+    if scope.allowed_dsp_ids is not None:
+        ids = list(scope.allowed_dsp_ids)
+        stmt = stmt.where(Vehicle.dsp_id.in_(ids))
+        count_stmt = count_stmt.where(Vehicle.dsp_id.in_(ids))
 
     # Filters
     if is_active is not None:

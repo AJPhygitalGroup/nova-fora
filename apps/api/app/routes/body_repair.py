@@ -1495,6 +1495,26 @@ async def attach_pave(
         # without an underscore and boto3 accepts it. A 2MB PDF
         # round-trips in ~50-200ms via the public path; acceptable
         # for an inline parse.
+        # Validate the storage_key BEFORE fetching it (2026-06-08 P0 #2).
+        # _require_request_scope proves the caller can touch THIS request,
+        # but body.storage_key is attacker-controlled — without this guard
+        # a caller could point it at any object in the bucket (another
+        # tenant's PAVE / WO photo), have the server fetch it, and pin its
+        # path on this request's PAVE row → later cross-tenant read via the
+        # thumbnail presigned GET. Accept only: a PAVE minted for THIS
+        # request, or a preview being promoted (same prefix the preview
+        # endpoints already trust).
+        from app.storage.s3 import storage_key_prefix
+        _req_prefix = storage_key_prefix("body_repair_requests", req.id)
+        if not (
+            body.storage_key.startswith(_req_prefix)
+            or body.storage_key.startswith("photos/body_repair_previews/")
+        ):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "storage_key must be a PAVE upload for this request or a preview",
+            )
+
         s = get_settings()
         cli = _public_client()
         try:
@@ -2576,8 +2596,18 @@ async def start_repair(
     # a vendor who forgot a photo on the first call can amend during
     # IN_REPAIR (the upload kind's status gate already enforces this).
     if body.photos or body.notes:
+        from app.storage.s3 import storage_key_matches, storage_key_prefix
         blob = dict(req.pickup_blob or {})
         if body.photos:
+            # Reject any storage_key not minted for THIS request — else a
+            # caller could pin (and later read, via the gallery's presigned
+            # GET) another request's / tenant's object (2026-06-08 P0 #2).
+            for p in body.photos:
+                if not storage_key_matches(p.storage_key, "body_repair_requests", req.id):
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST,
+                        f"storage_key must start with {storage_key_prefix('body_repair_requests', req.id)!r}",
+                    )
             existing = list(blob.get("checkout_photos") or [])
             existing.extend(
                 {"storage_key": p.storage_key, "caption": p.caption}
@@ -2664,11 +2694,18 @@ async def complete_repair(
             f"complete-repair requires status=in_repair (current: {req.status.value})",
         )
     now = utc_now()
+    from app.storage.s3 import storage_key_matches, storage_key_prefix
     blob = dict(req.completion_blob or {})
     if body.notes and body.notes.strip():
         blob["notes"] = body.notes.strip()
     existing_photos = list(blob.get("photos") or [])
     for p in body.photos:
+        # Reject a storage_key not minted for THIS request (2026-06-08 P0 #2).
+        if not storage_key_matches(p.storage_key, "body_repair_requests", req.id):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"storage_key must start with {storage_key_prefix('body_repair_requests', req.id)!r}",
+            )
         existing_photos.append({
             "storage_key": p.storage_key,
             "caption": p.caption,

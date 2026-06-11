@@ -112,6 +112,25 @@ def new_storage_key(
     return f"photos/{parent_kind}/{parent_id}/{now:%Y-%m-%d}/{uid}.{safe_ext}"
 
 
+def storage_key_prefix(parent_kind: str, parent_id: int | str) -> str:
+    """The exact prefix `new_storage_key` mints for (parent_kind, parent_id).
+
+    Commit endpoints validate a client-supplied `storage_key` against
+    this so a caller can't attach (or later read, via the presigned-GET
+    the stored key produces) an object that belongs to a different
+    parent — i.e. another tenant's photo. See 2026-06-08 review P0 #2.
+    """
+    return f"photos/{parent_kind}/{parent_id}/"
+
+
+def storage_key_matches(storage_key: str, parent_kind: str, parent_id: int | str) -> bool:
+    """True iff `storage_key` was minted for (parent_kind, parent_id).
+
+    Mirrors the layout in `new_storage_key`. Used by photo-commit
+    endpoints to reject cross-parent / cross-tenant storage keys."""
+    return storage_key.startswith(storage_key_prefix(parent_kind, parent_id))
+
+
 # ─────────────────────────────────────────────────────
 # Presigned URLs
 # ─────────────────────────────────────────────────────

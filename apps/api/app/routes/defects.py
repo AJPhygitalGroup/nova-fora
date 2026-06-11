@@ -66,6 +66,7 @@ from app.services.defect_validation import (
     DefectValidationError,
     validate_defect_write,
 )
+from app.services.tenant_scope import resolve_dsp_scope
 from app.services.pubsub import (
     publish_defect_created,
     publish_defect_review_event,
@@ -395,13 +396,17 @@ async def list_defects(
         .join(Vehicle, Defect.vehicle_id == Vehicle.id)
     )
 
-    # Tenant scoping
-    if current.role == UserRole.DSP_OWNER:
-        base = base.where(Vehicle.dsp_id == current.organization_id)
-        count_q = count_q.where(Vehicle.dsp_id == current.organization_id)
-    elif dsp_id is not None:
-        base = base.where(Vehicle.dsp_id == dsp_id)
-        count_q = count_q.where(Vehicle.dsp_id == dsp_id)
+    # Tenant scoping — centralized (2026-06-08 review P0 #1). Previously
+    # any non-dsp_owner could pass dsp_id (or omit it for an unfiltered
+    # all-tenant read). DSP roles now lock to their org, vendors to their
+    # served DSPs, site_admin keeps the optional filter.
+    scope = await resolve_dsp_scope(session, current, dsp_id)
+    if scope.denies_everything:
+        return DefectV2ListResponse(items=[], total=0, page=page, per_page=per_page)
+    if scope.allowed_dsp_ids is not None:
+        ids = list(scope.allowed_dsp_ids)
+        base = base.where(Vehicle.dsp_id.in_(ids))
+        count_q = count_q.where(Vehicle.dsp_id.in_(ids))
 
     if vehicle_id:
         vid = _parse_vehicle_id(vehicle_id)

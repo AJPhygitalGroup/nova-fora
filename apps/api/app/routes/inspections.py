@@ -34,6 +34,7 @@ from app.models.photo import Photo, PhotoCategory
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
 from app.routes.vehicles import _parse_vehicle_id
+from app.services.tenant_scope import resolve_dsp_scope
 from app.schemas.defect import DefectV2Response
 from app.schemas.inspection import (
     InspectionCreate,
@@ -287,12 +288,16 @@ async def list_inspections(
         stmt = stmt.where(Inspection.status == status_.value)
         count_stmt = count_stmt.where(Inspection.status == status_.value)
 
-    if current.role == UserRole.DSP_OWNER:
-        stmt = stmt.where(Inspection.dsp_id == current.organization_id)
-        count_stmt = count_stmt.where(Inspection.dsp_id == current.organization_id)
-    elif dsp_id is not None:
-        stmt = stmt.where(Inspection.dsp_id == dsp_id)
-        count_stmt = count_stmt.where(Inspection.dsp_id == dsp_id)
+    # Centralized tenant scoping (2026-06-08 review P0 #1): non-owner DSP
+    # roles + vendor roles previously fell through to an unfiltered query
+    # or could pass an arbitrary dsp_id.
+    scope = await resolve_dsp_scope(session, current, dsp_id)
+    if scope.denies_everything:
+        return InspectionListResponse(items=[], total=0, page=page, per_page=per_page)
+    if scope.allowed_dsp_ids is not None:
+        ids = list(scope.allowed_dsp_ids)
+        stmt = stmt.where(Inspection.dsp_id.in_(ids))
+        count_stmt = count_stmt.where(Inspection.dsp_id.in_(ids))
 
     if vehicle_id is not None:
         vid = _parse_vehicle_id(vehicle_id)

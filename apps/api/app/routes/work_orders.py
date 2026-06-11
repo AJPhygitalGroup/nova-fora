@@ -83,6 +83,8 @@ from app.services.wo_line_items import (
     generate_line_items_on_accept,
 )
 from app.services.wo_router import route_repair_request
+from app.services.permissions import is_dsp_role, is_vendor_role
+from app.services.tenant_scope import resolve_dsp_scope
 from app.services.pubsub import (
     publish_work_order_event,
     subscribe_work_order_events,
@@ -890,7 +892,10 @@ async def _build_wo_response(
 
 
 async def _vendor_workshop_ids_for_user(session: AsyncSession, user: User) -> list[int]:
-    if user.role not in (UserRole.VENDOR_ADMIN, UserRole.TECHNICIAN):
+    # Covers ALL vendor roles. Narrowing to admin+technician left
+    # service_writer / vendor_viewer unscoped on the per-item view check
+    # (2026-06-08 review P0 #1).
+    if not is_vendor_role(user.role):
         return []
     if user.organization_id is None:
         return []
@@ -910,17 +915,19 @@ async def _vendor_workshop_ids_for_user(session: AsyncSession, user: User) -> li
 async def _can_view_wo(session: AsyncSession, wo: WorkOrder, user: User) -> bool:
     if user.role == UserRole.SITE_ADMIN:
         return True
-    if user.role == UserRole.DSP_OWNER:
+    if is_dsp_role(user.role):
+        # All DSP roles see their own org's WOs.
         return wo.dsp_id == user.organization_id
-    if user.role == UserRole.VENDOR_ADMIN:
-        workshop_ids = await _vendor_workshop_ids_for_user(session, user)
-        return wo.vendor_workshop_id in workshop_ids
     if user.role == UserRole.TECHNICIAN:
         workshop_ids = await _vendor_workshop_ids_for_user(session, user)
         return (
             wo.vendor_workshop_id in workshop_ids
             or wo.assigned_technician_id == user.id
         )
+    if is_vendor_role(user.role):
+        # vendor_admin / service_writer / vendor_viewer — workshop-scoped.
+        workshop_ids = await _vendor_workshop_ids_for_user(session, user)
+        return wo.vendor_workshop_id in workshop_ids
     return False
 
 
@@ -1020,15 +1027,18 @@ async def list_work_orders(
     _ = get_request_language(request)
     stmt = select(WorkOrder)
 
-    if current.role == UserRole.DSP_OWNER:
-        stmt = stmt.where(WorkOrder.dsp_id == current.organization_id)
-    elif current.role == UserRole.VENDOR_ADMIN:
-        workshop_ids = await _vendor_workshop_ids_for_user(session, current)
-        if not workshop_ids:
-            return WorkOrderListResponse(items=[], total=0)
-        stmt = stmt.where(WorkOrder.vendor_workshop_id.in_(workshop_ids))
+    # Centralized tenant scoping (2026-06-08 review P0 #1). The old
+    # if/elif chain only named DSP_OWNER / VENDOR_ADMIN / TECHNICIAN, so
+    # dsp_manager / dsp_inspector / dsp_viewer / service_writer /
+    # vendor_viewer all fell into the `else` (site_admin) branch — they
+    # saw every tenant's WOs and could pass an arbitrary dsp_id /
+    # vendor_workshop_id. Vendors are scoped by WORKSHOP (not served-DSP)
+    # so a vendor never sees another vendor's WO at a shared DSP.
+    scope = await resolve_dsp_scope(session, current, dsp_id)
+    if is_dsp_role(current.role):
+        stmt = stmt.where(WorkOrder.dsp_id.in_(list(scope.allowed_dsp_ids)))
     elif current.role == UserRole.TECHNICIAN:
-        workshop_ids = await _vendor_workshop_ids_for_user(session, current)
+        workshop_ids = scope.vendor_workshop_ids
         condition = WorkOrder.assigned_technician_id == current.id
         if workshop_ids:
             condition = condition | WorkOrder.vendor_workshop_id.in_(workshop_ids)
@@ -1036,15 +1046,25 @@ async def list_work_orders(
         # Technicians don't see DSP-cancelled WOs — those are work that's
         # already off the table; surfacing them on the tech queue is just
         # noise. Vendor admins / service writers still see them
-        # (their list path above doesn't apply this filter).
+        # (their list path below doesn't apply this filter).
         if status_filter is None:
             stmt = stmt.where(WorkOrder.status != WorkOrderStatus.CANCELLED.value)
-    else:
-        # site_admin — optional filters
+    elif is_vendor_role(current.role):
+        # vendor_admin / service_writer / vendor_viewer — all see the
+        # WOs routed to their org's workshops.
+        workshop_ids = scope.vendor_workshop_ids
+        if not workshop_ids:
+            return WorkOrderListResponse(items=[], total=0)
+        stmt = stmt.where(WorkOrder.vendor_workshop_id.in_(workshop_ids))
+    elif current.role == UserRole.SITE_ADMIN:
+        # Platform admin — optional filters.
         if dsp_id is not None:
             stmt = stmt.where(WorkOrder.dsp_id == dsp_id)
         if vendor_workshop_id is not None:
             stmt = stmt.where(WorkOrder.vendor_workshop_id == vendor_workshop_id)
+    else:
+        # Unknown / unhandled role — deny.
+        return WorkOrderListResponse(items=[], total=0)
 
     if assigned_to_me:
         stmt = stmt.where(WorkOrder.assigned_technician_id == current.id)
@@ -3042,7 +3062,16 @@ async def checkout_wo(
     # all rows for the same van display the same images.
     if body.photos:
         from app.models.work_orders import WorkOrderPhoto, WorkOrderPhotoStage
+        from app.storage.s3 import storage_key_matches, storage_key_prefix
         for p in body.photos:
+            # Reject a storage_key that wasn't minted for THIS WO — else a
+            # caller could attach (and later read via the presigned GET it
+            # produces) another tenant's object (2026-06-08 review P0 #2).
+            if not storage_key_matches(p.storage_key, "work_orders", wo.id):
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"storage_key must start with {storage_key_prefix('work_orders', wo.id)!r}",
+                )
             row = WorkOrderPhoto(
                 work_order_id=wo.id,
                 stage=WorkOrderPhotoStage.VEHICLE_ARRIVAL,
@@ -3197,7 +3226,14 @@ async def checkin_wo(
     # Photos — only on the TARGET WO; siblings stay un-photographed.
     if body.photos:
         from app.models.work_orders import WorkOrderPhoto, WorkOrderPhotoStage
+        from app.storage.s3 import storage_key_matches, storage_key_prefix
         for p in body.photos:
+            # Reject a storage_key not minted for THIS WO (2026-06-08 P0 #2).
+            if not storage_key_matches(p.storage_key, "work_orders", wo.id):
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"storage_key must start with {storage_key_prefix('work_orders', wo.id)!r}",
+                )
             row = WorkOrderPhoto(
                 work_order_id=wo.id,
                 stage=WorkOrderPhotoStage.VEHICLE_RETURN,

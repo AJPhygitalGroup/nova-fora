@@ -52,6 +52,8 @@ from app.services.defect_validation import (
 from app.services.pubsub import publish_defect_created
 from app.services.wo_activity_log import log_event, log_status_change
 from app.services.wo_router import route_repair_request
+from app.services.permissions import is_dsp_role, is_vendor_role
+from app.services.tenant_scope import resolve_dsp_scope
 
 router = APIRouter(prefix="/repair-requests", tags=["repair-requests"])
 
@@ -173,8 +175,13 @@ async def _list_wo_ids(session: AsyncSession, rr_id: int) -> list[int]:
 
 
 async def _vendor_workshop_ids_for_user(session: AsyncSession, user: User) -> list[int]:
-    """Return the workshop ids whose organization_id == user.organization_id."""
-    if user.role not in (UserRole.VENDOR_ADMIN, UserRole.TECHNICIAN):
+    """Return the workshop ids whose organization_id == user.organization_id.
+
+    Covers ALL vendor roles (admin / service_writer / technician /
+    vendor_viewer). The previous admin+technician-only gate let
+    service_writer / vendor_viewer fall through the list-scoping chain
+    into an unfiltered read (2026-06-08 review P0 #1)."""
+    if not is_vendor_role(user.role):
         return []
     if user.organization_id is None:
         return []
@@ -196,10 +203,12 @@ async def _can_view_rr(
 ) -> bool:
     if user.role == UserRole.SITE_ADMIN:
         return True
-    if user.role == UserRole.DSP_OWNER:
+    if is_dsp_role(user.role):
+        # All DSP roles (owner / manager / inspector / viewer) see their
+        # own org's repair requests.
         return rr.dsp_id == user.organization_id
-    if user.role in (UserRole.VENDOR_ADMIN, UserRole.TECHNICIAN):
-        # Vendor/tech sees RRs that touch their workshops
+    if is_vendor_role(user.role):
+        # Any vendor role sees RRs that touch their workshops.
         workshop_ids = await _vendor_workshop_ids_for_user(session, user)
         if not workshop_ids:
             return False
@@ -234,10 +243,17 @@ async def list_repair_requests(
     _ = get_request_language(request)
     stmt = select(RepairRequest)
 
-    if current.role == UserRole.DSP_OWNER:
-        stmt = stmt.where(RepairRequest.dsp_id == current.organization_id)
-    elif current.role in (UserRole.VENDOR_ADMIN, UserRole.TECHNICIAN):
-        workshop_ids = await _vendor_workshop_ids_for_user(session, current)
+    # Centralized tenant scoping (2026-06-08 review P0 #1). The old chain
+    # named only DSP_OWNER / VENDOR_ADMIN / TECHNICIAN; every other role
+    # (dsp_manager, dsp_inspector, dsp_viewer, service_writer,
+    # vendor_viewer) fell through with NO where-clause → an unfiltered
+    # all-tenant read. Vendors stay workshop-scoped so they never see a
+    # sibling vendor's RR at a shared DSP.
+    scope = await resolve_dsp_scope(session, current, dsp_id)
+    if is_dsp_role(current.role):
+        stmt = stmt.where(RepairRequest.dsp_id.in_(list(scope.allowed_dsp_ids)))
+    elif is_vendor_role(current.role):
+        workshop_ids = scope.vendor_workshop_ids
         if not workshop_ids:
             return RepairRequestListResponse(items=[], total=0)
         # RRs that have at least one WO at one of our workshops
@@ -247,8 +263,12 @@ async def list_repair_requests(
             .distinct()
         )
         stmt = stmt.where(RepairRequest.id.in_(rr_ids_subq))
-    elif current.role == UserRole.SITE_ADMIN and dsp_id is not None:
-        stmt = stmt.where(RepairRequest.dsp_id == dsp_id)
+    elif current.role == UserRole.SITE_ADMIN:
+        if dsp_id is not None:
+            stmt = stmt.where(RepairRequest.dsp_id == dsp_id)
+    else:
+        # Unknown / unhandled role — deny.
+        return RepairRequestListResponse(items=[], total=0)
 
     if status_filter is not None:
         stmt = stmt.where(RepairRequest.status == status_filter)
