@@ -14,6 +14,12 @@ from sqlmodel import select
 from app.auth.dependencies import get_current_user
 from app.auth.denylist import is_token_revoked, revoke_token
 from app.auth.hashing import verify_password
+from app.auth.rate_limit import (
+    RETRY_AFTER_SECONDS,
+    check_login_rate_limit,
+    clear_login_rate_limit,
+    client_ip,
+)
 from app.auth.jwt import (
     TokenError,
     TokenType,
@@ -96,6 +102,18 @@ async def login(
     session: AsyncSession = Depends(get_session),
 ) -> TokenPair:
     lang = get_request_language(request)
+
+    # Rate limit BEFORE touching the DB / hashing (2026-06-08 review #5c).
+    # Counts this attempt against per-(email, ip) and per-ip windows;
+    # over the limit → 429 with Retry-After. Fail-open on Redis errors.
+    ip = client_ip(request)
+    if not await check_login_rate_limit(ip, body.email):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=tr_error(E.RATE_LIMITED, lang),
+            headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
+        )
+
     user = (
         await session.execute(select(User).where(User.email == body.email.lower()))
     ).scalar_one_or_none()
@@ -125,6 +143,11 @@ async def login(
         request=request,
     )
     await session.commit()
+
+    # Successful auth — clear the per-(email, ip) attempt counter so a
+    # user who mistyped a couple times before getting it right doesn't
+    # stay penalized for the rest of the window.
+    await clear_login_rate_limit(ip, body.email)
 
     return TokenPair(
         access_token=create_access_token(user_id=user.id),

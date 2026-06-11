@@ -46,6 +46,7 @@ class E:
     USER_STATUS = "user_status"
     USER_NO_LONGER_ACTIVE = "user_no_longer_active"
     INVALID_CREDENTIALS = "invalid_credentials"
+    RATE_LIMITED = "rate_limited"
     REQUIRES_ROLE = "requires_role"
     DANGLING_ORG = "dangling_org"
 
@@ -132,6 +133,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     E.INVALID_CREDENTIALS: {
         "en": "invalid credentials",
         "es": "credenciales inválidas",
+    },
+    E.RATE_LIMITED: {
+        "en": "too many login attempts; try again in a few minutes",
+        "es": "demasiados intentos de inicio de sesión; vuelve a intentarlo en unos minutos",
     },
     E.REQUIRES_ROLE: {
         "en": "requires role in {roles}",
