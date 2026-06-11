@@ -1940,8 +1940,11 @@ async def list_quotes(
 # ─────────────────────────────────────────────────────
 class _QuoteLineItemBody(BaseModel):
     description: str | None = Field(default=None, max_length=300)
-    parts_cents: int = Field(default=0, ge=0)
-    labor_cents: int = Field(default=0, ge=0)
+    # le bounds keep a fat-fingered amount a 422, not a Postgres INT4
+    # overflow → 500 (2026-06-08 review #6). 2e9 cents = $20M, well under
+    # the INT4 ceiling (2_147_483_647) yet far above any real line item.
+    parts_cents: int = Field(default=0, ge=0, le=2_000_000_000)
+    labor_cents: int = Field(default=0, ge=0, le=2_000_000_000)
 
 
 class SubmitQuoteBody(BaseModel):
@@ -2823,7 +2826,8 @@ async def signoff(
 class MarkPaidBody(BaseModel):
     """Optional payment amount in cents for the audit trail."""
 
-    paid_amount_cents: int | None = Field(default=None, ge=0)
+    # le bound → 422 instead of an INT4 overflow 500 (2026-06-08 #6).
+    paid_amount_cents: int | None = Field(default=None, ge=0, le=2_000_000_000)
 
     model_config = ConfigDict(extra="forbid")
 

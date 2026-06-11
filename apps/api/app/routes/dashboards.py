@@ -27,7 +27,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import and_, func, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -820,9 +820,25 @@ async def confirm_upcoming_dvic(
 # ═════════════════════════════════════════════════════
 
 class DvicScheduleCreateBody(BaseModel):
-    dsp_id: int
+    dsp_id: int = Field(..., ge=1)
     scheduled_at: datetime
-    notes: str | None = None
+    # Column is VARCHAR(500); cap here so an oversized note is a 422, not
+    # a Postgres value-too-long 500 (2026-06-08 review #6).
+    notes: str | None = Field(default=None, max_length=500)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("scheduled_at")
+    @classmethod
+    def _require_tz_aware(cls, v: datetime) -> datetime:
+        # The column is TIMESTAMPTZ — asyncpg rejects a tz-naive datetime
+        # at insert with a DataError (→ 500). The frontend always sends an
+        # ISO string with a `Z`/offset, so a naive value is malformed
+        # input: reject it as a clean 422 instead of letting it reach the
+        # driver (2026-06-08 review #6).
+        if v.tzinfo is None or v.tzinfo.utcoffset(v) is None:
+            raise ValueError("scheduled_at must include a timezone offset (e.g. ...Z)")
+        return v
 
 
 class DvicScheduleRow(BaseModel):
@@ -963,7 +979,11 @@ async def create_dvic_schedule(
 
 
 class CancelDvicBody(BaseModel):
-    reason: str | None = None
+    # Column is VARCHAR(200); cap here → 422 not a value-too-long 500
+    # (2026-06-08 review #6).
+    reason: str | None = Field(default=None, max_length=200)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 @router.post(

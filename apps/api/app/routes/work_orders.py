@@ -501,7 +501,10 @@ class CompleteBody(BaseModel):
     # the spec's intent — it's the at-completion odometer reading).
     # Backend additionally checks it's >= the inspection's odometer
     # reading so a tech can't accidentally enter a lower number.
-    last_mileage: int = Field(..., ge=0)
+    # le bound → 422 instead of an INT4 overflow 500 (2026-06-08 #6).
+    # 10M miles is ~5x the highest-mileage vehicle ever recorded, so it
+    # never rejects a real reading but stops a fat-fingered 999999999999.
+    last_mileage: int = Field(..., ge=0, le=10_000_000)
     odometer_photo_path: str | None = Field(default=None, max_length=500)
     work_photo_path: str | None = Field(default=None, max_length=500)
     model_config = ConfigDict(extra="forbid")
@@ -602,14 +605,18 @@ class RoPatchBody(BaseModel):
 
 
 class NoteBody(BaseModel):
-    body: str = Field(..., min_length=1)
+    # max_length caps the note at the request layer — the column is TEXT
+    # (unbounded), so without this a multi-MB body would be accepted and
+    # stored, a cheap memory/storage DoS (2026-06-08 review #6). 5000
+    # chars is far above any real note.
+    body: str = Field(..., min_length=1, max_length=5000)
     author_role: NoteAuthorRole = NoteAuthorRole.ADMIN
     channel: WorkOrderNoteChannel = Field(
         default=WorkOrderNoteChannel.INTERNAL,
         description="'internal' (vendor team only) or 'customer' (visible to DSP).",
     )
     escalation_reason: str | None = Field(
-        default=None,
+        default=None, max_length=50,
         description="Set to 'cmr' or 'exceeded_price_cap' to flag this customer "
                     "note for SW escalation (mockup p.7). Only meaningful on "
                     "channel='customer'; backend rejects it on internal notes.",
