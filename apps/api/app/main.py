@@ -34,6 +34,30 @@ from app.storage import ensure_bucket
 
 settings = get_settings()
 
+# ── Prod hardening (2026-06-08 review #5) ─────────────
+# Treat these env values as "production" for security gates.
+_PROD_ENVS = {"production", "prod"}
+_IS_PROD = settings.env.strip().lower() in _PROD_ENVS
+
+# Boot-guard: refuse to start in prod with insecure defaults still in
+# place. Failing here crash-loops the container LOUDLY (visible in the
+# runtime logs) instead of silently serving JWTs signed with a public,
+# git-committed secret — which would let anyone mint admin tokens.
+# Verified 2026-06-11 that prod already carries a real 64-char
+# JWT_SECRET + non-default S3 key, so this won't trip current prod.
+if _IS_PROD:
+    _insecure = []
+    if settings.jwt_secret.strip() in ("", "dev_secret_change_in_prod"):
+        _insecure.append("JWT_SECRET is unset or the committed dev default")
+    if settings.s3_secret_key.strip() in ("", "minioadmin"):
+        _insecure.append("S3_SECRET_KEY is unset or the MinIO default 'minioadmin'")
+    if _insecure:
+        raise RuntimeError(
+            "Refusing to boot in production with insecure defaults: "
+            + "; ".join(_insecure)
+            + ". Set the corresponding env vars to strong secrets."
+        )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -92,9 +116,15 @@ app = FastAPI(
     description="Backend API for Nova Fora fleet management platform.",
     version="0.1.0",
     lifespan=lifespan,
-    # Hide the default `/openapi.json` docs routes in prod (optional — toggle via env later)
-    docs_url="/docs",
+    # 2026-06-08 review #5a — disable interactive docs + the raw OpenAPI
+    # schema in prod. They leak the full route + schema surface (every
+    # endpoint, param, and model) to any anonymous visitor, which is a
+    # free recon map for an attacker. Dev/staging keep them for
+    # convenience. Flip back per-env via ENV if a prod debug session
+    # needs them.
+    docs_url=None if _IS_PROD else "/docs",
     redoc_url=None,
+    openapi_url=None if _IS_PROD else "/openapi.json",
 )
 
 # ── CORS ──────────────────────────────────────────────
