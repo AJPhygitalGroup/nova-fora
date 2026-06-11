@@ -43,12 +43,30 @@ const orgTypeTint = {
   body_repair_vendor: { bg: 'bg-accent-purple/20', text: 'text-accent-purple', border: 'border-accent-purple/50' },
 };
 
+// Emails of the demo personas. The one-click role switch re-authenticates
+// with the bundled demo password, so exposing it to a REAL pilot user is a
+// 1-click privilege escalation (any logged-in user → the site_admin demo
+// account). We gate the switch list to users who themselves logged in as a
+// demo persona (2026-06-08 review P0 #4). Real users (their own email, not
+// in this set) get a switcher with only language + logout.
+const DEMO_EMAILS = new Set(demoAccounts.map((a) => String(a.email).toLowerCase()));
+
 export default function RoleSwitcher({ user, onSwitchRole, onLogout }) {
   const { t, i18n } = useTranslation('layout');
   const [open, setOpen] = useState(false);
   const tint = roleTint[user.role] || roleTint.dsp_owner;
   const Icon = roleIcon[user.role] || UserCheck;
   const currentLang = (i18n.resolvedLanguage || i18n.language || 'es').slice(0, 2);
+
+  // Show the demo-account switch list only when BOTH:
+  //   1. demo mode isn't explicitly disabled (a pilot build can set
+  //      VITE_DEMO_MODE=false to hard-kill the switcher), AND
+  //   2. the current user is itself a demo persona.
+  // Fails closed: an unknown / missing email → no switch list.
+  const demoModeEnabled = import.meta.env.VITE_DEMO_MODE !== 'false';
+  const isDemoUser =
+    !!user?.email && DEMO_EMAILS.has(String(user.email).toLowerCase());
+  const showRoleSwitch = demoModeEnabled && isDemoUser;
 
   // Switch language. Persists to localStorage immediately (via i18n config)
   // and pushes to the user record so the preference follows them across
@@ -90,44 +108,48 @@ export default function RoleSwitcher({ user, onSwitchRole, onLogout }) {
               exit={{ opacity: 0, y: -8 }}
               className="absolute top-full right-0 mt-2 w-80 rounded-xl border border-navy-700 bg-navy-900 shadow-2xl z-50 overflow-hidden"
             >
-              <div className="px-4 py-3 border-b border-navy-800 bg-navy-950/60">
-                <div className="flex items-center gap-2 mb-1">
-                  <RefreshCw size={10} className="text-accent-orange" />
-                  <span className="text-[10px] font-semibold text-accent-orange uppercase tracking-wide">{t('roleSwitcher.title')}</span>
+              {showRoleSwitch && (
+                <div className="px-4 py-3 border-b border-navy-800 bg-navy-950/60">
+                  <div className="flex items-center gap-2 mb-1">
+                    <RefreshCw size={10} className="text-accent-orange" />
+                    <span className="text-[10px] font-semibold text-accent-orange uppercase tracking-wide">{t('roleSwitcher.title')}</span>
+                  </div>
+                  <div className="text-[11px] text-navy-400">{t('roleSwitcher.subtitle')}</div>
                 </div>
-                <div className="text-[11px] text-navy-400">{t('roleSwitcher.subtitle')}</div>
-              </div>
+              )}
 
-              <div className="max-h-96 overflow-y-auto">
-                {demoAccounts.map((acc) => {
-                  const Ico = roleIcon[acc.role];
-                  // orgType override beats role tint when applicable
-                  // (body_repair_vendor uses role=vendor_admin but
-                  // gets a distinct purple-pink accent).
-                  const t = orgTypeTint[acc.orgType] || roleTint[acc.role];
-                  const isCurrent = user.id === acc.id;
-                  return (
-                    <button
-                      key={acc.id}
-                      onClick={() => { onSwitchRole(acc); setOpen(false); }}
-                      className={`w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-navy-800/60 transition-colors border-b border-navy-800/60 last:border-b-0 ${
-                        isCurrent ? 'bg-navy-800/40' : ''
-                      }`}
-                    >
-                      <div className={`w-9 h-9 rounded-lg ${t.bg} border ${t.border} flex items-center justify-center shrink-0`}>
-                        <Ico size={15} className={t.text} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-semibold text-white truncate flex items-center gap-1.5">
-                          {acc.name}
-                          {isCurrent && <Check size={12} className="text-accent-green shrink-0" />}
+              {showRoleSwitch && (
+                <div className="max-h-96 overflow-y-auto">
+                  {demoAccounts.map((acc) => {
+                    const Ico = roleIcon[acc.role];
+                    // orgType override beats role tint when applicable
+                    // (body_repair_vendor uses role=vendor_admin but
+                    // gets a distinct purple-pink accent).
+                    const t = orgTypeTint[acc.orgType] || roleTint[acc.role];
+                    const isCurrent = user.id === acc.id;
+                    return (
+                      <button
+                        key={acc.id}
+                        onClick={() => { onSwitchRole(acc); setOpen(false); }}
+                        className={`w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-navy-800/60 transition-colors border-b border-navy-800/60 last:border-b-0 ${
+                          isCurrent ? 'bg-navy-800/40' : ''
+                        }`}
+                      >
+                        <div className={`w-9 h-9 rounded-lg ${t.bg} border ${t.border} flex items-center justify-center shrink-0`}>
+                          <Ico size={15} className={t.text} />
                         </div>
-                        <div className="text-[11px] text-navy-400 truncate">{acc.org} &middot; <span className={t.text}>{acc.roleLabel}</span></div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-semibold text-white truncate flex items-center gap-1.5">
+                            {acc.name}
+                            {isCurrent && <Check size={12} className="text-accent-green shrink-0" />}
+                          </div>
+                          <div className="text-[11px] text-navy-400 truncate">{acc.org} &middot; <span className={t.text}>{acc.roleLabel}</span></div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Language picker — persists per-user via /auth/me/language */}
               <div className="border-t border-navy-800 px-4 py-3 bg-navy-950/30">
