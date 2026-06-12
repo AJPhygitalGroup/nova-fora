@@ -8,6 +8,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -21,10 +22,12 @@ from app.auth.rate_limit import (
     client_ip,
 )
 from app.auth.jwt import (
+    SSE_TOKEN_TTL_SECONDS,
     TokenError,
     TokenType,
     create_access_token,
     create_refresh_token,
+    create_sse_token,
     decode_token,
 )
 from app.db import get_session
@@ -202,6 +205,21 @@ async def refresh(
             detail=tr_error(E.USER_NO_LONGER_ACTIVE, lang),
         )
 
+    # Rotation reuse-detection (2026-06-08 review #a): revoke the refresh
+    # we just consumed so a stolen/replayed copy can't mint another pair.
+    # Without this, a leaked refresh stays valid for its full 30-day life
+    # even after the legit client rotated past it. The frontend uses a
+    # singleton in-flight refresh (api/client.js) so genuine concurrent
+    # 401-retries share ONE rotation and never present the old token
+    # twice — otherwise the loser of the race would hit this revoke and
+    # get logged out.
+    old_jti = payload.get("jti")
+    if old_jti:
+        old_exp = int(payload.get("exp", 0))
+        await revoke_token(
+            old_jti, ttl_seconds=max(1, old_exp - int(utc_now().timestamp()))
+        )
+
     # Propagate the `acting_as_id` claim across refresh so a mid-
     # impersonation rotation keeps the "really admin X" context. Token
     # is signed → the claim can't be forged; safe to trust on read.
@@ -212,6 +230,38 @@ async def refresh(
         access_token=create_access_token(user_id=user.id, extra=extra or None),
         refresh_token=create_refresh_token(user_id=user.id, extra=extra or None),
         expires_in=settings.jwt_access_token_expire_minutes * 60,
+    )
+
+
+class SseToken(BaseModel):
+    """Short-lived token the browser puts in an EventSource URL."""
+
+    token: str
+    expires_in: int  # seconds
+
+
+@router.post(
+    "/sse-token",
+    response_model=SseToken,
+    summary="Mint a short-lived token for SSE streams (EventSource ?token=)",
+)
+async def sse_token(
+    current: User = Depends(get_current_user),
+) -> SseToken:
+    """Exchange the caller's normal (header) auth for a ~60s SSE-only
+    token (2026-06-08 review #b).
+
+    EventSource can't send an Authorization header, so SSE auth has to
+    ride in the query string where it leaks via logs / history / Referer.
+    Putting the full access token there exposed a 60-MINUTE credential
+    that works against every endpoint. Instead the client calls this
+    (with its normal Bearer header), gets a 60-second token usable ONLY
+    on the SSE query path, and opens the stream with that — a leaked copy
+    is stale in a minute and can't touch any other API.
+    """
+    return SseToken(
+        token=create_sse_token(user_id=current.id),
+        expires_in=SSE_TOKEN_TTL_SECONDS,
     )
 
 

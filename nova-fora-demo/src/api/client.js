@@ -162,23 +162,20 @@ async function _raw(path, options = {}) {
   return keysToCamel(payload);
 }
 
-/**
- * Authenticated fetch with one auto-refresh retry on 401.
- * Use `skipAuth: true` option for public endpoints like /auth/login.
- */
-export async function apiFetch(path, options = {}) {
-  try {
-    return await _raw(path, options);
-  } catch (err) {
-    if (err.status !== 401 || options.skipAuth || options._retried) throw err;
+// Singleton in-flight refresh. The backend now revokes a refresh token
+// the moment it's rotated (reuse-detection, 2026-06-08 review #a), so if
+// two requests 401 at the same time and each fires its own /auth/refresh
+// with the same stored token, the second call presents an already-revoked
+// token → 401 → the user gets bounced to login. Funnelling every refresh
+// through one shared promise means concurrent 401s await the SAME rotation
+// and only the new token is ever presented again.
+let _refreshInFlight = null;
 
-    // Try refresh once
-    const refresh = getRefreshToken();
-    if (!refresh) {
-      clearTokens();
-      throw err;
-    }
-
+function _refreshTokens() {
+  if (_refreshInFlight) return _refreshInFlight;
+  const refresh = getRefreshToken();
+  if (!refresh) return Promise.reject(new Error('no refresh token'));
+  _refreshInFlight = (async () => {
     try {
       const data = await _raw('/auth/refresh', {
         method: 'POST',
@@ -189,6 +186,30 @@ export async function apiFetch(path, options = {}) {
         access_token: data.accessToken,
         refresh_token: data.refreshToken,
       });
+      return data.accessToken;
+    } finally {
+      // Clear so the NEXT 401 (with the freshly-rotated token) starts a
+      // new rotation rather than reusing this resolved/rejected promise.
+      _refreshInFlight = null;
+    }
+  })();
+  return _refreshInFlight;
+}
+
+/**
+ * Authenticated fetch with one auto-refresh retry on 401.
+ * Use `skipAuth: true` option for public endpoints like /auth/login.
+ */
+export async function apiFetch(path, options = {}) {
+  try {
+    return await _raw(path, options);
+  } catch (err) {
+    if (err.status !== 401 || options.skipAuth || options._retried) throw err;
+
+    // Refresh once, sharing a single in-flight rotation across concurrent
+    // 401s (see _refreshTokens). On any failure, clear + rethrow original.
+    try {
+      await _refreshTokens();
     } catch {
       clearTokens();
       throw err;
@@ -197,6 +218,54 @@ export async function apiFetch(path, options = {}) {
     // Retry original request with new token
     return _raw(path, { ...options, _retried: true });
   }
+}
+
+// ─────────────────────────────────────────────────────
+// SSE helper — self-healing EventSource with short-lived tokens.
+// EventSource can't set an Authorization header, so SSE auth rides in
+// ?token=. As of the 2026-06-08 review (#b) the backend rejects a full
+// access token there and accepts only a ~60s `sse` token minted via
+// POST /auth/sse-token. We fetch a fresh one before every (re)connect so
+// the URL never carries a long-lived credential AND reconnects after the
+// token's short TTL still authenticate. Returns a synchronous cleanup fn
+// (the stream opens a tick later, once the token resolves).
+// ─────────────────────────────────────────────────────
+function _openSse(path, { onMessage, onError, onOpen } = {}) {
+  let es = null;
+  let closed = false;
+  let reconnectTimer = null;
+
+  const connect = async () => {
+    if (closed) return;
+    let sseToken;
+    try {
+      const data = await apiFetch('/auth/sse-token', { method: 'POST' });
+      sseToken = data && data.token;
+    } catch {
+      return; // logged out / network — give up quietly, no stream
+    }
+    if (closed || !sseToken) return;
+    es = new EventSource(`${BASE_URL}${path}?token=${encodeURIComponent(sseToken)}`);
+    if (onOpen) es.onopen = onOpen;
+    if (onMessage) es.onmessage = onMessage;
+    es.onerror = (e) => {
+      if (onError) onError(e);
+      // EventSource auto-retries with the same (expiring) token; once it
+      // gives up (CLOSED) we reconnect with a freshly-minted token.
+      if (es && es.readyState === EventSource.CLOSED && !closed) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(connect, 3000);
+      }
+    };
+  };
+
+  connect();
+
+  return () => {
+    closed = true;
+    clearTimeout(reconnectTimer);
+    try { if (es) es.close(); } catch { /* noop */ }
+  };
 }
 
 // ─────────────────────────────────────────────────────
@@ -812,24 +881,19 @@ export const defects = {
    * @returns {() => void} cleanup — call on unmount to close the connection
    */
   subscribe({ onDefect, onError, onOpen } = {}) {
-    const token = getAccessToken();
-    if (!token) return () => {};
-    const url = `${BASE_URL}/defects/events?token=${encodeURIComponent(token)}`;
-    const es = new EventSource(url);
-    if (onOpen) es.onopen = onOpen;
-    es.onmessage = (e) => {
-      if (!onDefect || !e.data) return;
-      try {
-        const defect = JSON.parse(e.data);
-        if (defect && defect.id) onDefect(keysToCamel(defect));
-      } catch {
-        // malformed payload — skip
-      }
-    };
-    if (onError) es.onerror = onError;
-    return () => {
-      try { es.close(); } catch { /* noop */ }
-    };
+    return _openSse('/defects/events', {
+      onOpen,
+      onError,
+      onMessage: (e) => {
+        if (!onDefect || !e.data) return;
+        try {
+          const defect = JSON.parse(e.data);
+          if (defect && defect.id) onDefect(keysToCamel(defect));
+        } catch {
+          // malformed payload — skip
+        }
+      },
+    });
   },
 };
 
@@ -1454,24 +1518,19 @@ export const workOrders = {
    * @returns {() => void} cleanup — call on unmount to close the connection
    */
   subscribe({ onEvent, onError, onOpen } = {}) {
-    const token = getAccessToken();
-    if (!token) return () => {};
-    const url = `${BASE_URL}/work-orders/events?token=${encodeURIComponent(token)}`;
-    const es = new EventSource(url);
-    if (onOpen) es.onopen = onOpen;
-    es.onmessage = (e) => {
-      if (!onEvent || !e.data) return;
-      try {
-        const envelope = JSON.parse(e.data);
-        if (envelope && envelope.event) onEvent(keysToCamel(envelope));
-      } catch {
-        // malformed payload — skip
-      }
-    };
-    if (onError) es.onerror = onError;
-    return () => {
-      try { es.close(); } catch { /* noop */ }
-    };
+    return _openSse('/work-orders/events', {
+      onOpen,
+      onError,
+      onMessage: (e) => {
+        if (!onEvent || !e.data) return;
+        try {
+          const envelope = JSON.parse(e.data);
+          if (envelope && envelope.event) onEvent(keysToCamel(envelope));
+        } catch {
+          // malformed payload — skip
+        }
+      },
+    });
   },
 };
 
@@ -1637,24 +1696,19 @@ export const defectReviews = {
    * @returns {() => void} cleanup — call on unmount to close the connection
    */
   subscribe({ onEvent, onError, onOpen } = {}) {
-    const token = getAccessToken();
-    if (!token) return () => {};
-    const url = `${BASE_URL}/defect-reviews/events?token=${encodeURIComponent(token)}`;
-    const es = new EventSource(url);
-    if (onOpen) es.onopen = onOpen;
-    es.onmessage = (e) => {
-      if (!onEvent || !e.data) return;
-      try {
-        const envelope = JSON.parse(e.data);
-        if (envelope && envelope.event) onEvent(keysToCamel(envelope));
-      } catch {
-        // malformed payload — skip
-      }
-    };
-    if (onError) es.onerror = onError;
-    return () => {
-      try { es.close(); } catch { /* noop */ }
-    };
+    return _openSse('/defect-reviews/events', {
+      onOpen,
+      onError,
+      onMessage: (e) => {
+        if (!onEvent || !e.data) return;
+        try {
+          const envelope = JSON.parse(e.data);
+          if (envelope && envelope.event) onEvent(keysToCamel(envelope));
+        } catch {
+          // malformed payload — skip
+        }
+      },
+    });
   },
 };
 

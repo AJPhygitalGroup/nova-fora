@@ -95,16 +95,19 @@ async def get_current_user_from_query_token(
     token: str = Query(..., description="JWT access token (SSE only — header-less clients)"),
     session: AsyncSession = Depends(get_session),
 ) -> User:
-    """Same contract as `get_current_user`, but reads the access token from
+    """Same contract as `get_current_user`, but reads the token from
     `?token=...` instead of the Authorization header.
 
     Use on SSE endpoints only — browser EventSource cannot set headers.
-    Tokens in query strings have a slightly worse exposure profile (server
-    access logs, browser history); mitigated by short-lived access tokens.
+    As of the 2026-06-08 review (#b) this accepts ONLY a short-lived
+    `sse` token (minted via POST /auth/sse-token), NOT a full access
+    token. A token in a query string can leak via access logs / browser
+    history / Referer; gating to the 60s sse type means a leaked copy is
+    near-useless and can't call any other API.
     """
     lang = get_request_language(request)
     try:
-        payload = decode_token(token, expected_type=TokenType.ACCESS)
+        payload = decode_token(token, expected_type=TokenType.SSE)
     except TokenError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

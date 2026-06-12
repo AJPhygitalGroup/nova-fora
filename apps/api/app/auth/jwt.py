@@ -21,6 +21,19 @@ settings = get_settings()
 class TokenType(str, Enum):
     ACCESS = "access"
     REFRESH = "refresh"
+    # Short-lived, single-purpose token for SSE streams. EventSource can't
+    # send an Authorization header, so the token must ride in ?token=...
+    # where it can leak via access logs / browser history / Referer. An
+    # SSE token is minted on demand, lives ~60s, and is type-gated so the
+    # SSE query path REJECTS a full access token — a leaked SSE token
+    # expires almost immediately and can't call any other API
+    # (2026-06-08 review #b).
+    SSE = "sse"
+
+
+# Seconds an SSE token stays valid. Long enough to open the stream, short
+# enough that a leaked copy is near-useless.
+SSE_TOKEN_TTL_SECONDS = 60
 
 
 class TokenError(Exception):
@@ -72,6 +85,25 @@ def create_refresh_token(user_id: int, extra: dict | None = None) -> str:
     }
     if extra:
         payload.update(extra)
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def create_sse_token(user_id: int) -> str:
+    """Mint a short-lived (SSE_TOKEN_TTL_SECONDS) token scoped to SSE only.
+
+    Carries just `sub` + `type=sse` + `jti` + a near-immediate `exp`. No
+    impersonation claim is needed — the minting request's identity is
+    already the (possibly impersonated) user, so `sub` scopes the stream
+    correctly. The jti lets the denylist revoke it if ever needed.
+    """
+    now = datetime.now(UTC)
+    payload = {
+        "sub": str(user_id),
+        "type": TokenType.SSE.value,
+        "jti": uuid.uuid4().hex,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(seconds=SSE_TOKEN_TTL_SECONDS)).timestamp()),
+    }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
