@@ -26,6 +26,11 @@ from app.db import get_session
 from app.models.organization import OrgType, Organization
 from app.models.user import User, UserRole
 from app.schemas.user import UserResponse
+from app.services.permissions import is_dsp_role, is_vendor_role
+
+# Vendor-side org types — a DSP picks among these; a vendor never sees
+# another vendor's row here.
+_VENDOR_ORG_TYPES = (OrgType.VENDOR, OrgType.BODY_REPAIR_VENDOR)
 
 router = APIRouter(prefix="", tags=["directory"])
 
@@ -41,15 +46,32 @@ async def list_organizations(
 ) -> list[dict]:
     q = select(Organization).where(Organization.is_active == True)  # noqa: E712
 
-    # Role scoping (see module docstring):
-    #   - SITE_ADMIN: all
-    #   - DSP_OWNER + VENDOR_ADMIN: cross-org listing for picker use-cases
-    #   - TECHNICIAN: own vendor + all DSPs (no other vendors)
-    if current.role == UserRole.TECHNICIAN:
+    # Role scoping (2026-06-08 review #d). The previous code only
+    # special-cased TECHNICIAN; DSP_OWNER / VENDOR_ADMIN — and every
+    # secondary role — fell through UNFILTERED and could enumerate ALL
+    # orgs (other vendors' + DSPs' names, phones, addresses), directly
+    # contradicting this module's "cross-vendor is NEVER allowed" rule.
+    # Now enforced for the whole taxonomy:
+    #   - site_admin     → all orgs.
+    #   - DSP-side roles  → vendor/body-shop orgs (to pick one) + own org.
+    #                       NOT other DSPs, NOT the platform org.
+    #   - vendor-side     → DSP orgs (their customers) + own org.
+    #                       NOT other vendors, NOT the platform org.
+    #   - anything else   → own org only (safe default).
+    if current.role == UserRole.SITE_ADMIN:
+        pass
+    elif is_dsp_role(current.role):
         q = q.where(or_(
+            Organization.org_type.in_(_VENDOR_ORG_TYPES),
             Organization.id == current.organization_id,
-            Organization.org_type == OrgType.DSP,
         ))
+    elif is_vendor_role(current.role):
+        q = q.where(or_(
+            Organization.org_type == OrgType.DSP,
+            Organization.id == current.organization_id,
+        ))
+    else:
+        q = q.where(Organization.id == current.organization_id)
 
     if org_type:
         try:

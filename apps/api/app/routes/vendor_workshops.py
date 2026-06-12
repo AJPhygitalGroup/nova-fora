@@ -36,6 +36,7 @@ from app.models.work_orders import (
     VendorBucksLedger,
     VendorWorkshop,
 )
+from app.services.permissions import is_dsp_role, is_vendor_role
 
 router = APIRouter(prefix="/vendor-workshops", tags=["vendor-workshops"])
 
@@ -343,14 +344,40 @@ async def list_preferred_vendors(
     current: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[PreferredVendorResponse]:
-    """Public read for any authenticated user — the relationship is
-    relevant to both DSPs and vendors. Filter by either side as needed.
+    """Scoped read (2026-06-08 review #d). The preferred-vendor graph —
+    which DSP prefers which vendor — is cross-tenant sensitive, so the
+    old "public read for any authenticated user" let a vendor enumerate a
+    competitor's whole customer roster (and vice-versa). Now:
+      - site_admin   → all (optional filters honored).
+      - DSP roles    → only their own org's preferences.
+      - vendor roles → only rows pointing at their own workshops.
+      - anything else→ nothing.
+    The optional query filters can only narrow within that allowed set.
     """
     q = (
         select(CustomerPreferredVendor, Organization, VendorWorkshop)
         .join(Organization, Organization.id == CustomerPreferredVendor.dsp_id, isouter=True)
         .join(VendorWorkshop, VendorWorkshop.id == CustomerPreferredVendor.vendor_workshop_id, isouter=True)
     )
+
+    if current.role == UserRole.SITE_ADMIN:
+        pass
+    elif is_dsp_role(current.role):
+        q = q.where(CustomerPreferredVendor.dsp_id == current.organization_id)
+    elif is_vendor_role(current.role):
+        my_ws = (
+            await session.execute(
+                select(VendorWorkshop.id).where(
+                    VendorWorkshop.organization_id == current.organization_id
+                )
+            )
+        ).scalars().all()
+        if not my_ws:
+            return []
+        q = q.where(CustomerPreferredVendor.vendor_workshop_id.in_(list(my_ws)))
+    else:
+        return []
+
     if dsp_id is not None:
         q = q.where(CustomerPreferredVendor.dsp_id == dsp_id)
     if vendor_workshop_id is not None:
