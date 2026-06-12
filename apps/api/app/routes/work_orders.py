@@ -2703,6 +2703,7 @@ async def _ready_primary_ros_for_vehicle(
     session: AsyncSession,
     *,
     vehicle_id: int,
+    vendor_workshop_id: int | None = None,
     require_pickup_requested: bool = False,
     require_scheduled_start: bool = False,
     require_not_picked_up: bool = False,
@@ -2714,6 +2715,18 @@ async def _ready_primary_ros_for_vehicle(
     every sibling RO on the same vehicle in one query (the spec
     invariant). Filters compose — pass any combo:
 
+      vendor_workshop_id       → SECURITY (2026-06-08 review): restrict the
+                                  fan-out to one workshop's WOs. A van can
+                                  carry accepted WOs at DIFFERENT vendors
+                                  (e.g. body shop + mechanical shop), and a
+                                  vendor-triggered pickup/checkout/checkin
+                                  must NOT stamp its own tech id (or surface
+                                  its photos) onto another vendor's WO. The
+                                  "one truck trip" semantics are preserved
+                                  WITHIN a workshop (multiple RRs routed to
+                                  the same shop still fan out together).
+                                  Omit for DSP-authored fan-outs, which
+                                  legitimately span the whole vehicle.
       require_pickup_requested → SW already sent the pickup request
                                   (ro.pickup_requested_at IS NOT NULL)
       require_scheduled_start  → DSP already confirmed pickup details
@@ -2728,6 +2741,8 @@ async def _ready_primary_ros_for_vehicle(
         .where(WorkOrder.status == WorkOrderStatus.ACCEPTED)
         .where(WorkOrderRo.is_primary.is_(True))
     )
+    if vendor_workshop_id is not None:
+        q = q.where(WorkOrder.vendor_workshop_id == vendor_workshop_id)
     if require_pickup_requested:
         q = q.where(WorkOrderRo.pickup_requested_at.is_not(None))
     if require_scheduled_start:
@@ -2780,7 +2795,12 @@ async def send_pickup_request(
             f"work order status is {wo.status.value}; pickup requires 'accepted'",
         )
 
-    pairs = await _ready_primary_ros_for_vehicle(session, vehicle_id=wo.vehicle_id)
+    # Vendor-triggered: restrict the fan-out to THIS workshop's WOs so a
+    # sibling vendor's RO on the same vehicle isn't stamped with our
+    # pickup request (2026-06-08 review — cross-vendor write).
+    pairs = await _ready_primary_ros_for_vehicle(
+        session, vehicle_id=wo.vehicle_id, vendor_workshop_id=wo.vendor_workshop_id
+    )
     if not pairs:
         # Spec's no-RO# guardrail: SW must set a primary RO# before sending pickup.
         raise HTTPException(
@@ -3031,9 +3051,14 @@ async def checkout_wo(
             f"WO already picked up at {wo.picked_up_at.isoformat()}",
         )
 
+    # Vendor-triggered: scope the fan-out to THIS workshop. A van can
+    # carry accepted WOs at another vendor; stamping picked_up_by_id (our
+    # tech) onto their WO — and surfacing our checkout photos on their row
+    # — was a cross-vendor write/leak (2026-06-08 review).
     pairs = await _ready_primary_ros_for_vehicle(
         session,
         vehicle_id=wo.vehicle_id,
+        vendor_workshop_id=wo.vendor_workshop_id,
         require_not_picked_up=True,
     )
     if not pairs:
@@ -3189,14 +3214,18 @@ async def checkin_wo(
             f"WO already returned at {wo.returned_at.isoformat()}",
         )
 
-    # Sibling discovery: anything on the same vehicle that's been picked
-    # up but not yet returned. Status filter is intentionally permissive
-    # here — a sibling might already be in_progress or accepted, both are
-    # valid return targets.
+    # Sibling discovery: this workshop's WOs on the same vehicle that
+    # were picked up but not yet returned. Status filter is intentionally
+    # permissive — a sibling might already be in_progress or accepted,
+    # both are valid return targets. Scoped to wo.vendor_workshop_id so a
+    # check-in never stamps returned_by_id (our tech) onto another
+    # vendor's WO on the shared vehicle (2026-06-08 review — cross-vendor
+    # write).
     sibling_rows = (
         await session.execute(
             select(WorkOrder)
             .where(WorkOrder.vehicle_id == wo.vehicle_id)
+            .where(WorkOrder.vendor_workshop_id == wo.vendor_workshop_id)
             .where(WorkOrder.picked_up_at.is_not(None))
             .where(WorkOrder.returned_at.is_(None))
         )
