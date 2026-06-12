@@ -33,9 +33,9 @@ from typing import Literal
 import json
 import logging
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -3319,6 +3319,47 @@ class RoSyncEventResponse(BaseModel):
     )
 
 
+class ManualWoBody(BaseModel):
+    """Typed body for the manual-create wizard (2026-06-08 review #c).
+
+    Replaces a raw `dict` that read fields with `.get()` and no bounds —
+    a non-numeric vendor_workshop_id 500'd on int(), and oversized free
+    text reached the DB unbounded. The frontend posts snake_case (via
+    camelToSnake), but we accept camelCase aliases too for any direct
+    caller. `extra='ignore'` keeps unknown keys from 422-ing so a
+    slightly-ahead frontend doesn't break.
+    """
+
+    vehicle_id: str = Field(
+        ..., min_length=1, max_length=40,
+        validation_alias=AliasChoices("vehicle_id", "vehicleId"),
+    )
+    part: str = Field(..., min_length=1, max_length=100)
+    defect_type: str = Field(
+        ..., min_length=1, max_length=100,
+        validation_alias=AliasChoices("defect_type", "defectType"),
+    )
+    position: str | None = Field(default=None, max_length=100)
+    description: str | None = Field(
+        default=None, max_length=2000,
+        validation_alias=AliasChoices("description", "notes"),
+    )
+    reason_code: str = Field(
+        default="newly_discovered", max_length=50,
+        validation_alias=AliasChoices("reason_code", "reasonCode"),
+    )
+    vendor_workshop_id: int | None = Field(
+        default=None, ge=1,
+        validation_alias=AliasChoices("vendor_workshop_id", "vendorWorkshopId"),
+    )
+    ro_number: str | None = Field(
+        default=None, max_length=100,
+        validation_alias=AliasChoices("ro_number", "roNumber"),
+    )
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+
 @router.post(
     "/manual",
     response_model=dict,
@@ -3326,7 +3367,7 @@ class RoSyncEventResponse(BaseModel):
     summary="Manual SW-created WO from scratch (wizard from Vendor Home + Create WO)",
 )
 async def manual_create_wo(
-    body: dict = Body(...),
+    body: ManualWoBody,
     request: Request = None,
     current: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
@@ -3368,23 +3409,17 @@ async def manual_create_wo(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "manual create requires vendor SW role")
 
     # ── Vehicle ──────────────────────────────────────
-    vehicle_raw = body.get("vehicle_id") or body.get("vehicleId")
-    if not vehicle_raw:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "vehicle_id required")
-    vid = _parse_vehicle_id(str(vehicle_raw))
+    vid = _parse_vehicle_id(str(body.vehicle_id))
     vehicle = (await session.execute(select(Vehicle).where(Vehicle.id == vid))).scalar_one_or_none()
     if vehicle is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "vehicle not found")
 
     # ── Defect inputs ────────────────────────────────
-    part = body.get("part")
-    defect_type = body.get("defect_type") or body.get("defectType")
-    position = body.get("position")
-    description = body.get("description") or body.get("notes")
-    reason_code = (body.get("reason_code") or body.get("reasonCode") or "newly_discovered").strip()
-
-    if not part or not defect_type:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "part + defect_type required")
+    part = body.part
+    defect_type = body.defect_type
+    position = body.position
+    description = body.description
+    reason_code = (body.reason_code or "newly_discovered").strip()
 
     # Map reason_code → DefectSource (validates the reason too).
     REASON_TO_SOURCE = {
@@ -3450,7 +3485,7 @@ async def manual_create_wo(
     await consider_defect_for_bundling(session, defect_id=defect.id, actor_id=current.id)
 
     # ── Resolve target workshop + force-route ────────
-    target_ws = body.get("vendor_workshop_id") or body.get("vendorWorkshopId")
+    target_ws = body.vendor_workshop_id
     if target_ws is None:
         # Default to the caller's first workshop.
         my_workshops = await _vendor_workshop_ids_for_user(session, current)
@@ -3460,7 +3495,6 @@ async def manual_create_wo(
                 "no vendor_workshop_id provided and you have no workshops",
             )
         target_ws = my_workshops[0]
-    target_ws = int(target_ws)
 
     # Find the RR the bundler just created for this defect.
     rr_row = (
@@ -3484,7 +3518,7 @@ async def manual_create_wo(
     )
 
     # ── Optional: replace the auto TBD-{id} placeholder RO ──
-    ro_number_raw = body.get("ro_number") or body.get("roNumber")
+    ro_number_raw = body.ro_number
     if new_wo is not None and ro_number_raw:
         # The /accept endpoint adds the placeholder, but here the WO is
         # still pending_acceptance (no placeholder yet). Add an RO row
