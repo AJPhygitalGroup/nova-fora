@@ -181,6 +181,24 @@ async def route_repair_request(
         # Never block routing on a pubsub failure.
         pass
 
+    # DFS repair marketplace (spec §4 "Collision with Nova Fora routing"):
+    # the defect just landed on a WO by the normal path, so its open
+    # marketplace offer is withdrawn and the shops' live quotes are closed.
+    # Inside a SAVEPOINT so a marketplace failure can never break routing.
+    try:
+        from app.services.marketplace.eligibility import withdraw_offers_for_repair_request
+
+        async with session.begin_nested():
+            await withdraw_offers_for_repair_request(
+                session, repair_request_id=rr.id, work_order_id=wo.id
+            )
+    except Exception:  # noqa: BLE001
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "marketplace offer withdrawal failed for RR %s", rr.id
+        )
+
     # Roll up the RR status now that it has at least one child WO. First
     # route fires the open → accepted transition; re-route after a decline
     # keeps it 'accepted' (the rollup ignores the declined WO once a new

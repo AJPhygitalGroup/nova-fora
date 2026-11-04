@@ -11,7 +11,8 @@
     "scorecard": "Tablero de proveedor",
     "admin": "Administración",
     "ghost": "Modo Fantasma",
-    "dashboard": "Tablero"
+    "dashboard": "Tablero",
+    "marketplace": "Marketplace"
   },
   "subtitles": {
     "dvic": "Centro de mando",
@@ -24,7 +25,8 @@
     "scorecard": "Propuesta de valor DFS",
     "admin": "Usuarios, org, seguridad",
     "ghost": "Suplantar usuarios",
-    "dashboard": "Defectos + carrocería"
+    "dashboard": "Defectos + carrocería",
+    "marketplace": "Reparaciones por cotizar"
   },
   "user": {
     "menu": "Menú",

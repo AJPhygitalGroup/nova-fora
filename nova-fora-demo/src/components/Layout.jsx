@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import {
   Shield, BarChart3, Wrench, ChevronRight, Menu, X, Sun, Moon, Bell,
   LayoutGrid, Truck, ClipboardList, Settings, Eye, Star, Home as HomeIcon,
-  AlertTriangle, ChevronDown, Check
+  AlertTriangle, ChevronDown, Check, Store
 } from 'lucide-react';
 import VendorScorecard from './VendorScorecard';
 import HomeRouter from './HomeRouter';
@@ -22,6 +22,7 @@ import GhostMode from './GhostMode';
 import Defects from './Defects';
 import NotificationsPanel from './NotificationsPanel';
 import RoleSwitcher from './ui/RoleSwitcher';
+import MarketplaceBoard from './marketplace/MarketplaceBoard';
 import { rolePermissions, notificationsSeed } from '../data/mockData';
 import { vendorWorkshops as vendorWorkshopsApi } from '../api/client';
 import { isVendorRole } from '../lib/permissions';
@@ -59,6 +60,8 @@ const VIEW_CATALOG = {
   scorecard:   { id: 'scorecard',   i18nKey: 'scorecard',   icon: BarChart3,      color: 'text-accent-blue',   Component: VendorScorecard },
   admin:       { id: 'admin',       i18nKey: 'admin',       icon: Settings,       color: 'text-accent-gold',   Component: AdminPanel },
   ghost:       { id: 'ghost',       i18nKey: 'ghost',       icon: Eye,            color: 'text-accent-red',    Component: GhostMode },
+  // DFS Repair Marketplace — shop board (open CMR repairs to quote).
+  marketplace: { id: 'marketplace', i18nKey: 'marketplace', icon: Store,          color: 'text-accent-orange', Component: MarketplaceBoard },
 };
 
 // URL-hash slugs for top-level tabs. The internal view ids are legacy
@@ -170,7 +173,7 @@ export default function Layout({ user, onSwitchRole, onLogout, onImpersonate, im
     //  - body (Body Repair tab — same content, separate URL)
     //  - admin (org settings + users)
     if (user?.orgType === 'body_repair_vendor') {
-      const allowForBodyVendor = new Set(['dvic', 'body', 'admin']);
+      const allowForBodyVendor = new Set(['dvic', 'body', 'admin', 'marketplace']);
       allowedIds = allowedIds.filter((id) => allowForBodyVendor.has(id));
     }
     const decorate = (v) => ({

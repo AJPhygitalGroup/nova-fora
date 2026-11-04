@@ -59,6 +59,20 @@ from app.models.inspection_part_mark import (
     InspectionPartMarkStatus,
 )
 from app.models.invitation import Invitation, InvitationStatus
+from app.models.marketplace import (
+    ApprovalToken,
+    FeeStatus,
+    MarketplaceEvent,
+    MarketplaceOffer,
+    MarketplaceQuote,
+    MarketplaceQuoteLine,
+    MarketplaceRule,
+    MarketplaceShopProfile,
+    MarketplaceSpecialty,
+    OfferState,
+    QuoteState,
+    ShopOnboardingStatus,
+)
 from app.models.organization import OrgType, Organization
 from app.models.photo import Photo, PhotoCategory
 from app.models.user import User, UserRole, UserStatus
@@ -135,6 +149,19 @@ __all__ = [
     # Invitations
     "Invitation",
     "InvitationStatus",
+    # DFS CMR repair marketplace (Phase 1)
+    "ApprovalToken",
+    "FeeStatus",
+    "MarketplaceEvent",
+    "MarketplaceOffer",
+    "MarketplaceQuote",
+    "MarketplaceQuoteLine",
+    "MarketplaceRule",
+    "MarketplaceShopProfile",
+    "MarketplaceSpecialty",
+    "OfferState",
+    "QuoteState",
+    "ShopOnboardingStatus",
     # Org / user / vehicle
     "OrgType",
     "Organization",

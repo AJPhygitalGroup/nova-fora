@@ -57,6 +57,21 @@ docker cp apps/api/tests/smoke_authz.py nova-api:/tmp/_s.py && \
   invocations + manual debugging). The pytest tests are the canonical
   surface going forward.
 
+## Marketplace tests (`tests/marketplace/`)
+
+The DFS repair marketplace suite does NOT need the live API. It runs
+against a throwaway PostgreSQL database: the session fixture drops its
+`public` schema and runs the real Alembic chain (upgrade head → downgrade
+-1 → upgrade head). Never point it at a database you care about.
+
+```bash
+docker run -d --name mkt-test-pg -e POSTGRES_USER=nova   -e POSTGRES_PASSWORD=dev_pass -e POSTGRES_DB=nova_test   -p 55432:5432 postgres:16-alpine
+cd apps/api && uv run pytest tests/marketplace
+# other DB: MARKETPLACE_TEST_DATABASE_URL=postgresql+asyncpg://…
+```
+
+If that database is unreachable the marketplace tests skip.
+
 ## Adding tests
 
 Each new authz invariant should land here as a test **before** the

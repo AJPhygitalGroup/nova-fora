@@ -11,7 +11,8 @@
     "scorecard": "Vendor Scorecard",
     "admin": "Admin",
     "ghost": "Ghost Mode",
-    "dashboard": "Dashboard"
+    "dashboard": "Dashboard",
+    "marketplace": "Marketplace"
   },
   "subtitles": {
     "dvic": "Command center",
@@ -24,7 +25,8 @@
     "scorecard": "DFS Value Proposition",
     "admin": "Users, org, security",
     "ghost": "Impersonate users",
-    "dashboard": "Defects + body repairs"
+    "dashboard": "Defects + body repairs",
+    "marketplace": "Repairs to quote"
   },
   "user": {
     "menu": "Menu",

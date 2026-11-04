@@ -21,6 +21,13 @@ Available commands:
   bundle-route-cron          WO V2.0 — cron driver: scan ready RRs and route
                               them. Designed for a 1-min schedule.
 
+  marketplace-sync           DFS repair marketplace — create / withdraw offers
+                              (idempotent). Designed for a 15-min schedule.
+  marketplace-digest [--station CODE] [--dry-run]
+                             DFS repair marketplace — daily per-station digest
+                              to shops. Designed for 06:00 America/New_York.
+  seed-marketplace-rules     Insert any missing spec §3 marketplace rule.
+
   create-service-user <email> <full_name> <org_id> <role>
                              Create a new user with a generated password.
   reset-password <email> <new_password>
@@ -798,6 +805,23 @@ def main() -> None:
     elif cmd == "bundle-route-cron":
         from app.seed_wo_v2 import cmd_bundle_route_cron
         asyncio.run(cmd_bundle_route_cron())
+    elif cmd == "marketplace-sync":
+        from app.marketplace_cli import cmd_marketplace_sync
+        asyncio.run(cmd_marketplace_sync())
+    elif cmd == "marketplace-digest":
+        from app.marketplace_cli import cmd_marketplace_digest
+        args = sys.argv[2:]
+        station = None
+        if "--station" in args:
+            i = args.index("--station")
+            if i + 1 >= len(args):
+                print("Usage: python -m app.cli marketplace-digest [--station CODE] [--dry-run]")
+                sys.exit(1)
+            station = args[i + 1]
+        asyncio.run(cmd_marketplace_digest(station=station, dry_run="--dry-run" in args))
+    elif cmd == "seed-marketplace-rules":
+        from app.marketplace_cli import cmd_seed_marketplace_rules
+        asyncio.run(cmd_seed_marketplace_rules())
     elif cmd == "create-service-user":
         if len(sys.argv) != 6:
             print(

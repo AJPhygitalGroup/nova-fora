@@ -2501,4 +2501,134 @@ export const bodyRepair = {
   },
 };
 
+// ─────────────────────────────────────────────────────
+// DFS Repair Marketplace (Phase 1)
+//
+// Shop side: a registered shop user calls with its normal JWT. A prospect
+// (shop with no account yet) opens the board from the digest's magic link —
+// pass `inviteToken` and the request goes out WITHOUT the JWT, carrying
+// `X-Marketplace-Invite` instead.
+//
+// DSP side: the review page is public. The token from the email link rides
+// in the `X-Review-Token` header (kept out of the API's access logs).
+// Bodies are written snake_case by hand (POST bodies stay snake_case — see
+// CLAUDE.md convention #5); responses are camelCased by _raw().
+// ─────────────────────────────────────────────────────
+function _shopOpts(inviteToken, extra = {}) {
+  if (!inviteToken) return extra;
+  return {
+    ...extra,
+    skipAuth: true,
+    headers: { ...(extra.headers || {}), 'X-Marketplace-Invite': inviteToken },
+  };
+}
+
+function _reviewOpts(token, extra = {}) {
+  return {
+    ...extra,
+    skipAuth: true,
+    headers: { ...(extra.headers || {}), 'X-Review-Token': token || '' },
+  };
+}
+
+function _quoteLines(lines) {
+  return (lines || []).map((l) => ({
+    offer_id: l.offerId,
+    ...(l.amount != null && l.amount !== '' ? { amount: String(l.amount) } : {}),
+    ...(l.note ? { note: l.note } : {}),
+  }));
+}
+
+export const marketplace = {
+  /** GET /marketplace/shop/me — shop profile (specialties, fee rate, onboarding). */
+  shopMe({ inviteToken } = {}) {
+    return apiFetch('/marketplace/shop/me', _shopOpts(inviteToken));
+  },
+
+  /** GET /marketplace/board — open offers for my specialties, grouped per van. */
+  board({ inviteToken } = {}) {
+    return apiFetch('/marketplace/board', _shopOpts(inviteToken));
+  },
+
+  /** GET /marketplace/quotes?state= — my quotes in every state. */
+  myQuotes({ inviteToken, state } = {}) {
+    const q = state ? `?state=${encodeURIComponent(state)}` : '';
+    return apiFetch(`/marketplace/quotes${q}`, _shopOpts(inviteToken));
+  },
+
+  /**
+   * POST /marketplace/quotes
+   * body: { vehicleId, lines: [{ offerId, amount?, note? }], total?, replyToEmail?,
+   *         notes?, accountEmail?, accountName?, acceptTerms? }
+   * The account* / acceptTerms fields are only read on a prospect's first quote.
+   */
+  submitQuote(body, { inviteToken } = {}) {
+    return apiFetch('/marketplace/quotes', _shopOpts(inviteToken, {
+      method: 'POST',
+      body: JSON.stringify({
+        vehicle_id: body.vehicleId,
+        lines: _quoteLines(body.lines),
+        ...(body.total != null && body.total !== '' ? { total: String(body.total) } : {}),
+        ...(body.replyToEmail ? { reply_to_email: body.replyToEmail } : {}),
+        ...(body.notes ? { notes: body.notes } : {}),
+        ...(body.accountEmail ? { account_email: body.accountEmail } : {}),
+        ...(body.accountName ? { account_name: body.accountName } : {}),
+        accept_terms: !!body.acceptTerms,
+      }),
+    }));
+  },
+
+  /** POST /marketplace/quotes/{id}/revise — body: { lines?, total?, replyToEmail?, notes? } */
+  reviseQuote(id, body, { inviteToken } = {}) {
+    return apiFetch(`/marketplace/quotes/${encodeURIComponent(id)}/revise`, _shopOpts(inviteToken, {
+      method: 'POST',
+      body: JSON.stringify({
+        ...(body.lines ? { lines: _quoteLines(body.lines) } : {}),
+        ...(body.total != null && body.total !== '' ? { total: String(body.total) } : {}),
+        ...(body.replyToEmail ? { reply_to_email: body.replyToEmail } : {}),
+        ...(body.notes != null ? { notes: body.notes } : {}),
+      }),
+    }));
+  },
+
+  /** POST /marketplace/quotes/{id}/withdraw */
+  withdrawQuote(id, { inviteToken } = {}) {
+    return apiFetch(
+      `/marketplace/quotes/${encodeURIComponent(id)}/withdraw`,
+      _shopOpts(inviteToken, { method: 'POST' }),
+    );
+  },
+
+  review: {
+    /** GET /marketplace/review — every quote for the token's van. */
+    get(token) {
+      return apiFetch('/marketplace/review', _reviewOpts(token));
+    },
+    /** POST /marketplace/review/quotes/{id}/approve — { note?, expectedRevision? } */
+    approve(token, quoteId, { note, expectedRevision } = {}) {
+      return apiFetch(`/marketplace/review/quotes/${encodeURIComponent(quoteId)}/approve`, _reviewOpts(token, {
+        method: 'POST',
+        body: JSON.stringify({
+          ...(note ? { note } : {}),
+          ...(expectedRevision ? { expected_revision: expectedRevision } : {}),
+        }),
+      }));
+    },
+    /** POST /marketplace/review/quotes/{id}/reject — reason required */
+    reject(token, quoteId, reason) {
+      return apiFetch(`/marketplace/review/quotes/${encodeURIComponent(quoteId)}/reject`, _reviewOpts(token, {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+      }));
+    },
+    /** POST /marketplace/review/quotes/{id}/request-revision — note required */
+    requestRevision(token, quoteId, note) {
+      return apiFetch(`/marketplace/review/quotes/${encodeURIComponent(quoteId)}/request-revision`, _reviewOpts(token, {
+        method: 'POST',
+        body: JSON.stringify({ note }),
+      }));
+    },
+  },
+};
+
 export { APIError };
