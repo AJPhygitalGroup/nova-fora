@@ -21,6 +21,7 @@ from app.routes import (
     inspection_rules,
     inspections,
     invitations,
+    marketplace,
     repair_requests,
     rewards,
     uploads,
@@ -207,6 +208,8 @@ app.include_router(uploads.router)
 app.include_router(dashboards.router)
 # Body Repair (port of web-mbk-body-repair-demo, Phase 0).
 app.include_router(body_repair.router)
+# DFS CMR repair marketplace (Phase 1) — shop board, DSP review page, admin.
+app.include_router(marketplace.router)
 
 
 @app.get("/", tags=["root"])

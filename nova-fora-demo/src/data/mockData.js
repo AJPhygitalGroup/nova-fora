@@ -107,8 +107,8 @@ export const rolePermissions = {
   dsp_inspector: ['dvic', 'defects', 'vehicles'],
   dsp_viewer:    ['dvic', 'defects', 'vehicles', 'wo_status', 'scorecard'],
   // ── Vendor family ──
-  vendor_admin:   ['dvic', 'snapshot', 'work_orders', 'my_dsps', 'body', 'scorecard', 'admin'],
-  service_writer: ['dvic', 'snapshot', 'work_orders', 'my_dsps', 'admin'],
+  vendor_admin:   ['dvic', 'snapshot', 'work_orders', 'my_dsps', 'body', 'marketplace', 'scorecard', 'admin'],
+  service_writer: ['dvic', 'snapshot', 'work_orders', 'my_dsps', 'marketplace', 'admin'],
   technician:     ['dvic', 'work_orders', 'my_dsps', 'admin'],
   vendor_viewer:  ['dvic', 'work_orders', 'my_dsps'],
   // ── Platform ──

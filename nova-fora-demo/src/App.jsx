@@ -8,6 +8,8 @@ import { AnimatePresence, motion } from 'framer-motion';
 import Layout from './components/Layout';
 import Login from './components/Login';
 import SignupAcceptPage from './components/SignupAcceptPage';
+import MarketplaceBoard from './components/marketplace/MarketplaceBoard';
+import DspQuoteReview from './components/marketplace/DspQuoteReview';
 import { auth, getAccessToken, clearTokens, APIError } from './api/client';
 import { setLanguage as setI18nLanguage } from './i18n';
 
@@ -149,6 +151,24 @@ export default function App() {
     typeof window !== 'undefined' && window.location.pathname === '/signup/accept';
   if (isSignupAccept && !user) {
     return <SignupAcceptPage onAccepted={(me) => setUser(me)} />;
+  }
+
+  // ── DFS Repair Marketplace public pages ───────────────
+  // /marketplace/review?t=… — the fleet owner's quote comparison page,
+  // opened from the quote email. Public: the token is the credential.
+  // /marketplace/board?invite=… — a prospect shop's board via the digest's
+  // magic link (no account yet). /marketplace/board without an invite is
+  // the digest link for registered shops: shown standalone once logged in.
+  const path = typeof window !== 'undefined' ? window.location.pathname : '';
+  if (path === '/marketplace/review') {
+    return <DspQuoteReview />;
+  }
+  if (path === '/marketplace/board') {
+    const invite = new URLSearchParams(window.location.search).get('invite');
+    if (invite) return <MarketplaceBoard inviteToken={invite} standalone />;
+    if (user && ['vendor', 'body_repair_vendor'].includes(user.orgType)) {
+      return <MarketplaceBoard standalone />;
+    }
   }
 
   // ── Bootstrapping splash ─────────────────────────────

@@ -68,9 +68,56 @@ class Settings(BaseSettings):
     smtp_from: str = "Nova Fora <noreply@example.com>"
     smtp_use_tls: bool = True
 
+    # ── Gmail API (preferred transport) ───────────────
+    # OAuth 2.0 client (Google Cloud, consent screen = Internal) plus the
+    # refresh token of the sender mailbox, scope gmail.send. When all four
+    # are set, every email goes through the Gmail API; otherwise SMTP; else
+    # log. GMAIL_SENDER is the authorized mailbox (jescalona@dantzigfleets.com
+    # for the marketplace test).
+    gmail_client_id: str = ""
+    gmail_client_secret: str = ""
+    gmail_refresh_token: str = ""
+    gmail_sender: str = ""
+
     # ── Invitations ───────────────────────────────────
     # Days until an invitation token expires. Re-send to bump the timer.
     invitation_ttl_days: int = 7
+
+    # ── DFS CMR repair marketplace ────────────────────
+    # Marketplace mail goes out through the email service (Gmail API, else
+    # SMTP). MARKETPLACE_FROM_EMAIL must be the sending mailbox (or a verified
+    # send-as alias) or Gmail rewrites/rejects it. Empty → GMAIL_SENDER, else
+    # the address in SMTP_FROM.
+    marketplace_from_email: str = ""
+    marketplace_from_name: str = "DFS Repair Marketplace"
+    # Reply-To on shop-facing mail (digest, decision notices). Empty → the
+    # from address.
+    marketplace_reply_to: str = ""
+    # DFS coordination fee on each approved quote (spec §6).
+    marketplace_fee_rate: float = 0.10
+    # Only defects reported in the last N days are turned into offers. Keeps
+    # the first run from offering the whole historical backlog.
+    marketplace_lookback_days: int = 14
+    # A physical defect (same van/part/position/type) awarded less than N
+    # days ago is not re-offered when the next nightly inspection reports it
+    # again — the shop is presumably still repairing it.
+    marketplace_reoffer_after_days: int = 30
+    # HMAC secret for DSP review links and prospect magic links. Empty →
+    # JWT_SECRET is used. Rotating it invalidates every outstanding link.
+    marketplace_token_secret: str = ""
+    # Prospect magic links expire after N days; the next digest re-issues.
+    marketplace_prospect_link_ttl_days: int = 30
+    # Version stamped on a shop's acceptance of the DFS Repair Partner terms.
+    marketplace_terms_version: str = "2026-11-04"
+    marketplace_terms_url: str = ""
+    # Inviter recorded on invitations created for prospects at their first
+    # quote (invitations.invited_by_id is NOT NULL). Empty → first active
+    # site_admin.
+    marketplace_system_user_email: str = ""
+    # Claude writes the opening paragraph of the daily digest.
+    anthropic_api_key: str = ""
+    marketplace_digest_model: str = "claude-opus-5-5"
+    marketplace_digest_timeout_seconds: float = 30.0
 
     # ── Observability ─────────────────────────────────
     sentry_dsn: str = ""
