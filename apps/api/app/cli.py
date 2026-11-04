@@ -27,6 +27,10 @@ Available commands:
                              DFS repair marketplace — daily per-station digest
                               to shops. Designed for 06:00 America/New_York.
   seed-marketplace-rules     Insert any missing spec §3 marketplace rule.
+  gmail-refresh-token [--out PATH] [--port N]
+                             One-time: OAuth consent for the Gmail sender
+                              mailbox; writes the refresh token to a local
+                              file (never printed). See app/gmail_oauth.py.
 
   create-service-user <email> <full_name> <org_id> <role>
                              Create a new user with a generated password.
@@ -822,6 +826,12 @@ def main() -> None:
     elif cmd == "seed-marketplace-rules":
         from app.marketplace_cli import cmd_seed_marketplace_rules
         asyncio.run(cmd_seed_marketplace_rules())
+    elif cmd == "gmail-refresh-token":
+        from app.gmail_oauth import cmd_gmail_refresh_token
+        args = sys.argv[2:]
+        out = args[args.index("--out") + 1] if "--out" in args else None
+        port = int(args[args.index("--port") + 1]) if "--port" in args else 0
+        cmd_gmail_refresh_token(out=out, port=port)
     elif cmd == "create-service-user":
         if len(sys.argv) != 6:
             print(
